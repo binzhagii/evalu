@@ -32,10 +32,10 @@ export default function Analytics() {
     <>
       <Card title="Trend over time" actions={<label className="inline">Department <Select value={dept} onChange={setDept}><option value="ALL">All</option>{db.departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</Select></label>}>
         <p className="muted">Average final score of personnel whose result is complete. Only periods released to you are shown. Scores need set weights, so only College faculty appear until HR sets the other weights.</p>
-        <div className="chart"><ResponsiveContainer><LineChart data={trend}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="period" /><YAxis domain={[1, 5]} /><Tooltip /><Line type="monotone" dataKey="score" stroke="#1d4ed8" strokeWidth={2} connectNulls /></LineChart></ResponsiveContainer></div>
+        <div className="chart"><ResponsiveContainer><LineChart data={trend}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="period" /><YAxis domain={[1, 5]} /><Tooltip /><Line type="monotone" dataKey="score" stroke="#b3001b" strokeWidth={2} connectNulls /></LineChart></ResponsiveContainer></div>
       </Card>
       <Card title="Comparison across departments" actions={<PeriodPicker periods={periods} value={pid} onChange={setPid} />}>
-        <div className="chart"><ResponsiveContainer><BarChart data={compare}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="department" /><YAxis domain={[0, 5]} /><Tooltip /><Legend /><Bar dataKey="Average final score" fill="#1d4ed8" /></BarChart></ResponsiveContainer></div>
+        <div className="chart"><ResponsiveContainer><BarChart data={compare}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="department" /><YAxis domain={[0, 5]} /><Tooltip /><Legend /><Bar dataKey="Average final score" fill="#b3001b" /></BarChart></ResponsiveContainer></div>
         <table><thead><tr><th>Department</th><th>Average final score</th><th>Personnel with complete result</th></tr></thead>
           <tbody>{compare.map((c) => <tr key={c.department}><td>{c.department}</td><td>{c['Average final score'] ?? '—'}</td><td>{c['Evaluated (complete)']}</td></tr>)}</tbody></table>
       </Card>
