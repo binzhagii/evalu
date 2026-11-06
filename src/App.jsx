@@ -1,75 +1,184 @@
 import { useState } from 'react';
 import { AppProvider, useApp } from './lib/store';
-import { ROLES } from './lib/logic';
-import { DEMO_PASSWORD } from './lib/seed';
+import { ROLES, POSITIONS } from './lib/logic';
+import { Icon, Avatar, NavContext } from './ui';
+import { HROverview, DirectorOverview } from './pages/Overview';
 import Tasks from './pages/Tasks';
 import { Periods, Assignments, Forms, Weights, Monitor } from './pages/HR';
 import Reports from './pages/Reports';
 import Analytics from './pages/Analytics';
 import { Notifications, MyResults } from './pages/Misc';
+import { Accounts, MyAccount, ForcedPasswordChange } from './pages/Accounts';
 import './index.css';
 
+const DEMO_PASSWORD = 'demo1234'; // sample accounts only (see server/seed.js)
 const DEMO = [
   ['hr', 'HR Specialist'], ['director', 'Director/VP'], ['dean_a', 'Dean'], ['chair_a', 'Program Chair'],
   ['fac_a1', 'Faculty'], ['sec_a', 'Secretary (NTP)'], ['principal', 'Principal'], ['st_a01', 'Student'],
 ];
 
 function Login() {
-  const { login } = useApp();
-  const [u, setU] = useState(''); const [p, setP] = useState(''); const [err, setErr] = useState('');
-  const go = async (e) => { e.preventDefault(); if (!(await login(u, p))) setErr('Incorrect username or password.'); };
+  const { login, error } = useApp();
+  const [u, setU] = useState(''); const [p, setP] = useState(''); const [err, setErr] = useState(error);
+  const [show, setShow] = useState(false); const [busy, setBusy] = useState(false); const [caps, setCaps] = useState(false);
+  const go = async (e) => {
+    e.preventDefault();
+    if (!u.trim() || !p) { setErr('Enter your username and password.'); return; }
+    setBusy(true); setErr('');
+    const r = await login(u.trim(), p);
+    setBusy(false);
+    if (!r.ok) setErr(r.error);
+  };
+  const pick = (id) => { setU(id); setP(DEMO_PASSWORD); setErr(''); };
   return (
-    <div className="login">
-      <h1>evalU</h1>
-      <p className="muted">Role-Based Performance Evaluation and Analytics System · UB Human Resource Management Center</p>
-      <form onSubmit={go}>
-        <label className="block">Username<input value={u} onChange={(e) => setU(e.target.value)} autoFocus /></label>
-        <label className="block">Password<input type="password" value={p} onChange={(e) => setP(e.target.value)} /></label>
-        {err && <div className="note warn">{err}</div>}
-        <button type="submit">Log in</button>
-      </form>
-      <div className="note">
-        <b>Simulated test accounts</b> (password for all: <code>{DEMO_PASSWORD}</code>). Click to fill the username.
-        <div className="row wrap">{DEMO.map(([id, l]) => <button key={id} type="button" className="ghost" onClick={() => { setU(id); setP(DEMO_PASSWORD); }}>{l}</button>)}</div>
-        <span className="muted">More: dean_b, dean_c, chair_b, fac_b1, fac_be1, shead, aprincipal, st_b01 … All data here is sample data.</span>
-      </div>
+    <div className="login-wrap">
+      <div className="login-bg" aria-hidden="true" />
+      <main className="login-center">
+        <header className="login-head">
+          <div className="login-logo">eval<span>U</span></div>
+          <p>Role-Based Performance Evaluation and Analytics System</p>
+          <small>UB Human Resource Management Center</small>
+        </header>
+        <form className="login-card" onSubmit={go} noValidate>
+          <div className="lc-head">
+            <div className="lc-badge"><Icon name="lock" size={22} /></div>
+            <div>
+              <h1>Welcome back</h1>
+              <p className="muted">Sign in to your evalU account</p>
+            </div>
+          </div>
+          <label className="field">
+            <span>Username</span>
+            <div className={'input-icon' + (err ? ' bad' : '')}>
+              <Icon name="user" />
+              <input value={u} onChange={(e) => { setU(e.target.value); setErr(''); }} autoFocus autoComplete="username" placeholder="Enter your username" />
+            </div>
+          </label>
+          <label className="field">
+            <span>Password</span>
+            <div className={'input-icon' + (err ? ' bad' : '')}>
+              <Icon name="lock" />
+              <input type={show ? 'text' : 'password'} value={p} onChange={(e) => { setP(e.target.value); setErr(''); }} onKeyUp={(e) => setCaps(e.getModifierState('CapsLock'))} onBlur={() => setCaps(false)} autoComplete="current-password" placeholder="Enter your password" />
+              <button type="button" className="pw-toggle" onClick={() => setShow((s) => !s)} aria-label={show ? 'Hide password' : 'Show password'} title={show ? 'Hide password' : 'Show password'}><Icon name={show ? 'eyeOff' : 'eye'} /></button>
+            </div>
+            {caps && <small className="caps">Caps Lock is on</small>}
+          </label>
+          {err && <div className="login-err" role="alert"><Icon name="alert" size={16} />{err}</div>}
+          <button type="submit" className="login-submit" disabled={busy}>
+            {busy ? 'Signing in…' : <>Log in <Icon name="arrow" size={18} /></>}
+          </button>
+          <p className="lc-foot">Trouble signing in? Contact the HRMC office.</p>
+        </form>
+        <div className="login-demo">
+          <div className="login-demo-h">
+            <b>Test accounts</b>
+            <span>Password: <code>{DEMO_PASSWORD}</code></span>
+          </div>
+          <div className="chips">
+            {DEMO.map(([id, l]) => (
+              <button key={id} type="button" className={'chip' + (u === id ? ' on' : '')} onClick={() => pick(id)}>
+                <b>{l}</b><small>{id}</small>
+              </button>
+            ))}
+          </div>
+          <p>More: dean_b, dean_c, chair_b, fac_b1, fac_be1, shead, aprincipal, st_b01 … All data is sample data.</p>
+        </div>
+      </main>
     </div>
   );
 }
 
+// [key, label, icon, page, subtitle]
 function navFor(user) {
   const n = [];
   if (user.role === 'HR') {
-    n.push(['periods', 'Periods & release', <Periods />], ['assign', 'Assignments', <Assignments />], ['monitor', 'Class progress', <Monitor />],
-      ['forms', 'Forms', <Forms />], ['weights', 'Weights', <Weights />], ['reports', 'Reports', <Reports />], ['analytics', 'Analytics', <Analytics />]);
+    n.push(
+      ['home', 'Overview', 'home', <HROverview />, 'Everything happening in evaluations right now'],
+      ['periods', 'Periods & release', 'calendar', <Periods />, 'Open and close evaluation periods, and release results step by step'],
+      ['assign', 'Assignments', 'list', <Assignments />, 'Who evaluates whom in each period'],
+      ['monitor', 'Class progress', 'chart', <Monitor />, 'How many students have answered, class by class'],
+      ['forms', 'Forms', 'form', <Forms />, 'The criteria and questions on each evaluation form'],
+      ['weights', 'Weights', 'scale', <Weights />, 'How much each evaluator group counts toward the final score'],
+      ['accounts', 'Accounts', 'users', <Accounts />, 'Create and manage the people who can sign in'],
+      ['reports', 'Reports', 'report', <Reports />, 'Final scores and results by person, class and subject'],
+      ['analytics', 'Analytics', 'trend', <Analytics />, 'Trends over time and comparisons between departments'],
+    );
   } else if (user.role === 'DIR') {
-    n.push(['reports', 'Reports', <Reports />], ['analytics', 'Analytics', <Analytics />]);
+    n.push(
+      ['home', 'Overview', 'home', <DirectorOverview />, 'A summary of the results released to you'],
+      ['reports', 'Reports', 'report', <Reports />, 'Final scores and results by person, class and subject'],
+      ['analytics', 'Analytics', 'trend', <Analytics />, 'Trends over time and comparisons between departments'],
+    );
   } else {
-    n.push(['tasks', 'My evaluations', <Tasks />]);
-    if (user.position === 'dean' || user.position === 'chair') n.push(['monitor', 'Department progress', <Monitor deptOnly />]);
-    if (user.position === 'faculty' || user.position === 'dean') n.push(['results', 'My results', <MyResults />]);
+    n.push(['tasks', 'My evaluations', 'check', <Tasks />, 'The people you are asked to evaluate']);
+    if (user.position === 'dean' || user.position === 'chair') n.push(['monitor', 'Department progress', 'chart', <Monitor deptOnly />, 'How many students have answered in your department']);
+    if (user.position === 'faculty' || user.position === 'dean') n.push(['results', 'My results', 'star', <MyResults />, 'Your evaluation results and your classes\' response progress']);
   }
-  n.push(['notifs', 'Notifications', <Notifications />]);
+  n.push(
+    ['notifs', 'Notifications', 'bell', <Notifications />, 'Reminders and updates sent to you'],
+    ['account', 'My account', 'user', <MyAccount />, 'Your details and password'],
+  );
   return n;
 }
 
+function greeting() {
+  const h = new Date().getHours();
+  return h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
+}
+
 function Shell() {
-  const { db, user, logout } = useApp();
+  const { db, user, checking, error, clearError, logout } = useApp();
   const [tab, setTab] = useState(null);
-  if (!db) return <div className="login">Loading…</div>;
+  const [menu, setMenu] = useState(false); // phone menu open?
+  if (checking) return <div className="login-loading">Loading…</div>;
   if (!user) return <Login />;
+  if (user.mustChangePassword) return <ForcedPasswordChange />;
+  if (!db) return <div className="login-loading">{error || 'Loading…'}</div>;
   const nav = navFor(user);
   const cur = nav.find((n) => n[0] === tab) || nav[0];
+  const [key, label, , page, subtitle] = cur;
+  const isHome = key === nav[0][0];
   const unread = db.notifications.filter((n) => n.userId === user.id && !n.read).length;
+  const position = POSITIONS[user.role]?.[user.position];
   return (
-    <div className="app">
-      <aside>
-        <h2>evalU</h2>
-        <nav>{nav.map(([k, l]) => <button key={k} className={cur[0] === k ? 'on' : ''} onClick={() => setTab(k)}>{l}{k === 'notifs' && unread > 0 ? ` (${unread})` : ''}</button>)}</nav>
-        <div className="who">{user.name}<br /><span className="muted">{ROLES[user.role]}</span><br /><button className="ghost" onClick={logout}>Log out</button></div>
-      </aside>
-      <main key={cur[0]}>{cur[2]}</main>
-    </div>
+    <NavContext.Provider value={setTab}>
+      <div className="app">
+        {/* phones and small tablets: a top bar with a menu button instead of the sidebar */}
+        <header className="mobile-bar">
+          <button className="icon-btn" onClick={() => setMenu(true)} aria-label="Open menu" aria-expanded={menu}><Icon name="menu" size={22} />{unread > 0 && <span className="dot" />}</button>
+          <div className="brand">eval<span>U</span></div>
+          <span className="mb-title">{label}</span>
+        </header>
+        {menu && <div className="backdrop" onClick={() => setMenu(false)} aria-hidden="true" />}
+        <aside className={menu ? 'open' : ''}>
+          <div className="aside-top">
+            <div className="brand">eval<span>U</span></div>
+            <button className="icon-btn aside-close" onClick={() => setMenu(false)} aria-label="Close menu"><Icon name="close" size={22} /></button>
+          </div>
+          <nav>
+            {nav.map(([k, l, icon]) => (
+              <button key={k} className={key === k ? 'on' : ''} onClick={() => { setTab(k); setMenu(false); window.scrollTo(0, 0); }} aria-current={key === k ? 'page' : undefined}>
+                <Icon name={icon} /><span>{l}</span>
+                {k === 'notifs' && unread > 0 && <span className="pill">{unread}</span>}
+              </button>
+            ))}
+          </nav>
+          <div className="who">
+            <Avatar name={user.name} />
+            <div className="who-text"><b>{user.name}</b><span>{position && position !== ROLES[user.role] ? position : ROLES[user.role]}</span></div>
+            <button className="icon-btn" onClick={logout} title="Log out" aria-label="Log out"><Icon name="logout" /></button>
+          </div>
+        </aside>
+        <main key={key}>
+          <header className="page-h">
+            <h1>{isHome ? `${greeting()}, ${user.name.replace(/ \(Sample\)/, '')}` : label}</h1>
+            <p>{isHome ? `${ROLES[user.role]} · ${new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}` : subtitle}</p>
+          </header>
+          {error && <div className="note warn row" role="alert" style={{ justifyContent: 'space-between' }}><span><Icon name="alert" size={16} /> {error}</span><button className="ghost" onClick={clearError}>Dismiss</button></div>}
+          {page}
+        </main>
+      </div>
+    </NavContext.Provider>
   );
 }
 

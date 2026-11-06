@@ -22,3 +22,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# evalU backend data (hashed passwords)
+server/data/
