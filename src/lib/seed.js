@@ -1,7 +1,8 @@
 // Simulated dataset (per the manuscript's scope: simulated data + test accounts).
 // All names, criteria text and ratings below are SAMPLE data, editable in the app.
-import { generateTasks, runThresholdCheck, instrumentFor, targetType, evaluatorGroup, uid } from './logic.js';
-import { sha256, encryptText } from './crypto.js';
+// Used by the server (server/seed.js) to fill an empty database, and by the tests.
+// Passwords are not part of this data; the server hashes DEMO_PASSWORD for every account.
+import { generateTasks, runThresholdCheck, instrumentFor, targetType } from './logic.js';
 
 export const DEMO_PASSWORD = 'demo1234';
 
@@ -10,9 +11,8 @@ function rng(seed) {
   return () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296);
 }
 
-export async function buildSeed() {
+export function buildSeed() {
   const R = rng(2026);
-  const pw = await sha256(DEMO_PASSWORD);
   const db = { version: 1, departments: [], users: [], sections: [], criteria: [], instruments: [], rules: {}, periods: [], tasks: [], notifications: [] };
   db.departments = [
     { id: 'A', name: 'Department A (College)', kind: 'college' },
@@ -20,7 +20,7 @@ export async function buildSeed() {
     { id: 'C', name: 'Department C (College)', kind: 'college' },
     { id: 'BE', name: 'Basic Education', kind: 'basic' },
   ];
-  const U = (id, name, role, position, dept) => db.users.push({ id, username: id, name, role, position, dept, pw });
+  const U = (id, name, role, position, dept) => db.users.push({ id, username: id, name, role, position, dept });
   U('hr', 'HR Specialist (Sample)', 'HR', 'hr', null);
   U('director', 'Director/VP (Sample)', 'DIR', 'director', null);
   for (const d of ['a', 'b', 'c']) {
@@ -63,7 +63,7 @@ export async function buildSeed() {
     SHEAD: ['Follows the curriculum and syllabus', 'Submits requirements on time', 'Collaborates with the subject team'],
   };
   const cid = {};
-  for (const [g, list] of Object.entries(bank))
+  for (const list of Object.values(bank))
     for (const text of list) {
       if (!cid[text]) { cid[text] = `c${Object.keys(cid).length + 1}`; db.criteria.push({ id: cid[text], text }); }
     }
@@ -121,9 +121,9 @@ export async function buildSeed() {
       if (doIt) t.response = answer(t, drift);
     }
   }
-  // sample restricted (encrypted) comments on a few dean/chair responses
+  // sample restricted comments on a few dean/chair responses (plain text here; the server encrypts them)
   for (const t of db.tasks.filter((x) => x.response && (x.group === 'DEAN' || x.group === 'CHAIR')).slice(0, 6))
-    t.response.comment = await encryptText('Sample verbatim comment from the evaluator (restricted).');
+    t.response.comment = 'Sample verbatim comment from the evaluator (restricted).';
   runThresholdCheck(db, 'p1'); runThresholdCheck(db, 'p2'); runThresholdCheck(db, 'p3');
   db.notifications.forEach((n) => (n.read = true));
   return db;

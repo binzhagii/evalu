@@ -15,6 +15,17 @@ export const ROLES = {
   DIR: 'Director / Vice President',
 };
 
+// Positions allowed for each role (used when HR creates or edits an account).
+export const POSITIONS = {
+  ST: { student: 'Student' },
+  TP: { faculty: 'Faculty', dean: 'Dean', chair: 'Program Chair', principal: 'Principal', aprincipal: 'Assistant Principal', shead: 'Subject Head' },
+  NTP: { secretary: 'Secretary', staff: 'Staff' },
+  HR: { hr: 'HR Specialist' },
+  DIR: { director: 'Director / VP' },
+};
+/** Roles that belong to a department. */
+export const needsDept = (role) => role === 'ST' || role === 'TP' || role === 'NTP';
+
 export const GROUPS = {
   ST: 'Students',
   DEAN: 'Dean',
@@ -139,15 +150,17 @@ export function computeAll(db, periodId) {
 // ---------- tasks / workflow ----------
 export function expectedAssignments(db) {
   // Rule-based evaluator assignment from user attributes (role, position, department).
+  // Deactivated accounts get no new tasks (their past results stay in the reports).
+  const active = (u) => u && u.active !== false;
   const out = [];
-  for (const t of targetsOf(db)) {
+  for (const t of targetsOf(db).filter(active)) {
     const tt = targetType(db, t);
     for (const g of Object.keys(db.rules[tt] || {})) {
       if (g === 'ST') {
         for (const sec of db.sections.filter((s) => s.facultyId === t.id))
-          for (const sid of sec.studentIds) out.push({ evaluatorId: sid, targetId: t.id, group: g, sectionId: sec.id });
+          for (const sid of sec.studentIds.filter((id) => active(userById(db, id)))) out.push({ evaluatorId: sid, targetId: t.id, group: g, sectionId: sec.id });
       } else {
-        for (const e of db.users.filter((u) => u.dept === t.dept && evaluatorGroup(u) === g && u.id !== t.id))
+        for (const e of db.users.filter((u) => active(u) && u.dept === t.dept && evaluatorGroup(u) === g && u.id !== t.id))
           out.push({ evaluatorId: e.id, targetId: t.id, group: g, sectionId: null });
       }
     }

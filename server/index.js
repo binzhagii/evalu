@@ -1,10 +1,10 @@
-// Production server: serves the built app (dist/) and the login API.
+// Production server: serves the built app (dist/) and the API (server/api.js).
 // Run `npm run build` first, then `npm start`.
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { handleAuth } from './auth.js';
+import { handleApi } from './api.js';
 
 const DIST = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'dist');
 const PORT = Number(process.env.PORT) || 3000;
@@ -25,6 +25,6 @@ if (!fs.existsSync(path.join(DIST, 'index.html'))) {
 }
 
 http.createServer(async (req, res) => {
-  if (await handleAuth(req, res)) return;
+  if (await handleApi(req, res)) return;
   serveStatic(req, res);
 }).listen(PORT, () => console.log(`[evalU] Running at http://localhost:${PORT}`));

@@ -1,34 +1,25 @@
 import { useState } from 'react';
 import { AppProvider, useApp } from './lib/store';
-import { ROLES } from './lib/logic';
-import { DEMO_PASSWORD } from './lib/seed';
+import { ROLES, POSITIONS } from './lib/logic';
+import { Icon, Avatar, NavContext } from './ui';
+import { HROverview, DirectorOverview } from './pages/Overview';
 import Tasks from './pages/Tasks';
 import { Periods, Assignments, Forms, Weights, Monitor } from './pages/HR';
 import Reports from './pages/Reports';
 import Analytics from './pages/Analytics';
 import { Notifications, MyResults } from './pages/Misc';
+import { Accounts, MyAccount, ForcedPasswordChange } from './pages/Accounts';
 import './index.css';
 
+const DEMO_PASSWORD = 'demo1234'; // sample accounts only (see server/seed.js)
 const DEMO = [
   ['hr', 'HR Specialist'], ['director', 'Director/VP'], ['dean_a', 'Dean'], ['chair_a', 'Program Chair'],
   ['fac_a1', 'Faculty'], ['sec_a', 'Secretary (NTP)'], ['principal', 'Principal'], ['st_a01', 'Student'],
 ];
 
-const ICONS = {
-  user: <><circle cx="12" cy="8" r="4" /><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7" /></>,
-  lock: <><rect x="4" y="10" width="16" height="11" rx="2.5" /><path d="M8 10V7a4 4 0 0 1 8 0v3" /></>,
-  eye: <><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z" /><circle cx="12" cy="12" r="3" /></>,
-  eyeOff: <><path d="M3 3l18 18" /><path d="M10.6 5.1A10 10 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-3.2 4.1M6.6 6.6C3.7 8.4 2 12 2 12s3.5 7 10 7a9.6 9.6 0 0 0 5.4-1.6" /><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2" /></>,
-  alert: <><circle cx="12" cy="12" r="9" /><path d="M12 8v5M12 16.5v.5" /></>,
-  arrow: <path d="M5 12h14M13 6l6 6-6 6" />,
-};
-const Icon = ({ name, size = 18 }) => (
-  <svg className="icon" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{ICONS[name]}</svg>
-);
-
 function Login() {
-  const { login } = useApp();
-  const [u, setU] = useState(''); const [p, setP] = useState(''); const [err, setErr] = useState('');
+  const { login, error } = useApp();
+  const [u, setU] = useState(''); const [p, setP] = useState(''); const [err, setErr] = useState(error);
   const [show, setShow] = useState(false); const [busy, setBusy] = useState(false); const [caps, setCaps] = useState(false);
   const go = async (e) => {
     e.preventDefault();
@@ -97,39 +88,97 @@ function Login() {
   );
 }
 
+// [key, label, icon, page, subtitle]
 function navFor(user) {
   const n = [];
   if (user.role === 'HR') {
-    n.push(['periods', 'Periods & release', <Periods />], ['assign', 'Assignments', <Assignments />], ['monitor', 'Class progress', <Monitor />],
-      ['forms', 'Forms', <Forms />], ['weights', 'Weights', <Weights />], ['reports', 'Reports', <Reports />], ['analytics', 'Analytics', <Analytics />]);
+    n.push(
+      ['home', 'Overview', 'home', <HROverview />, 'Everything happening in evaluations right now'],
+      ['periods', 'Periods & release', 'calendar', <Periods />, 'Open and close evaluation periods, and release results step by step'],
+      ['assign', 'Assignments', 'list', <Assignments />, 'Who evaluates whom in each period'],
+      ['monitor', 'Class progress', 'chart', <Monitor />, 'How many students have answered, class by class'],
+      ['forms', 'Forms', 'form', <Forms />, 'The criteria and questions on each evaluation form'],
+      ['weights', 'Weights', 'scale', <Weights />, 'How much each evaluator group counts toward the final score'],
+      ['accounts', 'Accounts', 'users', <Accounts />, 'Create and manage the people who can sign in'],
+      ['reports', 'Reports', 'report', <Reports />, 'Final scores and results by person, class and subject'],
+      ['analytics', 'Analytics', 'trend', <Analytics />, 'Trends over time and comparisons between departments'],
+    );
   } else if (user.role === 'DIR') {
-    n.push(['reports', 'Reports', <Reports />], ['analytics', 'Analytics', <Analytics />]);
+    n.push(
+      ['home', 'Overview', 'home', <DirectorOverview />, 'A summary of the results released to you'],
+      ['reports', 'Reports', 'report', <Reports />, 'Final scores and results by person, class and subject'],
+      ['analytics', 'Analytics', 'trend', <Analytics />, 'Trends over time and comparisons between departments'],
+    );
   } else {
-    n.push(['tasks', 'My evaluations', <Tasks />]);
-    if (user.position === 'dean' || user.position === 'chair') n.push(['monitor', 'Department progress', <Monitor deptOnly />]);
-    if (user.position === 'faculty' || user.position === 'dean') n.push(['results', 'My results', <MyResults />]);
+    n.push(['tasks', 'My evaluations', 'check', <Tasks />, 'The people you are asked to evaluate']);
+    if (user.position === 'dean' || user.position === 'chair') n.push(['monitor', 'Department progress', 'chart', <Monitor deptOnly />, 'How many students have answered in your department']);
+    if (user.position === 'faculty' || user.position === 'dean') n.push(['results', 'My results', 'star', <MyResults />, 'Your evaluation results and your classes\' response progress']);
   }
-  n.push(['notifs', 'Notifications', <Notifications />]);
+  n.push(
+    ['notifs', 'Notifications', 'bell', <Notifications />, 'Reminders and updates sent to you'],
+    ['account', 'My account', 'user', <MyAccount />, 'Your details and password'],
+  );
   return n;
 }
 
+function greeting() {
+  const h = new Date().getHours();
+  return h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
+}
+
 function Shell() {
-  const { db, user, checking, logout } = useApp();
+  const { db, user, checking, error, clearError, logout } = useApp();
   const [tab, setTab] = useState(null);
-  if (!db || checking) return <div className="login-loading">Loading…</div>;
+  const [menu, setMenu] = useState(false); // phone menu open?
+  if (checking) return <div className="login-loading">Loading…</div>;
   if (!user) return <Login />;
+  if (user.mustChangePassword) return <ForcedPasswordChange />;
+  if (!db) return <div className="login-loading">{error || 'Loading…'}</div>;
   const nav = navFor(user);
   const cur = nav.find((n) => n[0] === tab) || nav[0];
+  const [key, label, , page, subtitle] = cur;
+  const isHome = key === nav[0][0];
   const unread = db.notifications.filter((n) => n.userId === user.id && !n.read).length;
+  const position = POSITIONS[user.role]?.[user.position];
   return (
-    <div className="app">
-      <aside>
-        <h2>evalU</h2>
-        <nav>{nav.map(([k, l]) => <button key={k} className={cur[0] === k ? 'on' : ''} onClick={() => setTab(k)}>{l}{k === 'notifs' && unread > 0 ? ` (${unread})` : ''}</button>)}</nav>
-        <div className="who">{user.name}<br /><span className="muted">{ROLES[user.role]}</span><br /><button className="ghost" onClick={logout}>Log out</button></div>
-      </aside>
-      <main key={cur[0]}>{cur[2]}</main>
-    </div>
+    <NavContext.Provider value={setTab}>
+      <div className="app">
+        {/* phones and small tablets: a top bar with a menu button instead of the sidebar */}
+        <header className="mobile-bar">
+          <button className="icon-btn" onClick={() => setMenu(true)} aria-label="Open menu" aria-expanded={menu}><Icon name="menu" size={22} />{unread > 0 && <span className="dot" />}</button>
+          <div className="brand">eval<span>U</span></div>
+          <span className="mb-title">{label}</span>
+        </header>
+        {menu && <div className="backdrop" onClick={() => setMenu(false)} aria-hidden="true" />}
+        <aside className={menu ? 'open' : ''}>
+          <div className="aside-top">
+            <div className="brand">eval<span>U</span></div>
+            <button className="icon-btn aside-close" onClick={() => setMenu(false)} aria-label="Close menu"><Icon name="close" size={22} /></button>
+          </div>
+          <nav>
+            {nav.map(([k, l, icon]) => (
+              <button key={k} className={key === k ? 'on' : ''} onClick={() => { setTab(k); setMenu(false); window.scrollTo(0, 0); }} aria-current={key === k ? 'page' : undefined}>
+                <Icon name={icon} /><span>{l}</span>
+                {k === 'notifs' && unread > 0 && <span className="pill">{unread}</span>}
+              </button>
+            ))}
+          </nav>
+          <div className="who">
+            <Avatar name={user.name} />
+            <div className="who-text"><b>{user.name}</b><span>{position && position !== ROLES[user.role] ? position : ROLES[user.role]}</span></div>
+            <button className="icon-btn" onClick={logout} title="Log out" aria-label="Log out"><Icon name="logout" /></button>
+          </div>
+        </aside>
+        <main key={key}>
+          <header className="page-h">
+            <h1>{isHome ? `${greeting()}, ${user.name.replace(/ \(Sample\)/, '')}` : label}</h1>
+            <p>{isHome ? `${ROLES[user.role]} · ${new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}` : subtitle}</p>
+          </header>
+          {error && <div className="note warn row" role="alert" style={{ justifyContent: 'space-between' }}><span><Icon name="alert" size={16} /> {error}</span><button className="ghost" onClick={clearError}>Dismiss</button></div>}
+          {page}
+        </main>
+      </div>
+    </NavContext.Provider>
   );
 }
 

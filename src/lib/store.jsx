@@ -1,14 +1,12 @@
 import { createContext, useContext, useEffect, useState, useCallback } from 'react';
-import { buildSeed } from './seed';
 
-const DB_KEY = 'evalu_db_v1';
+// All data now lives on the server (server/api.js). This file:
+//  - signs in/out (session is an HttpOnly cookie the browser sends automatically)
+//  - loads the data this user may see:  GET /api/data
+//  - makes changes through server actions:  act('submitEvaluation', {...})
 const Ctx = createContext(null);
 export const useApp = () => useContext(Ctx);
 
-const read = (k) => { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } };
-const write = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* storage unavailable */ } };
-
-// Calls the login backend (server/auth.js). The session lives in an HttpOnly cookie.
 async function api(path, body) {
   const res = await fetch(path, {
     method: body ? 'POST' : 'GET',
@@ -21,48 +19,83 @@ async function api(path, body) {
 }
 
 export function AppProvider({ children }) {
+  const [user, setUser] = useState(null);
   const [db, setDb] = useState(null);
-  const [userId, setUserId] = useState(null);
   const [checking, setChecking] = useState(true); // asking the server "am I still signed in?"
+  const [error, setError] = useState('');
+
+  const signedOut = useCallback((msg = '') => { setUser(null); setDb(null); setError(msg); }, []);
+
+  const loadData = useCallback(async () => {
+    const r = await api('/api/data');
+    if (r.ok) setDb(r.data);
+    else if (r.status === 401) signedOut('Your session has ended. Please sign in again.');
+    else setError(r.data.error || 'Could not load data.');
+  }, [signedOut]);
 
   useEffect(() => {
     (async () => {
-      let d = read(DB_KEY);
-      if (!d || d.version !== 1) { d = await buildSeed(); write(DB_KEY, d); }
-      setDb(d);
+      try {
+        const r = await api('/api/auth/me');
+        if (r.ok) { setUser(r.data.user); if (!r.data.user.mustChangePassword) await loadData(); }
+      } catch { /* server offline: show the login screen */ }
+      setChecking(false);
     })();
-    api('/api/auth/me')
-      .then((r) => { if (r.ok) setUserId(r.data.user.id); })
-      .catch(() => { /* server offline: show the login screen */ })
-      .finally(() => setChecking(false));
-  }, []);
-
-  const update = useCallback((fn) => {
-    setDb((cur) => {
-      const draft = structuredClone(cur);
-      fn(draft);
-      write(DB_KEY, draft);
-      return draft;
-    });
-  }, []);
+  }, [loadData]);
 
   // Returns { ok: true } or { ok: false, error: 'message to show' }
   const login = async (username, password) => {
     try {
       const r = await api('/api/auth/login', { username, password });
       if (!r.ok) return { ok: false, error: r.data.error || 'Sign-in failed. Please try again.' };
-      setUserId(r.data.user.id);
+      setError('');
+      setUser(r.data.user);
+      if (!r.data.user.mustChangePassword) await loadData(); // otherwise: choose a new password first
       return { ok: true };
     } catch {
       return { ok: false, error: "Can't reach the server. Check that it is running." };
     }
   };
+
+  // Returns { ok: true } or { ok: false, error }. Errors are shown in the form, not the page banner.
+  const changePassword = async (currentPassword, newPassword) => {
+    try {
+      const r = await api('/api/actions/changePassword', { currentPassword, newPassword });
+      if (r.status === 401) { signedOut('Your session has ended. Please sign in again.'); return { ok: false, error: '' }; }
+      if (!r.ok) return { ok: false, error: r.data.error || 'Could not change the password.' };
+      setUser((u) => ({ ...u, mustChangePassword: false }));
+      setDb(r.data.data);
+      return { ok: true };
+    } catch {
+      return { ok: false, error: "Can't reach the server. Your password was not changed." };
+    }
+  };
+
   const logout = async () => {
-    setUserId(null);
+    signedOut();
     try { await api('/api/auth/logout', {}); } catch { /* ignore */ }
   };
-  const reset = async () => { const d = await buildSeed(); write(DB_KEY, d); setDb(d); };
 
-  const user = db && userId ? db.users.find((u) => u.id === userId) || null : null;
-  return <Ctx.Provider value={{ db, user, checking, update, login, logout, reset }}>{children}</Ctx.Provider>;
+  /**
+   * Ask the server to make a change. On success the page data is refreshed and
+   * the action's result is returned (an object). On failure the error is shown
+   * at the top of the page and null is returned.
+   */
+  const act = useCallback(async (name, args = {}) => {
+    try {
+      const r = await api(`/api/actions/${name}`, args);
+      if (r.ok) { setError(''); setDb(r.data.data); return r.data.result; }
+      if (r.status === 401) signedOut('Your session has ended. Please sign in again.');
+      else setError(r.data.error || 'Something went wrong. Please try again.');
+    } catch {
+      setError("Can't reach the server. Your change was not saved.");
+    }
+    return null;
+  }, [signedOut]);
+
+  return (
+    <Ctx.Provider value={{ db, user, checking, error, clearError: () => setError(''), act, login, logout, changePassword, reload: loadData }}>
+      {children}
+    </Ctx.Provider>
+  );
 }

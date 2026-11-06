@@ -9,7 +9,7 @@
     "lint": "oxlint",
     "preview": "vite preview",
     "start": "node server/index.js",
-    "test": "node tests/logic.test.mjs && node tests/auth.test.mjs"
+    "test": "node tests/logic.test.mjs && node tests/api.test.mjs"
   },
   "dependencies": {
     "react": "^19.2.8",

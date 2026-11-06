@@ -1,24 +1,103 @@
+import { createContext, useContext, useState } from 'react';
 import { THRESHOLD } from './lib/logic';
+
+/** go('reports') switches the page (provided by the app shell). */
+export const NavContext = createContext(() => {});
+export const useNav = () => useContext(NavContext);
 
 export const fmt = (n) => (n == null ? '—' : Number(n).toFixed(2));
 export const pct = (n) => `${Math.round(n * 100)}%`;
 
+/* ---------- icons (simple line icons, 24x24) ---------- */
+const PATHS = {
+  home: <><path d="M3 11l9-7 9 7" /><path d="M5 10v10h14V10" /><path d="M10 20v-6h4v6" /></>,
+  calendar: <><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M3 10h18M8 3v4M16 3v4" /></>,
+  list: <><path d="M9 6h12M9 12h12M9 18h12" /><circle cx="4.5" cy="6" r="1" /><circle cx="4.5" cy="12" r="1" /><circle cx="4.5" cy="18" r="1" /></>,
+  chart: <><path d="M4 20V10M10 20V4M16 20v-7M22 20H2" /></>,
+  form: <><rect x="4" y="3" width="16" height="18" rx="2" /><path d="M8 8h8M8 12h8M8 16h5" /></>,
+  scale: <><path d="M12 3v18M5 21h14M6 7h12" /><path d="M6 7l-3 7a3 3 0 0 0 6 0zM18 7l-3 7a3 3 0 0 0 6 0z" /></>,
+  users: <><circle cx="9" cy="8" r="3.5" /><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6" /><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14c2 .6 3.5 2.6 3.5 6" /></>,
+  report: <><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" /><path d="M14 3v6h6M8 17v-3M12 17v-6M16 17v-2" /></>,
+  trend: <><path d="M3 17l6-6 4 4 8-8" /><path d="M15 7h6v6" /></>,
+  bell: <><path d="M6 8a6 6 0 0 1 12 0c0 7 3 8 3 8H3s3-1 3-8" /><path d="M10 20a2 2 0 0 0 4 0" /></>,
+  user: <><circle cx="12" cy="8" r="4" /><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7" /></>,
+  check: <path d="M5 12.5l4.5 4.5L19 7.5" />,
+  clock: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>,
+  alert: <><circle cx="12" cy="12" r="9" /><path d="M12 8v5M12 16.5v.5" /></>,
+  star: <path d="M12 3l2.8 5.7 6.2.9-4.5 4.4 1 6.2L12 17.3 6.5 20.2l1-6.2L3 9.6l6.2-.9z" />,
+  logout: <><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3" /><path d="M10 17l5-5-5-5M15 12H3" /></>,
+  arrow: <path d="M5 12h14M13 6l6 6-6 6" />,
+  back: <path d="M19 12H5M11 6l-6 6 6 6" />,
+  lock: <><rect x="4" y="10" width="16" height="11" rx="2.5" /><path d="M8 10V7a4 4 0 0 1 8 0v3" /></>,
+  menu: <path d="M4 6h16M4 12h16M4 18h16" />,
+  close: <path d="M6 6l12 12M18 6L6 18" />,
+  eye: <><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z" /><circle cx="12" cy="12" r="3" /></>,
+  eyeOff: <><path d="M3 3l18 18" /><path d="M10.6 5.1A10 10 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-3.2 4.1M6.6 6.6C3.7 8.4 2 12 2 12s3.5 7 10 7a9.6 9.6 0 0 0 5.4-1.6" /><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2" /></>,
+};
+export const Icon = ({ name, size = 18 }) => (
+  <svg className="icon" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{PATHS[name]}</svg>
+);
+
+/* ---------- small building blocks ---------- */
 export function Badge({ kind, children }) {
   return <span className={`badge ${kind}`}>{children}</span>;
 }
 export const StatusBadge = ({ s }) => <Badge kind={s}>{s}</Badge>;
 
-export function Card({ title, children, actions }) {
+export function Card({ title, children, actions, className = '' }) {
   return (
-    <section className="card">
+    <section className={`card ${className}`}>
       {(title || actions) && (
         <div className="card-h">
           <h3>{title}</h3>
-          <div>{actions}</div>
+          <div className="card-actions">{actions}</div>
         </div>
       )}
       {children}
     </section>
+  );
+}
+
+/** Initials in a coloured circle. */
+export function Avatar({ name, size = 36 }) {
+  const initials = name.replace(/\(.*?\)/g, '').split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join('').toUpperCase();
+  return <span className="avatar" style={{ width: size, height: size, fontSize: size * 0.38 }}>{initials}</span>;
+}
+
+/** A number tile. tone: '' | 'good' | 'warn' | 'bad' */
+export function Stat({ label, value, sub, icon, tone = '' }) {
+  return (
+    <div className={`stat ${tone}`}>
+      {icon && <span className="stat-icon"><Icon name={icon} size={20} /></span>}
+      <div>
+        <div className="stat-label">{label}</div>
+        <div className="stat-value">{value}</div>
+        {sub && <div className="stat-sub">{sub}</div>}
+      </div>
+    </div>
+  );
+}
+export const Stats = ({ children }) => <div className="stats">{children}</div>;
+
+/** A horizontal bar. value 0..1. mark: optional line (e.g. the 50% rule). */
+export function Meter({ value, mark, tone }) {
+  const v = Math.max(0, Math.min(1, value || 0));
+  const t = tone || (mark != null ? (v >= mark ? 'good' : 'bad') : '');
+  return (
+    <span className={`meter ${t}`} role="img" aria-label={pct(v)}>
+      <span className="meter-fill" style={{ width: `${v * 100}%` }} />
+      {mark != null && <span className="meter-mark" style={{ left: `${mark * 100}%` }} />}
+    </span>
+  );
+}
+
+export function Empty({ icon = 'check', title, children }) {
+  return (
+    <div className="empty">
+      <span className="empty-icon"><Icon name={icon} size={26} /></span>
+      <b>{title}</b>
+      {children && <p className="muted">{children}</p>}
+    </div>
   );
 }
 
@@ -43,12 +122,40 @@ export function Select({ value, onChange, children, ...p }) {
 export function PeriodPicker({ periods, value, onChange }) {
   return (
     <label className="inline">
-      Evaluation period{' '}
+      <span className="muted">Period</span>
       <Select value={value} onChange={onChange}>
         {periods.map((p) => (
           <option key={p.id} value={p.id}>{p.name}</option>
         ))}
       </Select>
     </label>
+  );
+}
+
+/** Days from today until a YYYY-MM-DD date (negative = past). */
+export function daysUntil(date) {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  return Math.round((new Date(date + 'T00:00:00') - today) / 86400000);
+}
+export function dueText(date) {
+  const d = daysUntil(date);
+  if (d < 0) return `${-d} day${d === -1 ? '' : 's'} overdue`;
+  if (d === 0) return 'Due today';
+  if (d === 1) return 'Due tomorrow';
+  return `Due in ${d} days`;
+}
+
+/**
+ * An input that saves to the server when you leave the field or press Enter
+ * (not on every keystroke). onSave(value) is called only if the value changed.
+ */
+export function SaveInput({ value, onSave, ...p }) {
+  const [v, setV] = useState(value ?? '');
+  const [prev, setPrev] = useState(value);
+  if (value !== prev) { setPrev(value); setV(value ?? ''); } // server value changed
+  const commit = () => { if (String(v) !== String(value ?? '')) onSave(v); };
+  return (
+    <input {...p} value={v} onChange={(e) => setV(e.target.value)} onBlur={commit}
+      onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') setV(value ?? ''); }} />
   );
 }
