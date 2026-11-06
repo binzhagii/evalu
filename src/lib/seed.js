@@ -1,7 +1,7 @@
 // Simulated dataset (per the manuscript's scope: simulated data + test accounts).
 // All names, criteria text and ratings below are SAMPLE data, editable in the app.
-import { generateTasks, runThresholdCheck, instrumentFor, targetType, evaluatorGroup, uid } from './logic';
-import { sha256, encryptText } from './crypto';
+import { generateTasks, runThresholdCheck, instrumentFor, targetType, evaluatorGroup, uid } from './logic.js';
+import { sha256, encryptText } from './crypto.js';
 
 export const DEMO_PASSWORD = 'demo1234';
 

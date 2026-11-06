@@ -1,18 +1,29 @@
 import { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { buildSeed } from './seed';
-import { sha256 } from './crypto';
 
 const DB_KEY = 'evalu_db_v1';
-const SESSION_KEY = 'evalu_session_v1';
 const Ctx = createContext(null);
 export const useApp = () => useContext(Ctx);
 
-const read = (k, store = localStorage) => { try { return JSON.parse(store.getItem(k)); } catch { return null; } };
-const write = (k, v, store = localStorage) => { try { store.setItem(k, JSON.stringify(v)); } catch { /* storage unavailable */ } };
+const read = (k) => { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } };
+const write = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* storage unavailable */ } };
+
+// Calls the login backend (server/auth.js). The session lives in an HttpOnly cookie.
+async function api(path, body) {
+  const res = await fetch(path, {
+    method: body ? 'POST' : 'GET',
+    headers: body ? { 'Content-Type': 'application/json' } : undefined,
+    body: body ? JSON.stringify(body) : undefined,
+    credentials: 'same-origin',
+  });
+  const data = await res.json().catch(() => ({}));
+  return { ok: res.ok, status: res.status, data };
+}
 
 export function AppProvider({ children }) {
   const [db, setDb] = useState(null);
-  const [userId, setUserId] = useState(() => read(SESSION_KEY, sessionStorage));
+  const [userId, setUserId] = useState(null);
+  const [checking, setChecking] = useState(true); // asking the server "am I still signed in?"
 
   useEffect(() => {
     (async () => {
@@ -20,6 +31,10 @@ export function AppProvider({ children }) {
       if (!d || d.version !== 1) { d = await buildSeed(); write(DB_KEY, d); }
       setDb(d);
     })();
+    api('/api/auth/me')
+      .then((r) => { if (r.ok) setUserId(r.data.user.id); })
+      .catch(() => { /* server offline: show the login screen */ })
+      .finally(() => setChecking(false));
   }, []);
 
   const update = useCallback((fn) => {
@@ -31,15 +46,23 @@ export function AppProvider({ children }) {
     });
   }, []);
 
+  // Returns { ok: true } or { ok: false, error: 'message to show' }
   const login = async (username, password) => {
-    const u = db.users.find((x) => x.username === username.trim());
-    if (!u || u.pw !== (await sha256(password))) return false;
-    setUserId(u.id); write(SESSION_KEY, u.id, sessionStorage);
-    return true;
+    try {
+      const r = await api('/api/auth/login', { username, password });
+      if (!r.ok) return { ok: false, error: r.data.error || 'Sign-in failed. Please try again.' };
+      setUserId(r.data.user.id);
+      return { ok: true };
+    } catch {
+      return { ok: false, error: "Can't reach the server. Check that it is running." };
+    }
   };
-  const logout = () => { setUserId(null); try { sessionStorage.removeItem(SESSION_KEY); } catch { /* ignore */ } };
+  const logout = async () => {
+    setUserId(null);
+    try { await api('/api/auth/logout', {}); } catch { /* ignore */ }
+  };
   const reset = async () => { const d = await buildSeed(); write(DB_KEY, d); setDb(d); };
 
   const user = db && userId ? db.users.find((u) => u.id === userId) || null : null;
-  return <Ctx.Provider value={{ db, user, update, login, logout, reset }}>{children}</Ctx.Provider>;
+  return <Ctx.Provider value={{ db, user, checking, update, login, logout, reset }}>{children}</Ctx.Provider>;
 }
