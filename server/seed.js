@@ -1,6 +1,7 @@
 // Fills the database with the simulated sample data (first run, or HR "Reset").
 import { buildSeed, DEMO_PASSWORD } from '../src/lib/seed.js';
-import { replaceAll, isEmpty } from './db.js';
+import { replaceAll, isEmpty, getDb, save } from './db.js';
+import { upgradeData } from './upgrade.js';
 import { hashPassword, encryptText } from './secrets.js';
 
 export async function seedDatabase() {
@@ -21,6 +22,10 @@ export function ensureSeeded() {
     if (isEmpty()) {
       await seedDatabase();
       console.log('[evalU] Database created with sample data (password for all accounts: demo1234).');
+    } else {
+      // a database from an earlier version: fill in the new fields (keeps all data)
+      const draft = structuredClone(getDb());
+      if (upgradeData(draft)) { save(draft); console.log('[evalU] Database upgraded to the current version.'); }
     }
   })();
   return ready;

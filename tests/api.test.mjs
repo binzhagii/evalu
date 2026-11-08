@@ -55,6 +55,19 @@ try {
   const tokenInDb = sql.prepare('SELECT token_hash FROM sessions').get().token_hash;
   assert.notEqual(tokenInDb, hr.split('=')[1], 'only a hash of the token is stored');
 
+  // FR1: sign in with the official UB email; other email addresses are refused
+  assert.equal((await call('/api/auth/login', { body: { username: 'fac_a1@ubaguio.edu', password: 'demo1234' } })).status, 200, 'UB email works');
+  assert.equal((await call('/api/auth/login', { body: { username: 'st_a01@s.ubaguio.edu', password: 'demo1234' } })).status, 200, 'student subdomain works');
+  assert.equal((await call('/api/auth/login', { body: { username: 'fac_a1@gmail.com', password: 'demo1234' } })).status, 403, 'non-UB email refused');
+
+  // FR10: the first data request of the day sends the automatic reminders (sample period is due in 5 days)
+  await call('/api/data', { cookie: hr });
+  assert.ok(sql.prepare("SELECT count(*) n FROM notifications WHERE kind='reminder'").get().n > 0, 'automatic reminders sent');
+  assert.ok(sql.prepare("SELECT last_auto FROM periods WHERE id='p4'").get().last_auto, 'automation recorded');
+  const remCount = sql.prepare("SELECT count(*) n FROM notifications").get().n;
+  await call('/api/data', { cookie: hr });
+  assert.equal(sql.prepare("SELECT count(*) n FROM notifications").get().n, remCount, 'only once a day');
+
   // lockout after 5 failures, other accounts unaffected
   for (let i = 0; i < 5; i++) await call('/api/auth/login', { body: { username: 'dean_c', password: 'bad' } });
   assert.equal((await call('/api/auth/login', { body: { username: 'dean_c', password: 'demo1234' } })).status, 429);
@@ -77,10 +90,11 @@ try {
   const fv = (await call('/api/data', { cookie: fac })).data;
   for (const t of fv.tasks.filter((x) => x.evaluatorId !== 'fac_a1')) {
     assert.equal(t.evaluatorId, null, 'faculty never sees evaluator identities');
-    assert.ok(!t.response || t.response.comment == null, 'faculty never sees comments');
     const p = fv.periods.find((x) => x.id === t.periodId);
-    if (p.releaseStage !== 'faculty') assert.ok(!t.response || t.response.redacted, 'unreleased: counts only, no answers');
+    if (p.releaseStage !== 'faculty') assert.ok(!t.response || (t.response.redacted && t.response.comment == null), 'unreleased: counts only, no answers, no comments');
   }
+  // FR14: own released results include verbatim comments, never who wrote them
+  assert.ok(fv.tasks.some((x) => x.targetId === 'fac_a1' && typeof x.response?.comment === 'string' && x.evaluatorId === null), 'faculty sees anonymous comments');
 
   const hv = (await call('/api/data', { cookie: hr })).data;
   assert.equal(hv.tasks.length, sql.prepare('SELECT count(*) n FROM tasks').get().n, 'HR sees all tasks');
@@ -104,10 +118,12 @@ try {
   assert.equal((await act(fac, 'submitEvaluation', { taskId: task.id, answers: {} })).status, 403);
   // full submit works and is stored in the answers table
   const all5 = Object.fromEntries(items.map((c) => [c, 5]));
-  const sub = await act(student, 'submitEvaluation', { taskId: task.id, answers: all5, comment: 'students cannot comment' });
+  const sub = await act(student, 'submitEvaluation', { taskId: task.id, answers: all5, comment: 'students can comment too' });
   assert.equal(sub.status, 200);
   assert.equal(sql.prepare('SELECT count(*) n FROM answers WHERE task_id=?').get(task.id).n, items.length);
-  assert.equal(sql.prepare('SELECT comment FROM responses WHERE task_id=?').get(task.id).comment, null, 'student comment dropped');
+  const stored = sql.prepare('SELECT comment, instrument_id FROM responses WHERE task_id=?').get(task.id);
+  assert.ok(stored.comment && !stored.comment.includes('students can comment'), 'FR14: student comment kept, encrypted');
+  assert.equal(stored.instrument_id, ins.id, 'FR4: form version stored with the response');
   assert.equal(sql.prepare('SELECT draft FROM tasks WHERE id=?').get(task.id).draft, null);
   assert.ok(sub.data.data.tasks.find((t) => t.id === task.id).response, 'reply contains refreshed data');
   // cannot submit twice
@@ -131,6 +147,77 @@ try {
   assert.equal((await act(hr, 'setGroupWeight', { targetType: 'DEAN', group: 'SEC', weight: 250 })).status, 400);
   assert.equal((await act(hr, 'setGroupWeight', { targetType: 'DEAN', group: 'SEC', weight: 25 })).status, 200);
   assert.equal(sql.prepare("SELECT weight FROM group_weights WHERE target_type='DEAN' AND evaluator_group='SEC'").get().weight, 25);
+  assert.equal(JSON.parse(sql.prepare('SELECT rules FROM periods WHERE id=?').get(pid).rules).DEAN.SEC, null, 'NFR8: closed period keeps its weights');
+  assert.equal(JSON.parse(sql.prepare("SELECT rules FROM periods WHERE id='p4'").get().rules).DEAN.SEC, 25, 'open period follows the change');
+  assert.equal((await act(hr, 'checkThreshold', { periodId: pid })).status, 409, 'closed period: final check already done');
+  const chk = await act(hr, 'checkThreshold', { periodId: 'p4' });
+  assert.ok(chk.data.result.flagged > 0);
+  assert.ok(sql.prepare("SELECT count(*) n FROM notifications WHERE kind='participation' AND user_id='dean_a'").get().n > 0, 'FR12: dean alerted');
+
+  /* ---------- FR17: Vice President approval before faculty release ---------- */
+  assert.equal((await act(hr, 'releaseNext', { periodId: 'p3' })).status, 409, 'needs every Director/VP approval');
+  assert.equal((await act(student, 'approveRelease', { periodId: 'p3' })).status, 403);
+  assert.equal((await act(dir1, 'approveRelease', { periodId: 'p3' })).status, 200);
+  assert.equal((await act(dir1, 'approveRelease', { periodId: 'p3' })).status, 409, 'not twice');
+  assert.equal((await act(hr, 'releaseNext', { periodId: 'p3' })).status, 409, 'still waiting for the VP');
+  assert.equal((await act(dir1, 'approveRelease', { periodId: 'p4' })).status, 409, 'only periods waiting for review');
+  const vp = await login('vp');
+  assert.equal((await act(vp, 'approveRelease', { periodId: 'p3' })).status, 200);
+  assert.equal((await act(hr, 'releaseNext', { periodId: 'p3' })).status, 200, 'released after both approved');
+  assert.ok(sql.prepare("SELECT count(*) n FROM notifications WHERE kind='release' AND user_id='fac_a1'").get().n > 0, 'faculty notified of release');
+  assert.ok((await call('/api/data', { cookie: fac })).data.tasks.some((x) => x.periodId === 'p3' && x.targetId === 'fac_a1' && x.response && !x.response.redacted), 'faculty now sees p3');
+
+  /* ---------- FR18: results requested by another office go to the dean ---------- */
+  assert.equal((await act(hr, 'recordResultRequest', { periodId: 'p4', targetId: 'fac_a1', office: 'VPAA' })).status, 409, 'not before release');
+  const rq = await act(hr, 'recordResultRequest', { periodId: 'p1', targetId: 'fac_a1', office: 'Office of the VPAA' });
+  assert.equal(rq.status, 200, rq.data.error);
+  assert.deepEqual(rq.data.result.sentTo, ['Dean A']);
+  const deanA = await login('dean_a');
+  const dav = (await call('/api/data', { cookie: deanA })).data;
+  assert.ok(dav.requests.some((x) => x.targetId === 'fac_a1' && x.office === 'Office of the VPAA'), 'dean sees the request');
+  assert.ok(dav.tasks.some((x) => x.periodId === 'p1' && x.targetId === 'fac_a1' && x.response && x.evaluatorId === null), 'FR16: dean sees department results, anonymous');
+  assert.ok(!dav.tasks.some((x) => x.periodId === 'p4' && x.targetId === 'fac_a1' && x.evaluatorId !== 'dean_a' && x.response && !x.response.redacted), 'not before release');
+  assert.equal((await call('/api/data', { cookie: student })).data.requests.length, 0);
+
+  /* ---------- FR4: used forms are locked; changes make a new version ---------- */
+  const usedForm = 'i_COLLEGE_FACULTY_ST';
+  assert.equal((await act(hr, 'setFormItemWeight', { instrumentId: usedForm, criterionId: 'c1', weight: 3 })).status, 409, 'used form is locked');
+  assert.equal((await act(hr, 'renameCriterion', { criterionId: 'c1', text: 'Reworded' })).status, 409, 'answered criterion keeps its wording');
+  const rev = await act(hr, 'reviseForm', { instrumentId: usedForm });
+  assert.equal(rev.status, 200); assert.equal(rev.data.result.version, 2);
+  assert.equal((await act(hr, 'setFormItemWeight', { instrumentId: rev.data.result.id, criterionId: 'c1', weight: 3 })).status, 200, 'new version is editable');
+  assert.equal((await act(hr, 'setFormItemCategory', { instrumentId: rev.data.result.id, criterionId: 'c1', category: 'Teaching' })).status, 200);
+  assert.equal((await act(hr, 'setFormCategoryWeight', { instrumentId: rev.data.result.id, category: 'Teaching', weight: 60 })).status, 200);
+  assert.equal(sql.prepare('SELECT active FROM instruments WHERE id=?').get(usedForm).active, 0, 'old version kept, inactive');
+  assert.equal(sql.prepare('SELECT count(*) n FROM responses WHERE instrument_id=?').get(usedForm).n > 0, true, 'past answers still point to the old version');
+
+  /* ---------- FR6: class lists ---------- */
+  const imp = await act(hr, 'importClassList', { csv: 'section code, subject, faculty, student\nNEW-A1, New Subject, fac_a1@ubaguio.edu, st_a01@s.ubaguio.edu\nNEW-A1, New Subject, fac_a1, st_b01\nBAD, X, st_a02, st_a01' });
+  assert.equal(imp.status, 200);
+  assert.equal(imp.data.result.created, 1); assert.equal(imp.data.result.enrolled, 1); assert.equal(imp.data.result.errorCount, 2);
+  assert.equal((await act(hr, 'createSection', { code: 'OJT-A', subject: 'Internship A', facultyId: 'fac_a1' })).status, 200);
+
+  /* ---------- FR8: a period for one department ---------- */
+  const pB = (await act(hr, 'createPeriod', { name: 'Dept B only', deadline: '2030-04-01', depts: ['B'] })).data.result.id;
+  await act(hr, 'generateTasks', { periodId: pB });
+  const deptsInB = sql.prepare('SELECT DISTINCT u.dept FROM tasks t JOIN users u ON u.id = t.target_id WHERE t.period_id=?').all(pB).map((x) => x.dept);
+  assert.deepEqual(deptsInB, ['B']);
+
+  /* ---------- FR21: earlier records ---------- */
+  const pr = await act(hr, 'importPastResults', { csv: 'user, period, score\nfac_a1@ubaguio.edu, AY 2021-22 Term 2, 4.1\nnobody, X, 4\nfac_a1, Y, 9' });
+  assert.equal(pr.data.result.added, 1); assert.equal(pr.data.result.errorCount, 2);
+  assert.ok((await call('/api/data', { cookie: fac })).data.pastResults.some((x) => x.periodLabel === 'AY 2021-22 Term 2'), 'faculty sees own earlier records');
+  assert.ok(!(await call('/api/data', { cookie: student })).data.pastResults.length, 'students see none');
+
+  /* ---------- FR20: audit log ---------- */
+  assert.equal((await act(dir1, 'logView', { periodId: 'p3', targetId: 'fac_a1', what: 'individual' })).status, 200);
+  assert.equal((await call('/api/audit', { cookie: student })).status, 403, 'only HR reads the audit log');
+  const audit = (await call('/api/audit', { cookie: hr })).data.entries;
+  const has = (action, re) => audit.some((e) => e.action === action && (!re || re.test(e.detail)));
+  assert.ok(has('releaseNext', /AY 2025-26 Term 2/), 'release logged');
+  assert.ok(has('approveRelease') && has('setGroupWeight') && has('signIn'), 'approvals, changes and sign-ins logged');
+  assert.ok(has('view', /individual result of Faculty A1/), 'views logged');
+  assert.ok(audit.every((e) => !/demo1234|MyOwnPass/.test(e.detail || '')), 'no passwords in the log');
   const c = await act(hr, 'addCriterion', { text: 'New criterion' });
   assert.equal((await act(hr, 'renameCriterion', { criterionId: c.data.result.id, text: 'Renamed' })).status, 200);
   assert.equal(sql.prepare('SELECT text FROM criteria WHERE id=?').get(c.data.result.id).text, 'Renamed');
@@ -140,10 +227,13 @@ try {
   const tryLogin = (username, password) => call('/api/auth/login', { body: { username, password } });
   const secA = hv.sections.find((x) => x.dept === 'A').id;
   assert.equal((await act(student, 'createUser', { name: 'X', username: 'xxx', role: 'HR', position: 'hr' })).status, 403, 'only HR creates accounts');
-  assert.equal((await act(hr, 'createUser', { name: 'Dup', username: 'st_a01', role: 'ST', position: 'student', dept: 'A' })).status, 409, 'username taken');
-  assert.equal((await act(hr, 'createUser', { name: 'Bad', username: 'a b', role: 'ST', position: 'student', dept: 'A' })).status, 400);
-  assert.equal((await act(hr, 'createUser', { name: 'Bad', username: 'bad1', role: 'ST', position: 'dean', dept: 'A' })).status, 400, 'position must fit role');
-  const made = await act(hr, 'createUser', { name: 'New Student', username: 'New.Student', role: 'ST', position: 'student', dept: 'A', sectionIds: [secA] });
+  assert.equal((await act(hr, 'createUser', { name: 'Dup', username: 'st_a01', email: 'dup@s.ubaguio.edu', role: 'ST', position: 'student', dept: 'A' })).status, 409, 'username taken');
+  assert.equal((await act(hr, 'createUser', { name: 'Dup', username: 'dup2', email: 'st_a01@s.ubaguio.edu', role: 'ST', position: 'student', dept: 'A' })).status, 409, 'email taken');
+  assert.equal((await act(hr, 'createUser', { name: 'Bad', username: 'a b', email: 'ab@s.ubaguio.edu', role: 'ST', position: 'student', dept: 'A' })).status, 400);
+  assert.equal((await act(hr, 'createUser', { name: 'Bad', username: 'bad1', email: 'bad1@ubaguio.edu', role: 'ST', position: 'dean', dept: 'A' })).status, 400, 'position must fit role');
+  assert.equal((await act(hr, 'createUser', { name: 'Bad', username: 'bad2', role: 'ST', position: 'student', dept: 'A' })).status, 400, 'FR1: email required');
+  assert.equal((await act(hr, 'createUser', { name: 'Bad', username: 'bad3', email: 'bad3@gmail.com', role: 'ST', position: 'student', dept: 'A' })).status, 400, 'FR1: UB email only');
+  const made = await act(hr, 'createUser', { name: 'New Student', username: 'New.Student', email: 'New.Student@s.ubaguio.edu', role: 'ST', position: 'student', dept: 'A', sectionIds: [secA] });
   assert.equal(made.status, 200, made.data.error);
   const { id: newId, tempPassword } = made.data.result;
   assert.equal(made.data.result.username, 'new.student');
@@ -174,11 +264,12 @@ try {
   assert.ok(sql.prepare('SELECT count(*) n FROM tasks WHERE period_id=? AND evaluator_id=?').get(p2, newId).n > 0, 'new student gets tasks');
 
   // edit
-  assert.equal((await act(hr, 'updateUser', { userId: newId, name: 'Renamed Student', username: 'new.student', role: 'ST', position: 'student', dept: 'A', sectionIds: [] })).status, 200);
+  assert.equal((await tryLogin('new.student@s.ubaguio.edu', 'MyOwnPass2026')).status, 200, 'new account signs in with UB email');
+  assert.equal((await act(hr, 'updateUser', { userId: newId, name: 'Renamed Student', username: 'new.student', email: 'new.student@s.ubaguio.edu', role: 'ST', position: 'student', dept: 'A', sectionIds: [] })).status, 200);
   assert.equal(sql.prepare('SELECT name FROM users WHERE id=?').get(newId).name, 'Renamed Student');
   assert.equal(sql.prepare('SELECT count(*) n FROM section_students WHERE student_id=?').get(newId).n, 0, 'removed from class');
-  assert.equal((await act(hr, 'updateUser', { userId: 'hr', name: 'HR', username: 'hr', role: 'DIR', position: 'director' })).status, 400, 'HR cannot drop own HR role');
-  assert.equal((await act(hr, 'updateUser', { userId: 'fac_a1', name: 'F', username: 'fac_a1', role: 'NTP', position: 'staff', dept: 'A' })).status, 409, 'teacher of a class stays faculty');
+  assert.equal((await act(hr, 'updateUser', { userId: 'hr', name: 'HR', username: 'hr', email: 'hr@ubaguio.edu', role: 'DIR', position: 'director' })).status, 400, 'HR cannot drop own HR role');
+  assert.equal((await act(hr, 'updateUser', { userId: 'fac_a1', name: 'F', username: 'fac_a1', email: 'fac_a1@ubaguio.edu', role: 'NTP', position: 'staff', dept: 'A' })).status, 409, 'teacher of a class stays faculty');
 
   // reset password: signed out, temporary password works and must be changed
   const ns2 = await login('new.student', 'MyOwnPass2026');

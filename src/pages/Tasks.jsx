@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useApp } from '../lib/store';
-import { GROUPS, taskStatus, userById, instrumentFor, targetType, periodById } from '../lib/logic';
+import { GROUPS, taskStatus, userById, formForTask, periodById } from '../lib/logic';
 import { Card, Badge, Avatar, Stat, Stats, Meter, Empty, Icon, dueText, pct } from '../ui';
 
 export default function Tasks() {
@@ -21,6 +21,7 @@ export default function Tasks() {
   return (
     <>
       {done && <div className="note ok"><Icon name="check" size={16} /> {done}</div>}
+      {user.role === 'ST' && <StudentRuleNote />}
       <Stats>
         <Stat icon="list" label="To do" value={todo.length} sub={todo.length ? dueText(nextDue) : 'All done'} tone={todo.length ? '' : 'good'} />
         <Stat icon="check" label="Submitted" value={finished.length} sub={`${pct(finished.length / mine.length)} of your evaluations`} tone="good" />
@@ -45,11 +46,18 @@ export default function Tasks() {
   );
 }
 
+/** IC6: students are told why every answer matters. */
+function StudentRuleNote() {
+  return (
+    <div className="note"><Icon name="alert" size={16} /> <b>Your answer counts for your whole class.</b> A class's evaluation is used only if <b>more than half of the class (half plus one)</b> answers it. For example, in a class of 40, at least 21 students must answer. Your name is never shown to your teacher.</div>
+  );
+}
+
 function TaskCard({ t, s, onOpen }) {
   const { db } = useApp();
   const tg = userById(db, t.targetId), p = periodById(db, t.periodId);
   const sec = db.sections.find((x) => x.id === t.sectionId);
-  const ins = instrumentFor(db, targetType(db, tg), t.group);
+  const ins = formForTask(db, t);
   const answered = t.draft ? Object.keys(t.draft.answers || {}).length : 0;
   return (
     <div className={`task-card ${s}`}>
@@ -73,14 +81,13 @@ function EvalForm({ taskId, onClose, onDone }) {
   const { db, act } = useApp();
   const task = db.tasks.find((t) => t.id === taskId);
   const target = userById(db, task.targetId);
-  const ins = instrumentFor(db, targetType(db, target), task.group);
+  const ins = formForTask(db, task);
   const sec = db.sections.find((x) => x.id === task.sectionId);
   const [answers, setAnswers] = useState(task.draft?.answers || {});
   const [comment, setComment] = useState(task.draft?.comment || '');
   const [errors, setErrors] = useState([]);
   const [confirm, setConfirm] = useState(false);
   const [busy, setBusy] = useState(false);
-  const hasComment = task.group === 'DEAN' || task.group === 'CHAIR';
   const crit = (id) => db.criteria.find((c) => c.id === id)?.text || id;
   const answered = ins.items.filter((it) => answers[it.criterionId] != null).length;
 
@@ -118,6 +125,7 @@ function EvalForm({ taskId, onClose, onDone }) {
         </div>
         <div className="meter-row"><span>{answered} of {ins.items.length} answered</span><Meter value={answered / ins.items.length} tone="brand" /></div>
         <p className="muted">Rate each statement from <b>1 (lowest)</b> to <b>5 (highest)</b>. Your answers are private: the person you evaluate never sees your name.</p>
+        {task.group === 'ST' && <p className="muted">This class's evaluation counts only if more than half of the class (half plus one) answers.</p>}
       </Card>
 
       {errors.length > 0 && <div className="note warn"><Icon name="alert" size={16} /> {errors.length} item(s) are not answered yet. They are marked in red below. Your other answers are kept.</div>}
@@ -138,12 +146,13 @@ function EvalForm({ taskId, onClose, onDone }) {
         </div>
       ))}
 
-      {hasComment && (
-        <Card title="Comments (optional)">
-          <p className="muted">Only HR and Directors/VPs can read comments. They are stored encrypted.</p>
-          <textarea rows={4} value={comment} maxLength={2000} onChange={(e) => setComment(e.target.value)} placeholder="Write any comments about this person's performance…" />
-        </Card>
-      )}
+      <Card title="Comments (optional)">
+        <p className="muted">
+          Your comment is stored encrypted and shown word for word in this person's results, grouped with other comments from {GROUPS[task.group]}, <b>without your name</b>.
+          {task.group !== 'ST' && ' Because only one or two people evaluate in this group, the person may still guess who wrote it.'}
+        </p>
+        <textarea rows={4} value={comment} maxLength={2000} onChange={(e) => setComment(e.target.value)} placeholder="Write any comments about this person's performance…" />
+      </Card>
 
       <div className="action-bar">
         {!confirm ? (

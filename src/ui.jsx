@@ -1,5 +1,5 @@
 import { createContext, useContext, useState } from 'react';
-import { THRESHOLD } from './lib/logic';
+import { LOW_ITEM } from './lib/logic';
 
 /** go('reports') switches the page (provided by the app shell). */
 export const NavContext = createContext(() => {});
@@ -104,12 +104,42 @@ export function Empty({ icon = 'check', title, children }) {
 export function RuleNote() {
   return (
     <div className="note">
-      <b>How the 50% rule works.</b> A class section's student evaluation counts only if at least half of the
-      enrolled students submit it (for example, 21 of 40 students). If fewer than {pct(THRESHOLD)} respond, that
-      section's student evaluation is set aside (invalidated) and the faculty member is notified.
+      <b>How the 50%-plus-one rule works.</b> A class's student evaluation counts only if at least <b>half of the
+      class plus one</b> student answer it (for example, 26 of 50, or 6 of 10). If fewer answer, that class is left
+      out of the teacher's result, and the teacher, the department heads and HR are notified. Internship, practicum
+      and field trip subjects are not evaluated.
     </div>
   );
 }
+
+/** FR15/FR19: per-item results: mean, number of answers and how many gave each rating 1–5. */
+export function ItemTable({ rows, criteria, categoryOf }) {
+  if (!rows.length) return <p className="muted">No answers to show.</p>;
+  const text = (id) => criteria.find((c) => c.id === id)?.text || id;
+  const sorted = categoryOf ? [...rows].sort((a, b) => (categoryOf(a.criterionId) || '').localeCompare(categoryOf(b.criterionId) || '')) : rows;
+  return (
+    <table className="items">
+      <thead><tr><th>Item</th><th>Mean</th><th>Answers</th><th className="dist-h">Ratings 1 · 2 · 3 · 4 · 5</th></tr></thead>
+      <tbody>
+        {sorted.flatMap((r, i) => {
+          const cat = categoryOf?.(r.criterionId);
+          const head = categoryOf && (i === 0 || cat !== categoryOf(sorted[i - 1].criterionId)) ? [<tr key={'c' + r.criterionId} className="cat-row"><td colSpan={4}>{cat}</td></tr>] : [];
+          return [...head, (
+            <tr key={r.criterionId} className={r.low ? 'low' : ''}>
+              <td>{text(r.criterionId)} {r.low && <Badge kind="overdue">below {LOW_ITEM.toFixed(2)}</Badge>}</td>
+              <td><b>{fmt(r.mean)}</b></td>
+              <td>{r.n}</td>
+              <td><span className="dist">{r.dist.map((c, i) => <span key={i} title={`${c} rated ${i + 1}`} style={{ flexGrow: c || 0.0001 }} className={`d${i + 1}`}>{c || ''}</span>)}</span></td>
+            </tr>
+          )];
+        })}
+      </tbody>
+    </table>
+  );
+}
+
+/** FR15: print the page or save it as a PDF (the browser's print dialog). */
+export const PrintButton = ({ label = 'Print / save as PDF' }) => <button className="ghost no-print" onClick={() => window.print()}>{label}</button>;
 
 export function Select({ value, onChange, children, ...p }) {
   return (
