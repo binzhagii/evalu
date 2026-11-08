@@ -64,6 +64,7 @@ export function MyAccount() {
           <tbody>
             <tr><th>Name</th><td>{user.name}</td></tr>
             <tr><th>Username</th><td>{user.username}</td></tr>
+            <tr><th>UB email</th><td>{user.email || '—'}</td></tr>
             <tr><th>Role</th><td>{ROLES[user.role]}{Object.keys(POSITIONS[user.role] || {}).length > 1 && ` — ${POSITIONS[user.role][user.position] || user.position}`}</td></tr>
             {user.dept && <tr><th>Department</th><td>{deptName(db, user.dept)}</td></tr>}
           </tbody>
@@ -79,7 +80,7 @@ export function MyAccount() {
 }
 
 /* ---------------- HR: accounts ---------------- */
-const EMPTY = { name: '', username: '', role: 'ST', position: 'student', dept: '', sectionIds: [] };
+const EMPTY = { name: '', username: '', email: '', role: 'ST', position: 'student', dept: '', sectionIds: [] };
 
 function AccountForm({ initial, onSave, onCancel, saveLabel }) {
   const { db } = useApp();
@@ -93,7 +94,9 @@ function AccountForm({ initial, onSave, onCancel, saveLabel }) {
       <div className="row">
         <label>Full name<br /><input value={f.name} onChange={(e) => set('name', e.target.value)} placeholder="e.g. Juan Dela Cruz" /></label>
         <label>Username<br /><input value={f.username} onChange={(e) => set('username', e.target.value.toLowerCase())} placeholder="e.g. 20226699" /></label>
+        <label>Official UB email<br /><input type="email" value={f.email} onChange={(e) => set('email', e.target.value.toLowerCase())} placeholder={f.role === 'ST' ? 'e.g. 20226699@s.ubaguio.edu' : 'e.g. jdelacruz@ubaguio.edu'} /></label>
       </div>
+      <p className="muted">People sign in with this email. Only official UB addresses (ending in ubaguio.edu) are accepted.</p>
       <div className="row">
         <label>Role<br /><Select value={f.role} onChange={setRole}>{Object.entries(ROLES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</Select></label>
         <label>Position<br /><Select value={f.position} onChange={(v) => set('position', v)}>{Object.entries(POSITIONS[f.role]).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</Select></label>
@@ -168,7 +171,7 @@ export function Accounts() {
 
   const s = q.trim().toLowerCase();
   const list = db.users.filter((u) => (!role || u.role === role) && (showInactive || u.active)
-    && (!s || u.name.toLowerCase().includes(s) || u.username.toLowerCase().includes(s)));
+    && (!s || u.name.toLowerCase().includes(s) || u.username.toLowerCase().includes(s) || (u.email || '').toLowerCase().includes(s)));
 
   return (
     <>
@@ -187,23 +190,23 @@ export function Accounts() {
 
       <Card title={`Accounts (${list.length})`} actions={
         <div className="row" style={{ margin: 0 }}>
-          <input placeholder="Search name or username" value={q} onChange={(e) => setQ(e.target.value)} />
+          <input placeholder="Search name, username or email" value={q} onChange={(e) => setQ(e.target.value)} />
           <Select value={role} onChange={setRole}><option value="">All roles</option>{Object.entries(ROLES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</Select>
           <label className="inline muted"><input type="checkbox" checked={showInactive} onChange={(e) => setShowInactive(e.target.checked)} /> Show deactivated</label>
         </div>
       }>
         <table>
-          <thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Department</th><th>Status</th><th>Actions</th></tr></thead>
+          <thead><tr><th>Name</th><th>Username / email</th><th>Role</th><th>Department</th><th>Status</th><th>Actions</th></tr></thead>
           <tbody>
             {list.map((u) => editing === u.id ? (
               <tr key={u.id}><td colSpan={6}>
-                <AccountForm initial={{ name: u.name, username: u.username, role: u.role, position: u.position, dept: u.dept || '', sectionIds: enrolled(u.id) }}
+                <AccountForm initial={{ name: u.name, username: u.username, email: u.email || '', role: u.role, position: u.position, dept: u.dept || '', sectionIds: enrolled(u.id) }}
                   onSave={update} onCancel={() => setEditing(null)} saveLabel="Save changes" />
               </td></tr>
             ) : (
               <tr key={u.id} className={u.active ? '' : 'inactive'}>
                 <td><span className="who-cell"><Avatar name={u.name} size={30} />{u.name}{u.id === user.id && <span className="muted"> (you)</span>}</span></td>
-                <td><code>{u.username}</code></td>
+                <td><code>{u.username}</code><br /><span className="muted">{u.email}</span></td>
                 <td>{POSITIONS[u.role]?.[u.position] || u.position}<br /><span className="muted">{ROLES[u.role]}</span></td>
                 <td>{u.dept ? deptName(db, u.dept) : '—'}</td>
                 <td>

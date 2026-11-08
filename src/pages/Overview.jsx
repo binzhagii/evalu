@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useApp } from '../lib/store';
-import { GROUPS, STAGES, taskStatus, sectionStats, userById, computeAll, canSeeAll, THRESHOLD } from '../lib/logic';
+import { GROUPS, STAGES, taskStatus, sectionStats, userById, computeAll, canSeeAll, THRESHOLD, hasFinal, pendingApprovals } from '../lib/logic';
+import { ApprovalPanel } from './Reports';
 import { Card, Stat, Stats, Meter, Badge, Empty, PeriodPicker, Icon, useNav, fmt, pct, dueText, daysUntil } from '../ui';
 
 const STAGE_SHORT = { hr: 'HR only', dir: 'Directors/VPs', faculty: 'Faculty' };
@@ -35,7 +36,7 @@ export function HROverview() {
       <Stats>
         <Stat icon="check" label="Responses received" value={tasks.length ? pct(done / tasks.length) : '—'} sub={`${done} of ${tasks.length} evaluations in open periods`} tone="good" />
         <Stat icon="clock" label="Overdue evaluations" value={overdue} sub={overdue ? 'Send reminders under Assignments' : 'Nothing overdue'} tone={overdue ? 'bad' : ''} />
-        <Stat icon="chart" label="Classes below 50%" value={`${low.length} / ${classes.length}`} sub="Would be invalidated if closed now" tone={low.length ? 'warn' : ''} />
+        <Stat icon="chart" label="Classes below half + 1" value={`${low.length} / ${classes.length}`} sub="Would be excluded if closed now" tone={low.length ? 'warn' : ''} />
         <Stat icon="users" label="Active accounts" value={active.length} sub={waiting ? `${waiting} not signed in yet` : 'All have signed in'} />
       </Stats>
 
@@ -63,12 +64,12 @@ export function HROverview() {
         </Card>
 
         <Card title="Classes needing attention" actions={<button className="ghost" onClick={() => go('monitor')}>See all</button>}>
-          {low.length === 0 ? <Empty title="Every class meets the 50% rule" /> : (
+          {low.length === 0 ? <Empty title="Every class meets the 50%-plus-one rule" /> : (
             <ul className="plain-list">
               {low.slice(0, 6).map(({ p, st }) => (
                 <li key={p.id + st.section.id}>
                   <div><b>{st.section.code}</b> <span className="muted">· {userById(db, st.section.facultyId)?.name}{open.length > 1 ? ` · ${p.name}` : ''}</span></div>
-                  <div className="meter-row"><Meter value={st.rate} mark={THRESHOLD} /><span>{st.responded}/{st.required}</span></div>
+                  <div className="meter-row"><Meter value={st.rate} mark={THRESHOLD} /><span>{st.responded}/{st.required} <span className="muted">needs {st.needed}</span></span></div>
                 </li>
               ))}
               {low.length > 6 && <li className="muted">and {low.length - 6} more…</li>}
@@ -79,13 +80,14 @@ export function HROverview() {
 
       <Card title="Results release" actions={<button className="ghost" onClick={() => go('periods')}>Manage</button>}>
         <table>
-          <thead><tr><th>Period</th><th>Status</th><th>Who can see results</th></tr></thead>
+          <thead><tr><th>Period</th><th>Status</th><th>Who can see results</th><th>VP approval</th></tr></thead>
           <tbody>
             {[...db.periods].reverse().map((p) => (
               <tr key={p.id}>
                 <td>{p.name}</td>
                 <td>{p.status === 'open' ? <Badge kind="info">open</Badge> : <Badge kind="muted">closed</Badge>}</td>
                 <td><ReleaseSteps stage={p.releaseStage} /></td>
+                <td>{p.releaseStage === 'hr' ? <span className="muted">—</span> : p.releaseStage === 'faculty' ? <Badge kind="completed">approved</Badge> : pendingApprovals(db, p).length ? <Badge kind="pending">waiting for {pendingApprovals(db, p).length}</Badge> : <Badge kind="completed">ready to release</Badge>}</td>
               </tr>
             ))}
           </tbody>
@@ -104,7 +106,8 @@ export function DirectorOverview() {
   const all = useMemo(() => (pid ? computeAll(db, pid) : []), [db, pid]);
   if (!periods.length) return <Card><Empty icon="clock" title="No results released to you yet">HR releases results to Directors/VPs after a period is closed.</Empty></Card>;
 
-  const complete = all.filter((r) => r.status === 'complete');
+  const complete = all.filter(hasFinal);
+  const toApprove = periods.filter((p) => p.releaseStage === 'dir');
   const avg = (list) => (list.length ? list.reduce((a, r) => a + r.final, 0) / list.length : null);
   const secs = db.sections.map((s) => sectionStats(db, pid, s.id)).filter((s) => s.required);
   const invalid = secs.filter((s) => !s.valid).length;
@@ -115,11 +118,17 @@ export function DirectorOverview() {
 
   return (
     <>
+      {toApprove.map((p) => (
+        <Card key={p.id} title={`Waiting for review: ${p.name}`} actions={<button className="ghost" onClick={() => { setPid(p.id); go('reports'); }}>Review results</button>}>
+          <p className="muted">HR has sent these results to the Directors/VPs. Review them, then approve. Faculty can see their results only after every Director/VP approves and HR releases them.</p>
+          <ApprovalPanel period={p} />
+        </Card>
+      ))}
       <div className="row between"><span className="muted">Showing results for</span><PeriodPicker periods={periods} value={pid} onChange={setPid} /></div>
       <Stats>
-        <Stat icon="star" label="Average final score" value={fmt(avg(complete))} sub="out of 5, complete results only" tone="good" />
-        <Stat icon="users" label="Personnel with a final score" value={`${complete.length} / ${all.length}`} sub={all.length - complete.length ? `${all.length - complete.length} incomplete or waiting for weights` : 'All complete'} />
-        <Stat icon="chart" label="Class sections invalidated" value={`${invalid} / ${secs.length}`} sub="fewer than 50% of students answered" tone={invalid ? 'warn' : ''} />
+        <Stat icon="star" label="Average final score" value={fmt(avg(complete))} sub="out of 5" tone="good" />
+        <Stat icon="users" label="Personnel with a final score" value={`${complete.length} / ${all.length}`} sub={all.length - complete.length ? `${all.length - complete.length} without a score yet` : 'All have a final score'} />
+        <Stat icon="chart" label="Class sections excluded" value={`${invalid} / ${secs.length}`} sub="fewer than half of the class + 1 answered" tone={invalid ? 'warn' : ''} />
         <Stat icon="calendar" label="Periods released to you" value={periods.length} />
       </Stats>
       <Card title="Average final score by department" actions={<><button className="ghost" onClick={() => go('analytics')}>Analytics</button><button onClick={() => go('reports')}>Full reports</button></>}>
@@ -128,10 +137,10 @@ export function DirectorOverview() {
             <span>{d.name}</span>
             <Meter value={a == null ? 0 : a / 5} tone="brand" />
             <b>{fmt(a)}</b>
-            <span className="muted">{n}/{total} complete</span>
+            <span className="muted">{n}/{total} with a score</span>
           </div>
         ))}
-        <p className="muted">Scores need every evaluator group's weight. Groups HR hasn't set weights for show "—".</p>
+        <p className="muted">If an evaluator group has no valid result, its weight is removed and the score is computed over the rest. People whose weights HR hasn't set show "—".</p>
       </Card>
     </>
   );

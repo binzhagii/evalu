@@ -2,7 +2,7 @@
 // All names, criteria text and ratings below are SAMPLE data, editable in the app.
 // Used by the server (server/seed.js) to fill an empty database, and by the tests.
 // Passwords are not part of this data; the server hashes DEMO_PASSWORD for every account.
-import { generateTasks, runThresholdCheck, instrumentFor, targetType } from './logic.js';
+import { generateTasks, runThresholdCheck, formForTask, targetType, effectiveWeights } from './logic.js';
 
 export const DEMO_PASSWORD = 'demo1234';
 
@@ -13,22 +13,25 @@ function rng(seed) {
 
 export function buildSeed() {
   const R = rng(2026);
-  const db = { version: 1, departments: [], users: [], sections: [], criteria: [], instruments: [], rules: {}, periods: [], tasks: [], notifications: [] };
+  const db = { version: 1, departments: [], users: [], sections: [], criteria: [], instruments: [], rules: {}, periods: [], tasks: [], requests: [], pastResults: [], notifications: [] };
   db.departments = [
     { id: 'A', name: 'Department A (College)', kind: 'college' },
     { id: 'B', name: 'Department B (College)', kind: 'college' },
     { id: 'C', name: 'Department C (College)', kind: 'college' },
     { id: 'BE', name: 'Basic Education', kind: 'basic' },
   ];
-  const U = (id, name, role, position, dept) => db.users.push({ id, username: id, name, role, position, dept });
+  // FR1: every account has an official UB email (students use the s.ubaguio.edu subdomain)
+  const U = (id, name, role, position, dept) => db.users.push({ id, username: id, email: `${id}@${role === 'ST' ? 's.' : ''}ubaguio.edu`, name, role, position, dept });
   U('hr', 'HR Specialist (Sample)', 'HR', 'hr', null);
   U('director', 'Director/VP (Sample)', 'DIR', 'director', null);
+  U('vp', 'Vice President (Sample)', 'DIR', 'vp', null); // FR17: both must approve before faculty release
   for (const d of ['a', 'b', 'c']) {
     const D = d.toUpperCase();
     U(`dean_${d}`, `Dean ${D}`, 'TP', 'dean', D);
     U(`chair_${d}`, `Program Chair ${D}`, 'TP', 'chair', D);
     U(`sec_${d}`, `Secretary ${D}`, 'NTP', 'secretary', D);
     U(`staff_${d}`, `Staff ${D}`, 'NTP', 'staff', D);
+    U(`head_${d}`, `Office Head ${D}`, 'NTP', 'head', D); // Table 6: head and staff evaluate each other
     U(`fac_${d}1`, `Faculty ${D}1`, 'TP', 'faculty', D);
     U(`fac_${d}2`, `Faculty ${D}2`, 'TP', 'faculty', D);
   }
@@ -51,6 +54,8 @@ export function buildSeed() {
   facs.forEach((f, i) => {
     db.sections.push({ id: `sec${i + 1}`, code: `SEC-${f.dept}${(i % 2) + 1}`, subject: `Sample Subject ${f.dept}${(i % 2) + 1}`, facultyId: f.id, dept: f.dept, studentIds: students[f.dept] });
   });
+  // FR6: practicum, internship and field trip subjects are on the class lists but are not evaluated
+  db.sections.push({ id: 'sec9', code: 'PRAC-A', subject: 'Practicum A (sample)', facultyId: 'fac_a2', dept: 'A', studentIds: students.A.slice(0, 6) });
 
   const bank = {
     ST: ['Explains lessons clearly', 'Is prepared for class', 'Treats students fairly and respectfully', 'Gives timely feedback on work', 'Starts and ends class on time'],
@@ -61,45 +66,58 @@ export function buildSeed() {
     PRIN: ['Meets teaching and academic responsibilities', 'Follows institutional policies', 'Works well with colleagues'],
     APRIN: ['Meets teaching and academic responsibilities', 'Follows institutional policies', 'Works well with colleagues'],
     SHEAD: ['Follows the curriculum and syllabus', 'Submits requirements on time', 'Collaborates with the subject team'],
+    NTPHEAD: ['Completes assigned work accurately', 'Is punctual and reliable', 'Works well with the office team'],
+    NTPSTAFF: ['Gives clear direction to the office', 'Is fair and approachable', 'Supports the staff in their work'],
   };
+  // Table 6 (Basic Ed student tool): items are grouped into weighted categories
+  const BE_CATEGORIES = { 'Management of the Teaching and Learning Process': 60, 'Assessment of Learners and Learning Environment': 40 };
+  const beCategory = (t) => (['Gives timely feedback on work', 'Treats students fairly and respectfully'].includes(t) ? 'Assessment of Learners and Learning Environment' : 'Management of the Teaching and Learning Process');
   const cid = {};
   for (const list of Object.values(bank))
     for (const text of list) {
       if (!cid[text]) { cid[text] = `c${Object.keys(cid).length + 1}`; db.criteria.push({ id: cid[text], text }); }
     }
-  const inst = (targetType, group) =>
-    db.instruments.push({ id: `i_${targetType}_${group}`, name: `${targetType} / ${group} (sample)`, targetType, group, items: bank[group].map((t) => ({ criterionId: cid[t], weight: 1 })) });
+  const inst = (targetType, group, categories = null) =>
+    db.instruments.push({
+      id: `i_${targetType}_${group}`, name: `${targetType} / ${group} (sample)`, targetType, group, dept: null, version: 1, active: true,
+      categories: categories || {}, items: bank[group].map((t) => ({ criterionId: cid[t], weight: 1, ...(categories && { category: beCategory(t) }) })),
+    });
   ['ST', 'DEAN', 'CHAIR'].forEach((g) => inst('COLLEGE_FACULTY', g));
-  ['ST', 'PRIN', 'APRIN', 'SHEAD'].forEach((g) => inst('BASICED_TEACHER', g));
+  inst('BASICED_TEACHER', 'ST', BE_CATEGORIES);
+  ['PRIN', 'APRIN', 'SHEAD'].forEach((g) => inst('BASICED_TEACHER', g));
   ['CHAIR', 'SEC', 'FAC'].forEach((g) => inst('DEAN', g));
+  inst('NTP_STAFF', 'NTPHEAD');
+  inst('NTP_HEAD', 'NTPSTAFF');
 
-  // Weights: only College faculty (40/40/20) are given in the manuscript. Others stay null until HR sets them.
+  // Weights from Table 6 of the manuscript. Weights for evaluating Deans are not given, so they stay blank
+  // until HR enters them. Non-teaching personnel have one evaluator group each, so it counts 100%.
   db.rules = {
     COLLEGE_FACULTY: { ST: 40, DEAN: 40, CHAIR: 20 },
-    BASICED_TEACHER: { ST: null, PRIN: null, APRIN: null, SHEAD: null },
+    BASICED_TEACHER: { ST: 40, PRIN: 20, APRIN: 20, SHEAD: 20 },
     DEAN: { CHAIR: null, SEC: null, FAC: null },
+    NTP_STAFF: { NTPHEAD: 100 },
+    NTP_HEAD: { NTPSTAFF: 100 },
   };
 
   const day = 86400000;
   const iso = (ms) => new Date(ms).toISOString().slice(0, 10);
   const now = Date.now();
+  const rules = () => JSON.parse(JSON.stringify(db.rules)); // NFR8: each period keeps its own weights
+  const approved = (ms) => [{ userId: 'director', at: new Date(ms).toISOString() }, { userId: 'vp', at: new Date(ms).toISOString() }];
   db.periods = [
-    { id: 'p1', name: 'AY 2024-25 Term 2 (sample)', deadline: iso(now - 420 * day), status: 'closed', releaseStage: 'faculty', thresholdChecked: true },
-    { id: 'p2', name: 'AY 2025-26 Term 1 (sample)', deadline: iso(now - 240 * day), status: 'closed', releaseStage: 'faculty', thresholdChecked: true },
-    { id: 'p3', name: 'AY 2025-26 Term 2 (sample)', deadline: iso(now - 90 * day), status: 'closed', releaseStage: 'dir', thresholdChecked: true },
-    { id: 'p4', name: 'AY 2026-27 Term 1 (current, sample)', deadline: iso(now + 14 * day), status: 'open', releaseStage: 'hr', thresholdChecked: false },
+    { id: 'p1', name: 'AY 2024-25 Term 2 (sample)', deadline: iso(now - 420 * day), status: 'closed', releaseStage: 'faculty', thresholdChecked: true, rules: rules(), depts: null, approvals: approved(now - 400 * day) },
+    { id: 'p2', name: 'AY 2025-26 Term 1 (sample)', deadline: iso(now - 240 * day), status: 'closed', releaseStage: 'faculty', thresholdChecked: true, rules: rules(), depts: null, approvals: approved(now - 220 * day) },
+    { id: 'p3', name: 'AY 2025-26 Term 2 (sample)', deadline: iso(now - 90 * day), status: 'closed', releaseStage: 'dir', thresholdChecked: true, rules: rules(), depts: null, approvals: [] },
+    { id: 'p4', name: 'AY 2026-27 Term 1 (current, sample)', deadline: iso(now + 5 * day), status: 'open', releaseStage: 'hr', thresholdChecked: false, rules: rules(), depts: null, approvals: [] },
   ];
 
   const baseline = {}; // per-target quality
   db.users.forEach((u) => { if (targetType(db, u)) baseline[u.id] = 3.2 + R() * 1.4; });
   const answer = (task, drift) => {
-    const ins = instrumentFor(db, targetType(db, db.users.find((u) => u.id === task.targetId)), task.group);
-    const answers = {}, weights = {};
-    for (const it of ins.items) {
-      answers[it.criterionId] = Math.max(1, Math.min(5, Math.round(baseline[task.targetId] + drift + (R() - 0.5) * 1.6)));
-      weights[it.criterionId] = it.weight;
-    }
-    return { answers, weights, comment: null, submittedAt: new Date().toISOString() };
+    const ins = formForTask(db, task);
+    const answers = {};
+    for (const it of ins.items) answers[it.criterionId] = Math.max(1, Math.min(5, Math.round(baseline[task.targetId] + drift + (R() - 0.5) * 1.6)));
+    return { answers, weights: effectiveWeights(ins), instrumentId: ins.id, comment: null, submittedAt: new Date().toISOString() };
   };
 
   for (const [pi, p] of db.periods.entries()) {
@@ -121,9 +139,17 @@ export function buildSeed() {
       if (doIt) t.response = answer(t, drift);
     }
   }
-  // sample restricted comments on a few dean/chair responses (plain text here; the server encrypts them)
+  // sample comments (plain text here; the server encrypts them). Shown verbatim, grouped by source, never with a name.
   for (const t of db.tasks.filter((x) => x.response && (x.group === 'DEAN' || x.group === 'CHAIR')).slice(0, 6))
     t.response.comment = 'Sample verbatim comment from the evaluator (restricted).';
+  const studentNotes = ['Sample comment: the lessons are clear and well prepared.', 'Sample comment: please give feedback on our work sooner.', 'Sample comment: the class always starts on time.'];
+  db.tasks.filter((x) => x.response && x.group === 'ST').filter((_, i) => i % 9 === 0).forEach((t, i) => { t.response.comment = studentNotes[i % studentNotes.length]; });
+  // FR21: a few final ratings imported from the records kept before evalU (2022 onward)
+  const imported = new Date(now - 500 * day).toISOString();
+  [['fac_a1', 3.91], ['fac_a2', 4.12], ['fac_b1', 3.67], ['fac_be1', 4.25]].forEach(([userId, v], i) => {
+    db.pastResults.push({ id: `pr${i + 1}`, userId, periodLabel: 'AY 2022-23 Term 1 (imported sample)', final: v, note: 'From the HRMC computation system', importedAt: imported });
+    db.pastResults.push({ id: `pr${i + 11}`, userId, periodLabel: 'AY 2023-24 Term 1 (imported sample)', final: Math.round((v + 0.08) * 100) / 100, note: 'From the HRMC computation system', importedAt: imported });
+  });
   runThresholdCheck(db, 'p1'); runThresholdCheck(db, 'p2'); runThresholdCheck(db, 'p3');
   db.notifications.forEach((n) => (n.read = true));
   return db;

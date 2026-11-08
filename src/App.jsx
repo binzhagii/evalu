@@ -4,8 +4,8 @@ import { ROLES, POSITIONS } from './lib/logic';
 import { Icon, Avatar, NavContext } from './ui';
 import { HROverview, DirectorOverview } from './pages/Overview';
 import Tasks from './pages/Tasks';
-import { Periods, Assignments, Forms, Weights, Monitor } from './pages/HR';
-import Reports from './pages/Reports';
+import { Periods, Assignments, Forms, Weights, Monitor, Classes, AuditLog } from './pages/HR';
+import Reports, { DeptResults } from './pages/Reports';
 import Analytics from './pages/Analytics';
 import { Notifications, MyResults } from './pages/Misc';
 import { Accounts, MyAccount, ForcedPasswordChange } from './pages/Accounts';
@@ -13,8 +13,8 @@ import './index.css';
 
 const DEMO_PASSWORD = 'demo1234'; // sample accounts only (see server/seed.js)
 const DEMO = [
-  ['hr', 'HR Specialist'], ['director', 'Director/VP'], ['dean_a', 'Dean'], ['chair_a', 'Program Chair'],
-  ['fac_a1', 'Faculty'], ['sec_a', 'Secretary (NTP)'], ['principal', 'Principal'], ['st_a01', 'Student'],
+  ['hr', 'HR Specialist'], ['director', 'Director'], ['vp', 'Vice President'], ['dean_a', 'Dean'], ['chair_a', 'Program Chair'],
+  ['fac_a1', 'Faculty'], ['sec_a', 'Secretary (NTP)'], ['head_a', 'Office Head (NTP)'], ['principal', 'Principal'], ['st_a01', 'Student'],
 ];
 
 function Login() {
@@ -23,13 +23,13 @@ function Login() {
   const [show, setShow] = useState(false); const [busy, setBusy] = useState(false); const [caps, setCaps] = useState(false);
   const go = async (e) => {
     e.preventDefault();
-    if (!u.trim() || !p) { setErr('Enter your username and password.'); return; }
+    if (!u.trim() || !p) { setErr('Enter your UB email and password.'); return; }
     setBusy(true); setErr('');
     const r = await login(u.trim(), p);
     setBusy(false);
     if (!r.ok) setErr(r.error);
   };
-  const pick = (id) => { setU(id); setP(DEMO_PASSWORD); setErr(''); };
+  const pick = (id) => { setU(`${id}@${id.startsWith('st_') ? 's.' : ''}ubaguio.edu`); setP(DEMO_PASSWORD); setErr(''); };
   return (
     <div className="login-wrap">
       <div className="login-bg" aria-hidden="true" />
@@ -48,10 +48,10 @@ function Login() {
             </div>
           </div>
           <label className="field">
-            <span>Username</span>
+            <span>UB email</span>
             <div className={'input-icon' + (err ? ' bad' : '')}>
               <Icon name="user" />
-              <input value={u} onChange={(e) => { setU(e.target.value); setErr(''); }} autoFocus autoComplete="username" placeholder="Enter your username" />
+              <input value={u} onChange={(e) => { setU(e.target.value); setErr(''); }} autoFocus autoComplete="username" placeholder="name@ubaguio.edu" />
             </div>
           </label>
           <label className="field">
@@ -76,12 +76,12 @@ function Login() {
           </div>
           <div className="chips">
             {DEMO.map(([id, l]) => (
-              <button key={id} type="button" className={'chip' + (u === id ? ' on' : '')} onClick={() => pick(id)}>
+              <button key={id} type="button" className={'chip' + (u.startsWith(id + '@') ? ' on' : '')} onClick={() => pick(id)}>
                 <b>{l}</b><small>{id}</small>
               </button>
             ))}
           </div>
-          <p>More: dean_b, dean_c, chair_b, fac_b1, fac_be1, shead, aprincipal, st_b01 … All data is sample data.</p>
+          <p>Sign in with the UB email (e.g. <code>dean_b@ubaguio.edu</code>, students <code>st_b01@s.ubaguio.edu</code>) or the username. More: dean_b, chair_b, fac_b1, fac_be1, staff_a, shead, aprincipal, st_b01 … All data is sample data.</p>
         </div>
       </main>
     </div>
@@ -96,23 +96,26 @@ function navFor(user) {
       ['home', 'Overview', 'home', <HROverview />, 'Everything happening in evaluations right now'],
       ['periods', 'Periods & release', 'calendar', <Periods />, 'Open and close evaluation periods, and release results step by step'],
       ['assign', 'Assignments', 'list', <Assignments />, 'Who evaluates whom in each period'],
-      ['monitor', 'Class progress', 'chart', <Monitor />, 'How many students have answered, class by class'],
+      ['monitor', 'Progress', 'chart', <Monitor />, 'How many evaluations are done, by department and class'],
+      ['classes', 'Class lists', 'list', <Classes />, 'Class sections and enrolment from the Registrar / ARC'],
       ['forms', 'Forms', 'form', <Forms />, 'The criteria and questions on each evaluation form'],
       ['weights', 'Weights', 'scale', <Weights />, 'How much each evaluator group counts toward the final score'],
       ['accounts', 'Accounts', 'users', <Accounts />, 'Create and manage the people who can sign in'],
       ['reports', 'Reports', 'report', <Reports />, 'Final scores and results by person, class and subject'],
-      ['analytics', 'Analytics', 'trend', <Analytics />, 'Trends over time and comparisons between departments'],
+      ['analytics', 'Analytics', 'trend', <Analytics />, 'Trends, department comparisons and low-rated items'],
+      ['audit', 'Audit log', 'lock', <AuditLog />, 'Who viewed, changed or released results'],
     );
   } else if (user.role === 'DIR') {
     n.push(
       ['home', 'Overview', 'home', <DirectorOverview />, 'A summary of the results released to you'],
       ['reports', 'Reports', 'report', <Reports />, 'Final scores and results by person, class and subject'],
-      ['analytics', 'Analytics', 'trend', <Analytics />, 'Trends over time and comparisons between departments'],
+      ['analytics', 'Analytics', 'trend', <Analytics />, 'Trends, department comparisons and low-rated items'],
     );
   } else {
     n.push(['tasks', 'My evaluations', 'check', <Tasks />, 'The people you are asked to evaluate']);
-    if (user.position === 'dean' || user.position === 'chair') n.push(['monitor', 'Department progress', 'chart', <Monitor deptOnly />, 'How many students have answered in your department']);
-    if (user.position === 'faculty' || user.position === 'dean') n.push(['results', 'My results', 'star', <MyResults />, 'Your evaluation results and your classes\' response progress']);
+    if (['dean', 'chair', 'principal', 'aprincipal'].includes(user.position)) n.push(['monitor', 'Department progress', 'chart', <Monitor deptOnly />, 'How many evaluations are done in your department']);
+    if (user.position === 'dean' || user.position === 'principal') n.push(['dept', 'Department results', 'report', <DeptResults />, 'Your department results, item by item']);
+    if (user.position === 'faculty' || user.position === 'dean' || user.role === 'NTP') n.push(['results', 'My results', 'star', <MyResults />, 'Your evaluation results and your classes\' response progress']);
   }
   n.push(
     ['notifs', 'Notifications', 'bell', <Notifications />, 'Reminders and updates sent to you'],
