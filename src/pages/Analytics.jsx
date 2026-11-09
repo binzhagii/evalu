@@ -34,10 +34,17 @@ export default function Analytics() {
   const items = [...now.entries()].map(([k, r]) => ({ ...r, prev: before.get(k)?.mean ?? null, consistent: r.low && before.get(k)?.low })).sort((a, b) => a.mean - b.mean);
   const text = (id) => db.criteria.find((c) => c.id === id)?.text || id;
 
-  const trend = periods.map((p) => ({
-    period: p.name.replace(/ \(.*\)/, ''),
-    score: avg(data[p.id].filter((r) => dept === 'ALL' || r.target.dept === dept).map((r) => r.final)),
-  }));
+  // Earlier records imported by HR (FR21) join the trend, shown before the evalU periods as a separate dashed line.
+  const userDept = (id) => db.users.find((u) => u.id === id)?.dept;
+  const earlierRows = db.pastResults.filter((r) => dept === 'ALL' || userDept(r.userId) === dept);
+  const earlierLabels = [...new Set(earlierRows.map((r) => r.periodLabel))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  const trend = [
+    ...earlierLabels.map((label) => ({ period: label, earlier: avg(earlierRows.filter((r) => r.periodLabel === label).map((r) => r.final)) })),
+    ...periods.map((p) => ({
+      period: p.name.replace(/ \(.*\)/, ''),
+      score: avg(data[p.id].filter((r) => dept === 'ALL' || r.target.dept === dept).map((r) => r.final)),
+    })),
+  ];
   const compare = db.departments.map((d) => ({
     department: d.name.replace(' (College)', ''),
     'Average final score': avg((data[pid] || []).filter((r) => r.target.dept === d.id).map((r) => r.final)),
@@ -47,8 +54,8 @@ export default function Analytics() {
   return (
     <>
       <Card title="Trend over time" actions={<label className="inline">Department <Select value={dept} onChange={setDept}><option value="ALL">All</option>{db.departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</Select></label>}>
-        <p className="muted">Average final score of personnel with a final score. Only periods released to you are shown.</p>
-        <div className="chart"><ResponsiveContainer><LineChart data={trend}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="period" /><YAxis domain={[1, 5]} /><Tooltip /><Line type="monotone" dataKey="score" stroke="#b3001b" strokeWidth={2} connectNulls /></LineChart></ResponsiveContainer></div>
+        <p className="muted">Average final score of personnel with a final score. Only periods released to you are shown. The dashed grey line shows earlier records imported by HR (from before evalU); they are ordered by their period label.</p>
+        <div className="chart"><ResponsiveContainer><LineChart data={trend}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="period" /><YAxis domain={[1, 5]} /><Tooltip /><Legend /><Line type="monotone" dataKey="score" name="evalU periods" stroke="#b3001b" strokeWidth={2} connectNulls /><Line type="monotone" dataKey="earlier" name="Earlier records" stroke="#6b6b6b" strokeWidth={2} strokeDasharray="5 4" connectNulls /></LineChart></ResponsiveContainer></div>
       </Card>
       <Card title="Comparison across departments" actions={<PeriodPicker periods={periods} value={pid} onChange={setPid} />}>
         <div className="chart"><ResponsiveContainer><BarChart data={compare}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="department" /><YAxis domain={[0, 5]} /><Tooltip /><Legend /><Bar dataKey="Average final score" fill="#b3001b" /></BarChart></ResponsiveContainer></div>

@@ -108,6 +108,13 @@ try {
   const ins = instrumentFor(sv, targetType(sv, sv.users.find((u) => u.id === task.targetId)), task.group);
   const items = ins.items.map((i) => i.criterionId);
 
+  // strict deadline: after the deadline nothing can be saved or submitted, even though HR has not closed the period
+  const keepDeadline = open.deadline;
+  assert.equal((await act(hr, 'setPeriodDeadline', { periodId: open.id, deadline: '2020-01-01' })).status, 200);
+  assert.equal((await act(student, 'saveDraft', { taskId: task.id, answers: { [items[0]]: 4 } })).status, 409, 'no drafts after the deadline');
+  assert.equal((await act(student, 'submitEvaluation', { taskId: task.id, answers: Object.fromEntries(items.map((c) => [c, 5])) })).status, 409, 'no submission after the deadline');
+  assert.equal((await act(hr, 'setPeriodDeadline', { periodId: open.id, deadline: keepDeadline })).status, 200);
+
   // draft is saved, bad ratings rejected
   assert.equal((await act(student, 'saveDraft', { taskId: task.id, answers: { [items[0]]: 4 } })).status, 200);
   assert.deepEqual(sql.prepare('SELECT draft FROM tasks WHERE id=?').get(task.id).draft, JSON.stringify({ answers: { [items[0]]: 4 }, comment: '' }));

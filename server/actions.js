@@ -109,6 +109,9 @@ function myOpenTask(db, taskId, user) {
   if (t.evaluatorId !== user.id) fail('This evaluation is not assigned to you.', 403);
   if (t.response) fail('This evaluation was already submitted.', 409);
   if (periodById(db, t.periodId)?.status !== 'open') fail('This evaluation period is closed.', 409);
+  // Strict cut-off: once the deadline (end of that day) has passed, no more answers are accepted, even if HR has not closed the period yet. HR can extend the deadline in Periods & release.
+  const per = periodById(db, t.periodId);
+  if (per?.deadline && new Date(per.deadline + 'T23:59:59') < new Date()) fail('The deadline for this evaluation has passed, so it can no longer be submitted. Contact HR if you need more time.', 409);
   const ins = formForTask(db, t) || fail('The form for this evaluation no longer exists. Contact HR.', 409);
   return { t, ins };
 }
