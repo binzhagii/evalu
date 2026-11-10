@@ -20,7 +20,8 @@ export default function Analytics() {
   const { db, user } = useApp();
   const periods = db.periods.filter((p) => canSeeAll(user, p));
   const [dept, setDept] = useState('ALL');
-  const [pid, setPid] = useState(periods[periods.length - 1]?.id);
+  const [pidSel, setPid] = useState(periods[periods.length - 1]?.id);
+  const pid = periods.some((p) => p.id === pidSel) ? pidSel : periods[periods.length - 1]?.id; // newest if none chosen yet
   const data = useMemo(() => {
     const m = {};
     periods.forEach((p) => { m[p.id] = computeAll(db, p.id).filter(hasFinal); });

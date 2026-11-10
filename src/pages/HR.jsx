@@ -2,22 +2,48 @@ import { useEffect, useState } from 'react';
 import { useApp } from '../lib/store';
 import {
   GROUPS, TARGET_TYPES, STAGES, STAGE_LABEL, taskStatus, userById, sectionStats, targetsOf, evaluatorGroups, deptName,
-  formUsed, itemCategory, effectiveWeights, isExemptSection, pendingApprovals, periodCovers,
+  formUsed, itemCategory, effectiveWeights, isExemptSection, isTeacher, pendingApprovals, periodCovers,
 } from '../lib/logic';
-import { Card, StatusBadge, RuleNote, PeriodPicker, Select, Badge, SaveInput, Meter, Empty, pct } from '../ui';
+import { Card, StatusBadge, RuleNote, PeriodPicker, Select, Badge, SaveInput, Meter, Empty, pct, newestFirst, usePages } from '../ui';
 
 const scopeText = (db, p) => (p.depts?.length ? p.depts.map((d) => deptName(db, d)).join(', ') : 'All departments');
+
+/* ----- choices for a new period, so HR picks instead of typing ----- */
+const TERMS = ['Term 1', 'Term 2', 'Summer'];
+const OPEN_FOR = [[7, '1 week'], [14, '2 weeks'], [21, '3 weeks'], [28, '4 weeks'], [42, '6 weeks']];
+const isoIn = (days) => { const d = new Date(); d.setDate(d.getDate() + days); return d.toISOString().slice(0, 10); };
+/** The school year starts mid-year, so from June on it is "this year – next year". */
+function schoolYears() {
+  const d = new Date();
+  const y = d.getMonth() >= 5 ? d.getFullYear() : d.getFullYear() - 1;
+  return [y - 1, y, y + 1, y + 2].map((s) => `AY ${s}-${String(s + 1).slice(2)}`);
+}
+const periodExists = (db, ay, term) => db.periods.some((p) => p.name.startsWith(`${ay} ${term}`));
+/** The first Term 1 / Term 2 from this school year on that has no period yet. */
+function nextTerm(db) {
+  const years = schoolYears().slice(1);
+  for (const ay of years) for (const term of ['Term 1', 'Term 2']) if (!periodExists(db, ay, term)) return { ay, term };
+  return { ay: years[0], term: 'Term 1' };
+}
 
 /* ---------------- Evaluation periods + release (FR8, FR17) ---------------- */
 export function Periods() {
   const { db, act } = useApp();
-  const [name, setName] = useState('');
-  const [deadline, setDeadline] = useState('');
+  const [pick, setPick] = useState(() => nextTerm(db));
+  const [weeks, setWeeks] = useState(21);
+  const [deadline, setDeadline] = useState(isoIn(21));
   const [depts, setDepts] = useState([]);
   const [msg, setMsg] = useState('');
+  const name = `${pick.ay} ${pick.term}`;
+  const exists = periodExists(db, pick.ay, pick.term);
   const add = async () => {
-    if (!name || !deadline) return setMsg('Enter a period name and deadline.');
-    if (await act('createPeriod', { name, deadline, depts })) { setName(''); setDeadline(''); setDepts([]); setMsg('Period created. Go to Assignments to generate the evaluation tasks.'); }
+    if (exists) return setMsg(`${name} already exists.`);
+    if (await act('createPeriod', { name, deadline, depts })) {
+      setDepts([]); setMsg(`${name} created. Go to Assignments and click "Generate tasks for period".`);
+      // suggest the following term next time
+      const ys = schoolYears();
+      setPick(pick.term === 'Term 1' ? { ay: pick.ay, term: 'Term 2' } : { ay: ys[Math.min(ys.indexOf(pick.ay) + 1, ys.length - 1)], term: 'Term 1' });
+    }
   };
   const run = async (action, periodId, done) => { setMsg(''); const r = await act(action, { periodId }); if (r) setMsg(typeof done === 'function' ? done(r) : done || ''); };
   const toggle = (d) => setDepts((x) => (x.includes(d) ? x.filter((y) => y !== d) : [...x, d]));
@@ -29,7 +55,7 @@ export function Periods() {
         <table>
           <thead><tr><th>Period</th><th>Covers</th><th>Deadline</th><th>Status</th><th>Release</th><th>Actions</th></tr></thead>
           <tbody>
-            {db.periods.map((p) => {
+            {newestFirst(db.periods).map((p) => {
               const nextStage = STAGES[STAGES.indexOf(p.releaseStage) + 1];
               const waiting = p.releaseStage === 'dir' ? pendingApprovals(db, p) : [];
               return (
@@ -57,18 +83,46 @@ export function Periods() {
       </Card>
       <Card title="New evaluation period">
         <div className="row">
-          <input placeholder="Period name, e.g. AY 2026-27 Term 2" value={name} onChange={(e) => setName(e.target.value)} className="wide" />
-          <label className="inline">Deadline <input type="date" value={deadline} onChange={(e) => setDeadline(e.target.value)} /></label>
+          <label className="inline">School year
+            <Select value={pick.ay} onChange={(ay) => setPick({ ...pick, ay })}>{schoolYears().map((y) => <option key={y} value={y}>{y}</option>)}</Select></label>
+          <label className="inline">Term
+            <Select value={pick.term} onChange={(term) => setPick({ ...pick, term })}>{TERMS.map((t) => <option key={t} value={t}>{t}{periodExists(db, pick.ay, t) ? ' (already created)' : ''}</option>)}</Select></label>
+          <label className="inline">Open for
+            <Select value={weeks} onChange={(v) => { const n = Number(v); setWeeks(n); if (n) setDeadline(isoIn(n)); }}>
+              {OPEN_FOR.map(([d, l]) => <option key={d} value={d}>{l}</option>)}
+              {!OPEN_FOR.some(([d]) => d === weeks) && <option value={weeks}>chosen date</option>}
+            </Select></label>
+          <label className="inline">Deadline <input type="date" value={deadline} onChange={(e) => { if (e.target.value) { setDeadline(e.target.value); setWeeks(0); } }} /></label>
         </div>
         <div className="row">
-          <span className="muted">Departments:</span>
-          {db.departments.map((d) => <label key={d.id} className="inline"><input type="checkbox" checked={depts.includes(d.id)} onChange={() => toggle(d.id)} /> {d.name}</label>)}
-          <span className="muted">{depts.length ? '' : '(none ticked = all departments)'}</span>
+          <label className="inline">Departments
+            <Select value="" onChange={(v) => { if (v === '__all') setDepts([]); else if (v) toggle(v); }}>
+              <option value="">{depts.length ? '+ Add another department…' : 'All departments'}</option>
+              {depts.length > 0 && <option value="__all">All departments (clear the list)</option>}
+              {db.departments.filter((d) => !depts.includes(d.id)).map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+            </Select></label>
+          {depts.map((id) => (
+            <span key={id} className="tag">{deptName(db, id)}
+              <button type="button" className="tag-x" aria-label={`Remove ${deptName(db, id)}`} onClick={() => toggle(id)}>×</button>
+            </span>
+          ))}
         </div>
-        <div className="row"><button onClick={add}>Create period</button></div>
+        <p className={exists ? 'note warn' : 'muted'}>{exists ? <><b>{name}</b> already exists. Pick another term or school year.</> : <>This will create <b>{name}</b> for <b>{depts.length ? depts.map((d) => deptName(db, d)).join(', ') : 'all departments'}</b>, open until <b>{new Date(deadline + 'T00:00:00').toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}</b>.</>}</p>
+        <div className="row"><button onClick={add} disabled={exists}>Create {name}</button></div>
         <p className="muted">You can open and close evaluations for one department at a time by creating a period for just that department. The current evaluator weights are saved with the period.</p>
       </Card>
-      <Card title="Demo data"><button className="ghost" onClick={async () => { if (confirm('Reset ALL data in the database to the simulated starting dataset?') && await act('resetData')) setMsg('All data was reset to the sample dataset.'); }}>Reset simulated data</button></Card>
+      <Card title="Start over">
+        <div className="row">
+          <button className="danger" onClick={async () => {
+            if (!confirm('START FROM SCRATCH?\n\nThis deletes every account except HR, and all classes, evaluation periods, evaluations, results, notifications and imported records. Departments go back to the University of Baguio list.\n\nThe evaluation forms, questions and weights are kept. This cannot be undone.')) return;
+            if (!confirm('Are you sure? Everything except the HR accounts, the UB departments and the forms will be gone.')) return;
+            const r = await act('startFromScratch');
+            if (r) setMsg(`Done. ${r.removed} account(s) and all records were deleted. Next: add the accounts under Accounts (the UB departments are ready), then your class lists, then create an evaluation period.`);
+          }}>Start from scratch (keep only HR)</button>
+          <button className="ghost" onClick={async () => { if (confirm('Replace ALL data with the sample (demo) data? Everything you entered is replaced.') && await act('resetData')) setMsg('All data was replaced with the sample data.'); }}>Load sample data</button>
+        </div>
+        <p className="muted"><b>Start from scratch</b> empties the system for real use: only HR accounts stay, with their passwords, plus the UB departments and the evaluation forms, questions and weights, so you don't have to build them again. <b>Load sample data</b> brings back the demo accounts (password demo1234). The audit log is never erased.</p>
+      </Card>
     </>
   );
 }
@@ -76,9 +130,13 @@ export function Periods() {
 /* ---------------- Assignments / workflow (FR6, FR7, FR9, FR10) ---------------- */
 export function Assignments() {
   const { db, act } = useApp();
-  const [pid, setPid] = useState(db.periods[db.periods.length - 1].id);
+  const [pidSel, setPid] = useState(db.periods[db.periods.length - 1]?.id);
+  // the chosen period, or the newest one if none is chosen yet (or it was deleted)
+  const pid = db.periods.some((p) => p.id === pidSel) ? pidSel : db.periods[db.periods.length - 1]?.id;
   const [msg, setMsg] = useState('');
   const [q, setQ] = useState('');
+  const [grp, setGrp] = useState('');
+  const [st, setSt] = useState('');
   const [add, setAdd] = useState({ evaluatorId: '', targetId: '' });
   const tasks = db.tasks.filter((t) => t.periodId === pid);
   const evaluators = db.users.filter((u) => u.role !== 'ST' && evaluatorGroups(u).length);
@@ -86,7 +144,9 @@ export function Assignments() {
   tasks.forEach((t) => { const k = t.group; summary[k] ||= { pending: 0, completed: 0, overdue: 0 }; summary[k][taskStatus(db, t)]++; });
   const s = q.trim().toLowerCase();
   const match = (t) => !s || userById(db, t.evaluatorId)?.name.toLowerCase().includes(s) || userById(db, t.targetId)?.name.toLowerCase().includes(s);
-  const listed = tasks.filter((t) => t.group !== 'ST' && match(t)).concat(tasks.filter((t) => t.group === 'ST' && match(t)).slice(0, s ? 200 : 15));
+  const listed = newestFirst(tasks).filter((t) => (!grp || t.group === grp) && (!st || taskStatus(db, t) === st) && match(t));
+  const { rows, bar } = usePages(listed, `${pid}|${s}|${grp}|${st}`);
+  if (!db.periods.length) return <Card><Empty icon="calendar" title="No evaluation period yet">Create one under Periods &amp; release first.</Empty></Card>;
 
   const addOne = async () => {
     setMsg('');
@@ -115,11 +175,17 @@ export function Assignments() {
           <button onClick={addOne}>Add</button>
         </div>
       </Card>
-      <Card title="Assigned tasks" actions={<input placeholder="Search evaluator or person" value={q} onChange={(e) => setQ(e.target.value)} />}>
+      <Card title={`Assigned tasks (${listed.length})`}>
+        <div className="row">
+          <Select value={grp} onChange={setGrp}><option value="">All evaluator groups</option>{Object.keys(summary).map((g) => <option key={g} value={g}>{GROUPS[g]}</option>)}</Select>
+          <Select value={st} onChange={setSt}><option value="">Any status</option><option value="pending">Pending</option><option value="completed">Completed</option><option value="overdue">Overdue</option></Select>
+          <input placeholder="Search a name (optional)" value={q} onChange={(e) => setQ(e.target.value)} />
+        </div>
+        {listed.length === 0 ? <Empty icon="list" title={tasks.length ? 'No tasks match' : 'No tasks yet'}>{tasks.length ? 'Change the filters above.' : 'Click "Generate tasks for period" above.'}</Empty> : <>
         <table>
           <thead><tr><th>Evaluator</th><th>As</th><th>Evaluates</th><th>Class</th><th>Status</th><th /></tr></thead>
           <tbody>
-            {listed.map((t) => (
+            {rows.map((t) => (
               <tr key={t.id}>
                 <td>{userById(db, t.evaluatorId).name}</td><td>{GROUPS[t.group]}</td><td>{userById(db, t.targetId).name}</td>
                 <td>{db.sections.find((x) => x.id === t.sectionId)?.code || '—'}</td><td><StatusBadge s={taskStatus(db, t)} /></td>
@@ -128,30 +194,62 @@ export function Assignments() {
             ))}
           </tbody>
         </table>
-        <p className="muted">Student tasks are summarised above; {s ? 'matching ones are listed.' : 'the first 15 are listed here. Search to find a specific evaluator.'}</p>
+        {bar}
+        </>}
       </Card>
     </>
   );
 }
 
 /* ---------------- Class lists (FR6) ---------------- */
+// same as samples/class-list-example.csv: 1 teacher and 6 students in 2 classes (import it for SIT)
+const SAMPLE_CLASS_LIST = `section code,subject,teacher name,teacher email,student ID,student name,student UB email
+SIT-101A,Web Development,Juan Dela Cruz,jdelacruz@ubaguio.edu,20260001,Ana Reyes,20260001@s.ubaguio.edu
+SIT-101A,Web Development,Juan Dela Cruz,jdelacruz@ubaguio.edu,20260002,Ben Santos,20260002@s.ubaguio.edu
+SIT-101A,Web Development,Juan Dela Cruz,jdelacruz@ubaguio.edu,20260003,Carla Mendoza,20260003@s.ubaguio.edu
+SIT-101A,Web Development,Juan Dela Cruz,jdelacruz@ubaguio.edu,20260004,Daniel Flores,20260004@s.ubaguio.edu
+SIT-101A,Web Development,Juan Dela Cruz,jdelacruz@ubaguio.edu,20260005,Ella Bautista,20260005@s.ubaguio.edu
+SIT-102B,Database Systems,Juan Dela Cruz,jdelacruz@ubaguio.edu,20260001,Ana Reyes,20260001@s.ubaguio.edu
+SIT-102B,Database Systems,Juan Dela Cruz,jdelacruz@ubaguio.edu,20260002,Ben Santos,20260002@s.ubaguio.edu
+SIT-102B,Database Systems,Juan Dela Cruz,jdelacruz@ubaguio.edu,20260006,Felix Garcia,20260006@s.ubaguio.edu`;
 export function Classes() {
   const { db, act } = useApp();
   const [f, setF] = useState({ code: '', subject: '', facultyId: '' });
   const [csv, setCsv] = useState('');
   const [out, setOut] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [listDept, setListDept] = useState('');
   const [msg, setMsg] = useState('');
-  const faculty = db.users.filter((u) => u.role === 'TP' && u.position === 'faculty' && u.active);
+  const faculty = db.users.filter((u) => isTeacher(u) && u.active);
   const used = new Set(db.tasks.map((t) => t.sectionId).filter(Boolean));
+  const [dept, setDept] = useState('');
+  const [kind, setKind] = useState('');
+  const [q, setQ] = useState('');
+  const qs = q.trim().toLowerCase();
+  const listed = newestFirst(db.sections).filter((x) => (!dept || x.dept === dept)
+    && (!kind || (kind === 'exempt') === isExemptSection(x))
+    && (!qs || `${x.code} ${x.subject} ${userById(db, x.facultyId)?.name || ''}`.toLowerCase().includes(qs)));
+  const { rows, bar } = usePages(listed, `${dept}|${kind}|${qs}`);
   return (
     <>
       <div className="note">Class lists and teaching loads come from the Registrar / ARC. Students evaluate the teacher of each class they are enrolled in. <b>Internship, practicum and field trip subjects are kept on the list but are not evaluated</b> (recognised from the subject name).</div>
       {msg && <div className="note">{msg}</div>}
       <Card title="Import a class list">
-        <p className="muted">Paste the list exported from the Registrar/ARC, one student per line: <code>section code, subject, faculty (username or email), student (username or email)</code>. New sections are created and students are enrolled; problem rows are listed and skipped.</p>
-        <textarea rows={5} value={csv} onChange={(e) => setCsv(e.target.value)} placeholder={'SEC-A3, Sample Subject A3, fac_a1@ubaguio.edu, st_a01@s.ubaguio.edu'} />
-        <div className="row"><button onClick={async () => { const r = await act('importClassList', { csv }); if (r) { setOut(r); if (!r.errorCount) setCsv(''); } }}>Import class list</button></div>
-        {out && <div className={`note ${out.errorCount ? 'warn' : 'ok'}`}>{out.created} section(s) created, {out.enrolled} enrolment(s) added.{out.errorCount > 0 && <> {out.errorCount} row(s) skipped:<ul>{out.errors.map((e, i) => <li key={i}>{e}</li>)}</ul></>}</div>}
+        <p className="muted">Choose the CSV file exported from the Registrar/ARC (or paste it below), one student per line:</p>
+        <p><code>section code, subject, teacher name, teacher email, student ID, student name, student UB email</code></p>
+        <p className="muted">Classes that don't exist yet are created. <b>Teachers and students who don't have an account yet get one automatically</b> in the department you choose. A student's first password is their <b>student ID</b>; a teacher's is the part of their email before the @ (for example <code>jdelacruz</code>). Everyone must change it when they first sign in. People who already have an account are just added to the class. Rows with a problem are listed and skipped.</p>
+        <div className="row">
+          <label className="inline">Department of this list
+            <Select value={listDept} onChange={setListDept}><option value="">Choose…</option>{db.departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</Select></label>
+        </div>
+        <div className="row">
+          <label className="file-pick"><input type="file" accept=".csv,.txt,text/csv" onChange={async (e) => { const file = e.target.files?.[0]; if (file) { setCsv(await file.text()); setOut(null); } e.target.value = ''; }} />Choose CSV file…</label>
+          <a className="ghost-link" href={'data:text/csv;charset=utf-8,' + encodeURIComponent(SAMPLE_CLASS_LIST)} download="class-list-example.csv">Download an example file</a>
+        </div>
+        <textarea rows={6} value={csv} onChange={(e) => setCsv(e.target.value)} placeholder={SAMPLE_CLASS_LIST} />
+        <div className="row"><button disabled={busy || !csv.trim() || !listDept} title={listDept ? '' : 'Choose the department first'} onClick={async () => { setBusy(true); const r = await act('importClassList', { csv, dept: listDept }); setBusy(false); if (r) { setOut(r); if (!r.errorCount) setCsv(''); } }}>{busy ? 'Importing… (this can take a minute for big lists)' : 'Import class list'}</button>
+          {csv.trim() && <span className="muted">{csv.trim().split(/\r?\n/).filter((l) => l.trim() && !/^\s*section/i.test(l)).length} row(s) ready</span>}</div>
+        {out && <div className={`note ${out.errorCount ? 'warn' : 'ok'}`}>{out.created} class section(s) created, <b>{out.teachers || 0} teacher account(s)</b> and <b>{out.accounts || 0} student account(s) created</b>, {out.enrolled} enrolment(s) added.{(out.accounts > 0 || out.teachers > 0) && ' New students sign in with their UB email and their student ID as the password; new teachers with their UB email and the part before the @.'}{out.errorCount > 0 && <> {out.errorCount} row(s) skipped:<ul>{out.errors.map((e, i) => <li key={i}>{e}</li>)}</ul></>}</div>}
       </Card>
       <Card title="Add a class section">
         <div className="row">
@@ -161,10 +259,16 @@ export function Classes() {
           <button onClick={async () => { setMsg(''); if (await act('createSection', f)) { setF({ code: '', subject: '', facultyId: '' }); setMsg('Section added. Enrol students under Accounts or by importing a class list.'); } }}>Add</button>
         </div>
       </Card>
-      <Card title={`Class sections (${db.sections.length})`}>
+      <Card title={`Class sections (${listed.length}${listed.length !== db.sections.length ? ` of ${db.sections.length}` : ''})`}>
+        <div className="row">
+          <Select value={dept} onChange={setDept}><option value="">All departments</option>{db.departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</Select>
+          <Select value={kind} onChange={setKind}><option value="">Evaluated and not evaluated</option><option value="evaluated">Evaluated only</option><option value="exempt">Not evaluated (practicum, internship, field trip)</option></Select>
+          <input placeholder="Search (optional)" value={q} onChange={(e) => setQ(e.target.value)} />
+        </div>
+        {listed.length === 0 ? <Empty icon="list" title="No sections match">Change the filters above.</Empty> : <>
         <table>
           <thead><tr><th>Section</th><th>Subject</th><th>Teacher</th><th>Department</th><th>Students</th><th>Evaluated?</th><th /></tr></thead>
-          <tbody>{db.sections.map((s) => (
+          <tbody>{rows.map((s) => (
             <tr key={s.id}>
               <td>{s.code}</td><td>{s.subject}</td><td>{userById(db, s.facultyId)?.name}</td><td>{deptName(db, s.dept)}</td><td>{s.studentIds.length}</td>
               <td>{isExemptSection(s) ? <Badge kind="muted">not evaluated</Badge> : <Badge kind="completed">yes</Badge>}</td>
@@ -172,8 +276,39 @@ export function Classes() {
             </tr>
           ))}</tbody>
         </table>
+        {bar}
+        </>}
       </Card>
     </>
+  );
+}
+
+/** Pick a percentage (0, 5, 10 … 100) instead of typing it. Blank = not set. */
+function PercentPicker({ value, onSave }) {
+  const steps = Array.from({ length: 21 }, (_, i) => i * 5);
+  const cur = value ?? '';
+  return (
+    <Select value={cur} onChange={(v) => String(v) !== String(cur) && onSave(v === '' ? null : Number(v))}>
+      <option value="">not set</option>
+      {cur !== '' && !steps.includes(Number(cur)) && <option value={cur}>{cur}%</option>}
+      {steps.map((n) => <option key={n} value={n}>{n}%</option>)}
+    </Select>
+  );
+}
+
+/** Pick a category from a list; "+ New category…" asks for a name once. */
+function CategoryPicker({ value, options, onSave }) {
+  const cur = value && value !== 'General' ? value : '';
+  return (
+    <Select value={cur} onChange={(v) => {
+      if (v !== '__new') return v !== cur && onSave(v);
+      const n = window.prompt('Name of the new category, e.g. Assessment of Learners');
+      if (n && n.trim()) onSave(n.trim());
+    }}>
+      <option value="">General</option>
+      {options.filter((c) => c !== 'General').map((c) => <option key={c} value={c}>{c}</option>)}
+      <option value="__new">+ New category…</option>
+    </Select>
   );
 }
 
@@ -182,8 +317,11 @@ export function Forms() {
   const { db, act } = useApp();
   const [newCrit, setNewCrit] = useState('');
   const [showOld, setShowOld] = useState(false);
-  const forms = db.instruments.filter((i) => showOld || i.active !== false);
-  const [sel, setSel] = useState(forms[0]?.id);
+  const forms = newestFirst(db.instruments.filter((i) => showOld || i.active !== false));
+  const [sel, setSel] = useState(forms[forms.length - 1]?.id);
+  // every category name used on any form, so HR can pick one instead of typing it
+  const allCats = [...new Set(db.instruments.flatMap((i) => [...i.items.map((it) => it.category), ...Object.keys(i.categories || {})]).filter(Boolean))].sort();
+  const crit = usePages(newestFirst(db.criteria));
   const [nf, setNf] = useState({ targetType: 'COLLEGE_FACULTY', group: 'ST', dept: '' });
   const [msg, setMsg] = useState('');
   const ins = db.instruments.find((i) => i.id === sel);
@@ -208,13 +346,13 @@ export function Forms() {
           <>
             {locked
               ? <div className="note warn">{ins.active === false ? 'This is an old version, kept with the results that used it. It can\'t be changed.' : 'This form already has submitted evaluations, so it is locked to keep past results unchanged. Click "Create new version" to make changes.'}</div>
-              : <p className="muted">Changes save when you leave a field. Evaluations already submitted keep the weights they were submitted with.</p>}
+              : <p className="muted">Dropdown choices save as soon as you pick them; item weights save when you leave the box. Evaluations already submitted keep the weights they were submitted with.</p>}
             <table>
               <thead><tr><th>Criterion</th><th>Category</th><th>Item weight</th><th>Counts</th><th /></tr></thead>
               <tbody>{ins.items.map((it) => (
                 <tr key={it.criterionId}>
                   <td>{db.criteria.find((c) => c.id === it.criterionId)?.text}</td>
-                  <td>{locked ? itemCategory(it) : <SaveInput value={it.category || ''} placeholder="General" onSave={(category) => act('setFormItemCategory', { instrumentId: ins.id, criterionId: it.criterionId, category })} />}</td>
+                  <td>{locked ? itemCategory(it) : <CategoryPicker value={it.category} options={allCats} onSave={(category) => act('setFormItemCategory', { instrumentId: ins.id, criterionId: it.criterionId, category })} />}</td>
                   <td>{locked ? it.weight : <SaveInput type="number" min="0" step="0.5" value={it.weight} onSave={(weight) => act('setFormItemWeight', { instrumentId: ins.id, criterionId: it.criterionId, weight })} />}</td>
                   <td className="muted">{effTotal ? pct(eff[it.criterionId] / effTotal) : '—'}</td>
                   <td>{!locked && <button className="ghost" onClick={() => act('removeFormItem', { instrumentId: ins.id, criterionId: it.criterionId })}>Remove</button>}</td>
@@ -226,7 +364,7 @@ export function Forms() {
             <div className="row">
               {cats.map((c) => (
                 <label key={c} className="inline">{c}{' '}
-                  {locked ? <b>{ins.categories?.[c] ?? '—'}%</b> : <SaveInput type="number" min="0" max="100" value={ins.categories?.[c] ?? ''} onSave={(v) => act('setFormCategoryWeight', { instrumentId: ins.id, category: c, weight: v === '' ? null : Number(v) })} />}
+                  {locked ? <b>{ins.categories?.[c] ?? '—'}%</b> : <PercentPicker value={ins.categories?.[c]} onSave={(weight) => act('setFormCategoryWeight', { instrumentId: ins.id, category: c, weight })} />}
                 </label>
               ))}
             </div>
@@ -250,16 +388,17 @@ export function Forms() {
       </Card>
       <Card title="Criteria bank">
         <p className="muted">Criteria text below is sample content. Criteria already answered in submitted evaluations can't be reworded or deleted, so past reports stay exactly as they were.</p>
+        <div className="row"><input className="wide" placeholder="New criterion" value={newCrit} onChange={(e) => setNewCrit(e.target.value)} />
+          <button onClick={async () => { if (newCrit.trim() && await act('addCriterion', { text: newCrit })) setNewCrit(''); }}>Add criterion</button></div>
         <table><tbody>
-          {db.criteria.map((c) => (
+          {crit.rows.map((c) => (
             <tr key={c.id}>
               <td>{answered.has(c.id) ? <span>{c.text} <Badge kind="muted">used</Badge></span> : <SaveInput className="wide" value={c.text} onSave={(text) => act('renameCriterion', { criterionId: c.id, text })} />}</td>
               <td><button className="ghost" disabled={answered.has(c.id) || db.instruments.some((i) => i.items.some((it) => it.criterionId === c.id))} title="Remove from forms first" onClick={() => act('deleteCriterion', { criterionId: c.id })}>Delete</button></td>
             </tr>
           ))}
         </tbody></table>
-        <div className="row"><input className="wide" placeholder="New criterion" value={newCrit} onChange={(e) => setNewCrit(e.target.value)} />
-          <button onClick={async () => { if (newCrit.trim() && await act('addCriterion', { text: newCrit })) setNewCrit(''); }}>Add criterion</button></div>
+        {crit.bar}
       </Card>
     </>
   );
@@ -270,7 +409,7 @@ export function Weights() {
   const { db, act } = useApp();
   return (
     <Card title="Evaluator-group weights (%)">
-      <p className="muted">From Table 6 of the manuscript: College faculty — Students 40, Dean 40, Program Chair 20; Basic Education — Students 40, Principal 20, Assistant Principal 20, Subject Head 20; non-teaching personnel are evaluated by one group (head ↔ staff). Weights for evaluating Deans are not given, so HR must enter them. <b>Changes apply to open and future periods; closed periods keep the weights they were computed with.</b> If a group has no valid result, its weight is removed and the score is computed over the rest.</p>
+      <p className="muted">From Table 6 of the manuscript: College faculty — Students 40, Dean 40, Program Chair 20; Basic Education — Students 40, Principal 20, Assistant Principal 20, Subject Head 20; non-teaching personnel are evaluated by one group (head ↔ staff); Clinical Instructors (CIs) — Students 50, Dean 50 until the official weights are given. Weights for evaluating Deans are not given, so HR must enter them. <b>Changes apply to open and future periods; closed periods keep the weights they were computed with.</b> If a group has no valid result, its weight is removed and the score is computed over the rest.</p>
       {Object.entries(db.rules).map(([tt, rule]) => {
         const total = Object.values(rule).reduce((a, w) => a + (Number(w) || 0), 0);
         return (
@@ -279,7 +418,7 @@ export function Weights() {
             <div className="row">
               {Object.keys(rule).map((g) => (
                 <label key={g} className="inline">{GROUPS[g]}{' '}
-                  <SaveInput type="number" min="0" max="100" value={rule[g] ?? ''} onSave={(v) => act('setGroupWeight', { targetType: tt, group: g, weight: v === '' ? null : Number(v) })} />
+                  <PercentPicker value={rule[g]} onSave={(weight) => act('setGroupWeight', { targetType: tt, group: g, weight })} />
                 </label>
               ))}
             </div>
@@ -317,21 +456,46 @@ export function Monitor({ deptOnly }) {
                 })}</tbody>
               </table>
             </Card>
-            <Card title={deptOnly ? `Class progress – ${deptName(db, user.dept)}` : 'Class progress'}>
+            <ClassProgress title={deptOnly ? `Class progress – ${deptName(db, user.dept)}` : 'Class progress'} period={p} secs={secs.filter((s) => periodCovers(p, s.dept))} />
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
+/** Response rate of each class in a period, a page at a time; "below half + 1" classes can be shown alone. */
+function ClassProgress({ title, period: p, secs }) {
+  const { db } = useApp();
+  const [only, setOnly] = useState('');
+  const [dept, setDept] = useState('');
+  const shown = secs.filter((s) => {
+    if (dept && s.dept !== dept) return false;
+    if (!only) return true;
+    if (isExemptSection(s)) return false;
+    const st = sectionStats(db, p.id, s.id);
+    return only === 'low' ? st.required && st.belowHalf : st.required && !st.belowHalf;
+  });
+  const depts = db.departments.filter((d) => secs.some((s) => s.dept === d.id));
+  const { rows, bar } = usePages(shown, `${only}|${dept}`);
+  return (
+            <Card title={`${title} (${shown.length})`}>
+              <div className="row">
+                <Select value={only} onChange={setOnly}><option value="">All classes</option><option value="low">Only classes below half + 1</option><option value="ok">Only classes with enough responses</option></Select>
+                {depts.length > 1 && <Select value={dept} onChange={setDept}><option value="">All departments</option>{depts.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</Select>}
+              </div>
               <table>
                 <thead><tr><th>Class</th><th>Faculty</th><th>Responded</th><th>Rate</th><th>Standing</th></tr></thead>
-                <tbody>{secs.filter((s) => periodCovers(p, s.dept)).map((s) => {
+                <tbody>{rows.map((s) => {
                   if (isExemptSection(s)) return <tr key={s.id}><td>{s.code} – {s.subject}</td><td>{userById(db, s.facultyId)?.name}</td><td colSpan={2} className="muted">—</td><td><Badge kind="muted">not evaluated (practicum/internship/field trip)</Badge></td></tr>;
                   const st = sectionStats(db, p.id, s.id);
                   return <tr key={s.id}><td>{s.code} – {s.subject}</td><td>{userById(db, s.facultyId)?.name}</td><td><div className="meter-row"><Meter value={st.rate} mark={0.5} /><span>{st.responded}/{st.required} <span className="muted">needs {st.needed}</span></span></div></td><td>{pct(st.rate)}</td>
                     <td>{!st.required ? <span className="muted">no tasks yet</span> : st.belowHalf ? <Badge kind="overdue">below half + 1 – would be excluded</Badge> : <Badge kind="completed">enough responses</Badge>}</td></tr>;
                 })}</tbody>
               </table>
+              {shown.length === 0 && <Empty icon="list" title="No classes match" />}
+              {bar}
             </Card>
-          </div>
-        );
-      })}
-    </>
   );
 }
 
@@ -340,7 +504,7 @@ const AUDIT_LABEL = {
   view: 'Viewed results', releaseNext: 'Released results', withdrawRelease: 'Withdrew a release', approveRelease: 'Approved results (VP)',
   setGroupWeight: 'Changed a weight', closePeriod: 'Closed a period', reopenPeriod: 'Reopened a period', createPeriod: 'Created a period',
   submitEvaluation: 'Submitted an evaluation', recordResultRequest: 'Released results through a dean', signIn: 'Signed in', signOut: 'Signed out',
-  automaticReminders: 'Automatic reminders', resetData: 'Reset all data',
+  automaticReminders: 'Automatic reminders', resetData: 'Reset all data', showTempPassword: 'Viewed a temporary password',
 };
 export function AuditLog() {
   const { user } = useApp();
@@ -357,11 +521,12 @@ export function AuditLog() {
     } catch { setErr("Can't reach the server."); }
   };
   useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps, react/set-state-in-effect
-  if (user.role !== 'HR') return null;
   const RESULT = new Set(['view', 'releaseNext', 'withdrawRelease', 'approveRelease', 'setGroupWeight', 'closePeriod', 'reopenPeriod', 'recordResultRequest', 'reviseForm', 'setFormItemWeight', 'setFormCategoryWeight', 'resetData']);
   const s = q.trim().toLowerCase();
   const list = (rows || []).filter((r) => (kind === 'all' || (kind === 'results' ? RESULT.has(r.action) : kind === r.action))
     && (!s || `${r.user_name} ${r.detail} ${r.action}`.toLowerCase().includes(s)));
+  const page = usePages(list, `${kind}|${s}`);
+  if (user.role !== 'HR') return null;
   return (
     <Card title="Audit log" actions={<button className="ghost" onClick={load}>Refresh</button>}>
       <p className="muted">Every view, change and release of results is recorded with who did it and when. Entries can't be edited or deleted.</p>
@@ -378,11 +543,12 @@ export function AuditLog() {
       {!rows ? <p className="muted">Loading…</p> : (
         <table>
           <thead><tr><th>When</th><th>Who</th><th>What</th><th>Details</th></tr></thead>
-          <tbody>{list.slice(0, 300).map((r) => (
+          <tbody>{page.rows.map((r) => (
             <tr key={r.id}><td>{new Date(r.at).toLocaleString()}</td><td>{r.user_name || 'System'}</td><td>{AUDIT_LABEL[r.action] || r.action}</td><td className="muted">{r.detail || '—'}</td></tr>
           ))}</tbody>
         </table>
       )}
+      {page.bar}
       {rows && list.length === 0 && <Empty icon="list" title="No entries match" />}
     </Card>
   );

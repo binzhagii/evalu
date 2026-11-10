@@ -84,6 +84,8 @@ Sign in with your **official UB email** (`…@ubaguio.edu`; students `…@s.ubag
 | `dean_a@ubaguio.edu` | Dean |
 | `chair_a@ubaguio.edu` | Program Chair |
 | `fac_a1@ubaguio.edu` | Faculty |
+| `ci_c1@ubaguio.edu` | Clinical Instructor (CI) |
+| `hr_assistant@ubaguio.edu` | HRMC Assistant (same tools as HR) |
 | `sec_a@ubaguio.edu` | Secretary (non-teaching staff) |
 | `head_a@ubaguio.edu` | Office Head (non-teaching staff) |
 | `principal@ubaguio.edu` | Principal |
@@ -128,7 +130,19 @@ Your home page. It shows:
 Completion by department (students and personnel), then every class: how many answered, how many are needed (half + 1), and whether it would count.
 
 #### Class lists
-The class sections from the Registrar / ARC. **Import a class list** by pasting rows of `section code, subject, faculty, student`, or add a section by hand. Practicum, internship and field trip subjects are listed but marked "not evaluated".
+The class sections from the Registrar / ARC. **Import a class list**: choose the **Department of this list**, then click **Choose CSV file…** (or paste), one student per line:
+
+```
+section code,subject,teacher name,teacher email,student ID,student name,student UB email
+```
+
+- Classes that don't exist yet are created.
+- **Students without an account get one automatically.** Their first password is their **student ID**, and they must change it at the first sign-in. Students who already have an account are just added to the class, so the same student in two classes is created once.
+- **Teachers without an account get one too**, as Faculty in the chosen department. Their first password is the part of their email before the @ (for example `jdelacruz`).
+- Rows with a problem (for example a non-UB email, or a student from another department) are listed and skipped.
+- An example file with 1 teacher and 6 students in 2 classes is in [samples/class-list-example.csv](samples/class-list-example.csv). Import it with **School of Information Technology (SIT)** chosen.
+
+You can also add a section by hand. Practicum, internship and field trip subjects are listed but marked "not evaluated".
 
 #### Forms
 - **Evaluation forms**: the criteria on each form, grouped into **categories** with weights (for example 60% / 40%). A form can also be made for one department only.
@@ -193,6 +207,14 @@ Sign in as `director` or `vp`. Directors/VPs only see periods that HR has sent t
 - **Overview**: results **waiting for your review**, with an **Approve for release to faculty** button. Faculty can't see their results until every Director/VP approves. Also the average score and each department's average.
 - **Reports**: every person's results, including comments, but without evaluator names.
 - **Analytics**: trends and department comparisons.
+
+### Clinical Instructor (CI)
+
+Sign in as `ci_c1`. Clinical Instructors are **only in the School of Nursing** (for example Nursing duty in the hospital or skills lab), so only Nursing students evaluate them. The system refuses a CI account in any other department. The **students of their clinical class** and **their dean** evaluate them, **Students 50 / Dean 50** to start, because the official CI weights are not given yet (they are "??" in the follow-up diagram); HR can change them under **Weights**. CIs don't evaluate anyone. **My results** shows their class's response progress and, after release, their results.
+
+### HRMC Assistant
+
+Sign in as `hr_assistant`. The HRMC Assistant has the same screens and powers as the HR Specialist, so the two can split the evaluation work. Every action is recorded in the **Audit log** under the name of whoever did it.
 
 ### Everyone
 
@@ -271,7 +293,7 @@ Requirements from Chapter 3, Tables 8 and 9.
 | FR2 | Each role sees and does only what it may | Menu per role; server checks every action (`server/actions.js`) and filters data (`server/view.js`) |
 | FR3 | Forms with weighted categories and items, per role and department | HR → Forms (categories, item weights, department-specific forms) |
 | FR4 | Revising a form makes a new version; past results unchanged | HR → Forms → Create new version; used forms and answered criteria are locked |
-| FR5 | HR sets evaluator weights per group | HR → Weights (40/40/20, 40/20/20/20) |
+| FR5 | HR sets evaluator weights per group | HR → Weights (40/40/20, 40/20/20/20, CI 50/50) |
 | FR6 | Assign from class lists, excluding internship/practicum/field trip | HR → Class lists (import) and Assignments → Generate tasks |
 | FR7 | Answer inside the system; teacher/subject/section fixed | My evaluations (no links, nothing to type) |
 | FR8 | Open and close per department and cycle | HR → Periods (choose departments) |

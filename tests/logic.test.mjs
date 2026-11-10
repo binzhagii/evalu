@@ -9,8 +9,8 @@ assert.equal(L.neededResponses(50), 26);
 assert.equal(L.neededResponses(10), 6);
 assert.equal(L.neededResponses(40), 21);
 const secs = db.sections.map((s) => L.sectionStats(db, 'p4', s.id));
-assert.deepEqual(secs.map((s) => s.responded), [8, 4, 6, 10, 3, 7, 9, 5, 0]);
-assert.deepEqual(secs.map((s) => s.valid), [true, false, true, true, false, true, true, false, false], '5 of 10 is not enough');
+assert.deepEqual(secs.map((s) => s.responded), [8, 4, 6, 10, 3, 7, 9, 5, 0, 7]);
+assert.deepEqual(secs.map((s) => s.valid), [true, false, true, true, false, true, true, false, false, true], '5 of 10 is not enough');
 assert.equal(secs[1].score, null); // excluded section has no score
 
 // FR6: practicum / internship / field trip subjects get no evaluation tasks
@@ -130,6 +130,18 @@ assert.ok(db.tasks.filter((x) => x.response).every((x) => x.response.instrumentI
 // FR1: institutional email only
 assert.ok(L.isInstitutionalEmail('fac_a1@ubaguio.edu') && L.isInstitutionalEmail('20226699@s.ubaguio.edu'));
 assert.ok(!L.isInstitutionalEmail('someone@gmail.com') && !L.isInstitutionalEmail('x@ubaguio.edu.evil.com'));
+
+// Clinical Instructors: evaluated by the students of their clinical class and by the dean (50 / 50 to start)
+const ciU = db.users.find((x) => x.id === 'ci_c1');
+assert.equal(L.targetType(db, ciU), 'CI'); assert.ok(L.isTeacher(ciU) && L.isEvaluatee(ciU));
+assert.deepEqual(db.rules.CI, { ST: 50, DEAN: 50 });
+assert.ok(db.tasks.some((x) => x.periodId === 'p4' && x.targetId === 'ci_c1' && x.group === 'ST' && x.sectionId === 'sec10'));
+assert.ok(db.tasks.some((x) => x.periodId === 'p4' && x.targetId === 'ci_c1' && x.evaluatorId === 'dean_c' && x.group === 'DEAN'));
+assert.ok(L.computeTarget(db, 'p1', 'ci_c1').final != null, 'CI gets a final score');
+assert.deepEqual(L.evaluatorGroups(ciU), [], 'a CI evaluates nobody');
+// the HRMC Assistant works like the HR Specialist
+const asst = db.users.find((x) => x.id === 'hr_assistant');
+assert.ok(L.canSeeAll(asst, { releaseStage: 'hr' }) && L.hrUsers(db).some((x) => x.id === 'hr_assistant'));
 
 // task generation is idempotent
 const d3 = structuredClone(db); const before = d3.tasks.length; L.generateTasks(d3, 'p4'); assert.equal(d3.tasks.length, before);

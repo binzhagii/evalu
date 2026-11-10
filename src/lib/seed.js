@@ -2,7 +2,7 @@
 // All names, criteria text and ratings below are SAMPLE data, editable in the app.
 // Used by the server (server/seed.js) to fill an empty database, and by the tests.
 // Passwords are not part of this data; the server hashes DEMO_PASSWORD for every account.
-import { generateTasks, runThresholdCheck, formForTask, targetType, effectiveWeights } from './logic.js';
+import { UB_DEPARTMENTS, generateTasks, runThresholdCheck, formForTask, targetType, effectiveWeights } from './logic.js';
 
 export const DEMO_PASSWORD = 'demo1234';
 
@@ -14,15 +14,17 @@ function rng(seed) {
 export function buildSeed() {
   const R = rng(2026);
   const db = { version: 1, departments: [], users: [], sections: [], criteria: [], instruments: [], rules: {}, periods: [], tasks: [], requests: [], pastResults: [], notifications: [] };
+  // the real UB departments; the sample people work in three of them (ids A, B and C) and in Basic Education
   db.departments = [
-    { id: 'A', name: 'Department A (College)', kind: 'college' },
-    { id: 'B', name: 'Department B (College)', kind: 'college' },
-    { id: 'C', name: 'Department C (College)', kind: 'college' },
-    { id: 'BE', name: 'Basic Education', kind: 'basic' },
+    { id: 'A', name: 'School of Information Technology (SIT)', kind: 'college' },
+    { id: 'B', name: 'School of Business Administration & Accountancy (SBAA)', kind: 'college' },
+    { id: 'C', name: 'School of Nursing (SON)', kind: 'college' },
+    ...UB_DEPARTMENTS.filter((d) => !['SIT', 'SBAA', 'SON'].includes(d.id)),
   ];
   // FR1: every account has an official UB email (students use the s.ubaguio.edu subdomain)
   const U = (id, name, role, position, dept) => db.users.push({ id, username: id, email: `${id}@${role === 'ST' ? 's.' : ''}ubaguio.edu`, name, role, position, dept });
   U('hr', 'HR Specialist (Sample)', 'HR', 'hr', null);
+  U('hr_assistant', 'HRMC Assistant (Sample)', 'HR', 'assistant', null); // shares the evaluation work with the HR Specialist
   U('director', 'Director/VP (Sample)', 'DIR', 'director', null);
   U('vp', 'Vice President (Sample)', 'DIR', 'vp', null); // FR17: both must approve before faculty release
   for (const d of ['a', 'b', 'c']) {
@@ -40,6 +42,7 @@ export function buildSeed() {
   U('shead', 'Subject Head (Sample)', 'TP', 'shead', 'BE');
   U('fac_be1', 'Basic Ed Teacher 1', 'TP', 'faculty', 'BE');
   U('fac_be2', 'Basic Ed Teacher 2', 'TP', 'faculty', 'BE');
+  U('ci_c1', 'Clinical Instructor C1', 'TP', 'ci', 'C'); // allied medical: e.g. Nursing duty in the hospital or skills lab
   const students = {};
   for (const D of ['A', 'B', 'C', 'BE']) {
     students[D] = [];
@@ -56,6 +59,8 @@ export function buildSeed() {
   });
   // FR6: practicum, internship and field trip subjects are on the class lists but are not evaluated
   db.sections.push({ id: 'sec9', code: 'PRAC-A', subject: 'Practicum A (sample)', facultyId: 'fac_a2', dept: 'A', studentIds: students.A.slice(0, 6) });
+  // a Clinical Instructor's class (clinical duty); its students evaluate the CI
+  db.sections.push({ id: 'sec10', code: 'CLIN-C', subject: 'Clinical Duty C (sample)', facultyId: 'ci_c1', dept: 'C', studentIds: students.C });
 
   const bank = {
     ST: ['Explains lessons clearly', 'Is prepared for class', 'Treats students fairly and respectfully', 'Gives timely feedback on work', 'Starts and ends class on time'],
@@ -68,6 +73,8 @@ export function buildSeed() {
     SHEAD: ['Follows the curriculum and syllabus', 'Submits requirements on time', 'Collaborates with the subject team'],
     NTPHEAD: ['Completes assigned work accurately', 'Is punctual and reliable', 'Works well with the office team'],
     NTPSTAFF: ['Gives clear direction to the office', 'Is fair and approachable', 'Supports the staff in their work'],
+    CI_ST: ['Demonstrates clinical skills clearly', 'Supervises students safely during duty', 'Gives helpful feedback during duty', 'Is punctual for clinical duty'],
+    CI_DEAN: ['Meets clinical teaching responsibilities', 'Follows hospital and institutional policies', 'Works well with colleagues'],
   };
   // Table 6 (Basic Ed student tool): items are grouped into weighted categories
   const BE_CATEGORIES = { 'Management of the Teaching and Learning Process': 60, 'Assessment of Learners and Learning Environment': 40 };
@@ -77,10 +84,10 @@ export function buildSeed() {
     for (const text of list) {
       if (!cid[text]) { cid[text] = `c${Object.keys(cid).length + 1}`; db.criteria.push({ id: cid[text], text }); }
     }
-  const inst = (targetType, group, categories = null) =>
+  const inst = (targetType, group, categories = null, texts = bank[group]) =>
     db.instruments.push({
       id: `i_${targetType}_${group}`, name: `${targetType} / ${group} (sample)`, targetType, group, dept: null, version: 1, active: true,
-      categories: categories || {}, items: bank[group].map((t) => ({ criterionId: cid[t], weight: 1, ...(categories && { category: beCategory(t) }) })),
+      categories: categories || {}, items: texts.map((t) => ({ criterionId: cid[t], weight: 1, ...(categories && { category: beCategory(t) }) })),
     });
   ['ST', 'DEAN', 'CHAIR'].forEach((g) => inst('COLLEGE_FACULTY', g));
   inst('BASICED_TEACHER', 'ST', BE_CATEGORIES);
@@ -88,6 +95,8 @@ export function buildSeed() {
   ['CHAIR', 'SEC', 'FAC'].forEach((g) => inst('DEAN', g));
   inst('NTP_STAFF', 'NTPHEAD');
   inst('NTP_HEAD', 'NTPSTAFF');
+  inst('CI', 'ST', null, bank.CI_ST);
+  inst('CI', 'DEAN', null, bank.CI_DEAN);
 
   // Weights from Table 6 of the manuscript. Weights for evaluating Deans are not given, so they stay blank
   // until HR enters them. Non-teaching personnel have one evaluator group each, so it counts 100%.
@@ -97,6 +106,7 @@ export function buildSeed() {
     DEAN: { CHAIR: null, SEC: null, FAC: null },
     NTP_STAFF: { NTPHEAD: 100 },
     NTP_HEAD: { NTPSTAFF: 100 },
+    CI: { ST: 50, DEAN: 50 }, // Clinical Instructors: weights not given yet ("??" in the interview); HR can change them
   };
 
   const day = 86400000;
@@ -127,7 +137,7 @@ export function buildSeed() {
     // per-section student response targets (current period shows several below 50%)
     const stuRate = {};
     db.sections.forEach((s, i) => {
-      stuRate[s.id] = pi < 3 ? (i === 3 && pi === 1 ? 0.3 : 0.7 + R() * 0.3) : [0.8, 0.4, 0.6, 1.0, 0.3, 0.7, 0.9, 0.5][i];
+      stuRate[s.id] = pi < 3 ? (i === 3 && pi === 1 ? 0.3 : 0.7 + R() * 0.3) : [0.8, 0.4, 0.6, 1.0, 0.3, 0.7, 0.9, 0.5, 0, 0.7][i];
     });
     for (const t of pts) {
       let doIt;

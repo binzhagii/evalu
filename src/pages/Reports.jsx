@@ -4,7 +4,7 @@ import {
   GROUPS, TARGET_TYPES, computeAll, computeTarget, canSeeAll, canSeeComments, canSeeDept, deptName, userById, sectionStats,
   itemStats, formOfTask, itemCategory, hasFinal, pendingApprovals, isEvaluatee, stageAtLeast, targetsOf,
 } from '../lib/logic';
-import { Card, Badge, RuleNote, PeriodPicker, Select, Meter, Stat, Stats, Empty, Avatar, ItemTable, PrintButton, fmt, pct } from '../ui';
+import { Card, Badge, RuleNote, PeriodPicker, Select, Meter, Stat, Stats, Empty, Avatar, ItemTable, PrintButton, fmt, pct, newestFirst, usePages } from '../ui';
 import { ReleaseSteps } from './Overview';
 
 export const STATUS_TEXT = { complete: 'Complete', reweighted: 'Complete (re-weighted)', incomplete: 'No valid result yet', 'weights-missing': 'Weights not set' };
@@ -164,11 +164,12 @@ export function PastRecords({ userId }) {
   const { db, user, act } = useApp();
   const [csv, setCsv] = useState('');
   const [out, setOut] = useState(null);
-  const rows = db.pastResults.filter((r) => !userId || r.userId === userId);
+  const all = newestFirst(db.pastResults.filter((r) => !userId || r.userId === userId));
+  const { rows, bar } = usePages(all);
   const isHR = user.role === 'HR';
   return (
     <>
-      {rows.length === 0 ? <p className="muted">No earlier records.</p> : (
+      {all.length === 0 ? <p className="muted">No earlier records.</p> : (<>
         <table>
           <thead><tr>{!userId && <th>Name</th>}<th>Period</th><th>Final score</th><th>Note</th>{isHR && <th />}</tr></thead>
           <tbody>{rows.map((r) => (
@@ -178,7 +179,8 @@ export function PastRecords({ userId }) {
             </tr>
           ))}</tbody>
         </table>
-      )}
+        {bar}
+      </>)}
       {isHR && !userId && (
         <div className="import-box">
           <h4>Import earlier records</h4>
@@ -192,22 +194,32 @@ export function PastRecords({ userId }) {
   );
 }
 
+/** Offices that usually ask for results, so HR picks one instead of typing it. */
+const OFFICES = [
+  'Office of the President', 'Office of the VP for Academic Affairs', 'Office of the VP for Administration',
+  'Office of the Registrar', 'Quality Assurance / Accreditation Office', 'Scholarship and Grants Office', 'Research and Development Office',
+];
+
 /** FR18: HR records a request from another office; the results go to the person's dean only. */
 function ResultRequests({ periodId }) {
   const { db, act } = useApp();
   const [f, setF] = useState({ targetId: '', office: '' });
   const [msg, setMsg] = useState('');
   const period = db.periods.find((p) => p.id === periodId);
-  const list = db.requests.filter((r) => r.periodId === periodId);
+  const list = newestFirst(db.requests.filter((r) => r.periodId === periodId));
   const people = targetsOf(db).filter(isEvaluatee);
+  const [other, setOther] = useState(false);
+  const pickOffice = (v) => { if (v === '__other') { setOther(true); setF({ ...f, office: '' }); } else setF({ ...f, office: v }); };
   return (
     <>
       <p className="muted">When another office asks for a person's evaluation results, HRMC releases them only to that person's dean (or principal), who is then responsible for any further release. The request is recorded and the dean is notified.</p>
       {!stageAtLeast(period, 'faculty') ? <div className="note warn">Results can be shared after they are released to faculty.</div> : (
         <div className="row">
           <Select value={f.targetId} onChange={(v) => setF({ ...f, targetId: v })}><option value="">Whose results…</option>{people.map((u) => <option key={u.id} value={u.id}>{u.name} · {deptName(db, u.dept)}</option>)}</Select>
-          <input placeholder="Requesting office, e.g. Office of the VP for Academics" value={f.office} onChange={(e) => setF({ ...f, office: e.target.value })} className="wide" />
-          <button onClick={async () => { setMsg(''); const r = await act('recordResultRequest', { periodId, ...f }); if (r) { setMsg(`Released to ${r.sentTo.join(', ')}.`); setF({ targetId: '', office: '' }); } }}>Release through the dean</button>
+          {other
+            ? <><input placeholder="Name of the requesting office" value={f.office} onChange={(e) => setF({ ...f, office: e.target.value })} className="wide" /><button className="ghost" onClick={() => { setOther(false); setF({ ...f, office: '' }); }}>Back to list</button></>
+            : <Select value={f.office} onChange={pickOffice}><option value="">Requesting office…</option>{[...new Set([...OFFICES, ...db.requests.map((r) => r.office)])].map((o) => <option key={o} value={o}>{o}</option>)}<option value="__other">Other office…</option></Select>}
+          <button onClick={async () => { setMsg(''); const r = await act('recordResultRequest', { periodId, ...f }); if (r) { setMsg(`Released to ${r.sentTo.join(', ')}.`); setF({ targetId: '', office: '' }); setOther(false); } }}>Release through the dean</button>
         </div>
       )}
       {msg && <div className="note ok">{msg}</div>}
@@ -241,10 +253,12 @@ function Comments({ periodId }) {
 export default function Reports() {
   const { db, user, act } = useApp();
   const periods = visiblePeriods(db, user);
-  const [pid, setPid] = useState(periods[periods.length - 1]?.id);
+  const [pidSel, setPid] = useState(periods[periods.length - 1]?.id);
+  const pid = periods.some((p) => p.id === pidSel) ? pidSel : periods[periods.length - 1]?.id; // newest if none chosen yet
   const [tab, setTab] = useState('overall');
   const [tid, setTid] = useState('');
-  const [dept, setDept] = useState(db.departments[0]?.id);
+  const [deptSel, setDept] = useState(db.departments[0]?.id);
+  const dept = db.departments.some((d) => d.id === deptSel) ? deptSel : db.departments[0]?.id;
   const all = useMemo(() => (pid ? computeAll(db, pid) : []), [db, pid]);
   const period = db.periods.find((p) => p.id === pid);
   const selected = tid || all[0]?.targetId;
@@ -334,7 +348,8 @@ export default function Reports() {
 export function DeptResults() {
   const { db, user, act } = useApp();
   const periods = db.periods.filter((p) => canSeeDept(user, p));
-  const [pid, setPid] = useState(periods[periods.length - 1]?.id);
+  const [pidSel, setPid] = useState(periods[periods.length - 1]?.id);
+  const pid = periods.some((p) => p.id === pidSel) ? pidSel : periods[periods.length - 1]?.id; // newest if none chosen yet
   const [tid, setTid] = useState('');
   const people = useMemo(() => (pid ? computeAll(db, pid).filter((r) => r.target.dept === user.dept && r.targetId !== user.id) : []), [db, pid, user]);
   const requests = db.requests.filter((r) => r.headId === user.id);

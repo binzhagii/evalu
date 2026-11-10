@@ -5,10 +5,10 @@ import { randomInt } from 'node:crypto';
 import {
   GROUPS, TARGET_TYPES, STAGES, ROLES, POSITIONS, needsDept, uid, userById, periodById, targetType, evaluatorGroups,
   instrumentFor, formForTask, formUsed, effectiveWeights, generateTasks, runThresholdCheck, participationAlerts, sendReminders,
-  isInstitutionalEmail, INSTITUTION_DOMAIN, notify, directors, pendingApprovals, resultHeads, hrUsers, isEvaluatee, stageAtLeast,
+  isInstitutionalEmail, INSTITUTION_DOMAIN, notify, directors, pendingApprovals, resultHeads, hrUsers, isEvaluatee, isTeacher, isNursingDept, stageAtLeast, UB_DEPARTMENTS, missingUbDepartments,
 } from '../src/lib/logic.js';
 import { HttpError } from './http.js';
-import { encryptText, hashPassword, verifyPassword } from './secrets.js';
+import { encryptText, decryptText, hashPassword, verifyPassword } from './secrets.js';
 import { deleteUserSessions, addAudit } from './db.js';
 import { seedDatabase } from './seed.js';
 
@@ -72,6 +72,7 @@ function accountFields(db, { name, username, email, role, position, dept }, edit
   if (!Object.hasOwn(POSITIONS[role], position)) fail('Choose a position for this role.');
   u.role = role; u.position = position;
   u.dept = needsDept(role) ? find(db.departments, dept, 'Department').id : null;
+  if (position === 'ci' && !isNursingDept(db.departments.find((d) => d.id === u.dept))) fail('Clinical Instructors belong to the School of Nursing. Choose the School of Nursing as the department.');
   return u;
 }
 /** Put a student in exactly these class sections (only sections of their department). */
@@ -129,7 +130,7 @@ const usedCriteria = (db) => new Set(db.tasks.filter((t) => t.response).flatMap(
 function sectionFields(db, { code, subject, facultyId }, editingId = null) {
   const s = { code: text(code, 'Section code', 40), subject: text(subject, 'Subject', 120) };
   const f = userById(db, facultyId);
-  if (!f || f.role !== 'TP' || f.position !== 'faculty') fail('Choose the faculty member who teaches this class.');
+  if (!isTeacher(f)) fail('Choose the faculty member or Clinical Instructor who teaches this class.');
   if (db.sections.some((x) => x.id !== editingId && x.code.toLowerCase() === s.code.toLowerCase())) fail('A class section with this code already exists.', 409);
   return { ...s, facultyId: f.id, dept: f.dept };
 }
@@ -198,11 +199,14 @@ export const actions = {
     roles: ANYONE,
     async run(db, { currentPassword, newPassword }, user, ctx) {
       const u = account(db, user.id);
-      if (typeof currentPassword !== 'string' || !(await verifyPassword(currentPassword, u.passwordHash))) fail('Your current password is incorrect.');
+      // First sign-in with a temporary password: they just typed it to sign in, so it isn't asked again.
+      // Any other time (My account) the current password is checked.
+      if (!u.mustChangePassword && (typeof currentPassword !== 'string' || !(await verifyPassword(currentPassword, u.passwordHash)))) fail('Your current password is incorrect.');
       checkNewPassword(newPassword, u);
-      if (newPassword === currentPassword) fail('Choose a password different from your current one.');
+      if (await verifyPassword(newPassword, u.passwordHash)) fail(u.mustChangePassword ? 'Choose a new password, not the temporary one.' : 'Choose a password different from your current one.');
       u.passwordHash = await hashPassword(newPassword);
       u.mustChangePassword = false;
+      u.tempPassword = null; // the temporary password is gone for good
       ctx.afterSave.push(() => deleteUserSessions(u.id, ctx.sessionHash)); // sign out other devices
     },
   },
@@ -212,7 +216,7 @@ export const actions = {
     roles: HR,
     async run(db, args) {
       const password = tempPassword();
-      const u = { id: uid('u'), ...accountFields(db, args), passwordHash: await hashPassword(password), active: true, mustChangePassword: true };
+      const u = { id: uid('u'), ...accountFields(db, args), passwordHash: await hashPassword(password), active: true, mustChangePassword: true, tempPassword: encryptText(password) };
       db.users.push(u);
       enroll(db, u, args.sectionIds);
       return { id: u.id, username: u.username, tempPassword: password };
@@ -224,8 +228,8 @@ export const actions = {
       const u = account(db, userId);
       const next = accountFields(db, fields, u.id);
       if (u.id === user.id && next.role !== 'HR') fail('You cannot remove your own HR role.');
-      if (db.sections.some((s) => s.facultyId === u.id) && !(next.role === 'TP' && next.position === 'faculty')) {
-        fail('This person still teaches a class section, so they must stay Teaching Personnel / Faculty.', 409);
+      if (db.sections.some((s) => s.facultyId === u.id) && !isTeacher(next)) {
+        fail('This person still teaches a class section, so they must stay Faculty or Clinical Instructor.', 409);
       }
       Object.assign(u, next);
       for (const s of db.sections) if (s.facultyId === u.id) s.dept = u.dept;
@@ -249,8 +253,20 @@ export const actions = {
       const password = tempPassword();
       u.passwordHash = await hashPassword(password);
       u.mustChangePassword = true;
+      u.tempPassword = encryptText(password);
       ctx.afterSave.push(() => deleteUserSessions(u.id));
       return { username: u.username, tempPassword: password };
+    },
+  },
+  /** HR looks up a temporary password again (e.g. after reloading the page). Kept only until the person sets their own; every look is logged. */
+  showTempPassword: {
+    roles: HR,
+    readOnly: true,
+    run(db, { userId }, user) {
+      const u = account(db, userId);
+      if (!u.tempPassword || !u.mustChangePassword) fail(`${u.name} has already chosen their own password. Use "Reset password" to give them a new temporary one.`, 409);
+      addAudit(user, 'showTempPassword', `Viewed the temporary password of ${u.name}`);
+      return { username: u.username, tempPassword: decryptText(u.tempPassword) };
     },
   },
 
@@ -282,35 +298,77 @@ export const actions = {
     },
   },
   /**
-   * Import a class list exported from the Registrar/ARC. One row per student:
-   *   section code, subject, faculty (username or email), student (username or email)
-   * New sections are created; students are enrolled. Rows with problems are reported, not saved.
+   * Import a class list exported from the Registrar/ARC, for one department. One row per student, either
+   *   section code, subject, teacher name, teacher email, student ID, student name, student UB email  (creates missing teachers and students)
+   *   section code, subject, teacher email, student ID, student name, student UB email   (creates missing students)
+   *   section code, subject, teacher email, student email or username                     (students must already exist)
+   * New sections and new student accounts are created; students are enrolled. A new student's first
+   * password is their student ID, and they must change it at the first sign-in. Problem rows are listed, not saved.
    */
   importClassList: {
     roles: HR,
-    run(db, { csv }) {
-      if (typeof csv !== 'string' || !csv.trim()) fail('Paste the class list first.');
-      if (csv.length > 500000) fail('The class list is too long. Import it in parts.');
+    async run(db, { csv, dept }) {
+      if (typeof csv !== 'string' || !csv.trim()) fail('Paste or choose the class list first.');
+      const listDept = dept ? find(db.departments, dept, 'Department') : null; // where new teachers (and so their classes) go
+      if (csv.length > 2000000) fail('The class list is too long. Import it in parts (for example one department at a time).');
       const errors = [];
+      const fresh = []; // new student accounts, password hashed at the end
+      const freshTeachers = []; // new teacher accounts
       let created = 0, enrolled = 0;
-      csv.split(/\r?\n/).forEach((line, i) => {
-        const cells = line.split(/[,\t;]/).map((c) => c.trim().replace(/^"|"$/g, ''));
-        if (!line.trim() || (i === 0 && /section/i.test(cells[0]))) return; // blank or header row
-        const [code, subject, fac, stu] = cells;
+      const lines = csv.split(/\r?\n/);
+      for (const [i, line] of lines.entries()) {
+        let cells = line.split(/[,\t;]/).map((c) => c.trim().replace(/^"|"$/g, '').trim());
+        if (!line.trim() || (i === 0 && /section/i.test(cells[0]))) continue; // blank or header row
         const n = i + 1;
-        if (!code || !subject || !fac) return errors.push(`Row ${n}: needs section code, subject and faculty.`);
-        const f = byLogin(db, fac);
-        if (!f || f.role !== 'TP' || f.position !== 'faculty') return errors.push(`Row ${n}: "${fac}" is not a faculty account.`);
+        // 7 columns: the teacher's name comes before the teacher's email
+        let tname = '';
+        if (cells.length >= 7) { tname = cells[2]; cells = [cells[0], cells[1], ...cells.slice(3)]; }
+        const full = cells.length >= 6;
+        const [code, subject, fac] = cells;
+        if (!code || !subject || !fac) { errors.push(`Row ${n}: needs section code, subject and teacher email.`); continue; }
+        let f = byLogin(db, fac);
+        if (!f && tname) {
+          // a new teacher: a Faculty account in the department of this list
+          const temail = fac.toLowerCase(), uname = temail.split('@')[0];
+          if (!listDept) { errors.push(`Row ${n}: choose the department of this list so the teacher ${tname} can be created.`); continue; }
+          if (!isInstitutionalEmail(temail)) { errors.push(`Row ${n}: "${fac}" is not an official UB email.`); continue; }
+          if (!USERNAME.test(uname) || byLogin(db, uname)) { errors.push(`Row ${n}: can't make a username from "${fac}". Create this teacher under Accounts.`); continue; }
+          f = { id: uid('u'), username: uname, email: temail, name: tname, role: 'TP', position: 'faculty', dept: listDept.id, passwordHash: null, active: true, mustChangePassword: true };
+          db.users.push(f); freshTeachers.push(f);
+        }
+        if (!isTeacher(f)) { errors.push(`Row ${n}: "${fac}" is not a faculty or Clinical Instructor account. Add the teacher's name to the row (7 columns) or create the teacher under Accounts.`); continue; }
         let s = db.sections.find((x) => x.code.toLowerCase() === code.toLowerCase());
         if (!s) { s = { id: uid('sec'), code, subject, facultyId: f.id, dept: f.dept, studentIds: [] }; db.sections.push(s); created++; }
-        else if (s.facultyId !== f.id) return errors.push(`Row ${n}: section ${code} belongs to another teacher.`);
-        if (!stu) return;
-        const st = byLogin(db, stu);
-        if (!st || st.role !== 'ST') return errors.push(`Row ${n}: "${stu}" is not a student account.`);
-        if (st.dept !== s.dept) return errors.push(`Row ${n}: ${st.name} is not in the same department as ${code}.`);
+        else if (s.facultyId !== f.id) { errors.push(`Row ${n}: section ${code} belongs to another teacher.`); continue; }
+
+        let st;
+        if (full) {
+          const [, , , sid, sname, semail] = cells;
+          const id = String(sid || '').toLowerCase(), email = String(semail || '').toLowerCase();
+          st = byLogin(db, email) || byLogin(db, id);
+          if (!st) {
+            // a new student: create the account from the row
+            if (!USERNAME.test(id)) { errors.push(`Row ${n}: student ID "${sid}" must be 3–32 letters or numbers.`); continue; }
+            if (!sname || sname.length > 100) { errors.push(`Row ${n}: needs the student's name.`); continue; }
+            if (!isInstitutionalEmail(email)) { errors.push(`Row ${n}: "${semail}" is not an official UB email.`); continue; }
+            st = { id: uid('u'), username: id, email, name: sname, role: 'ST', position: 'student', dept: s.dept, passwordHash: null, active: true, mustChangePassword: true };
+            db.users.push(st); fresh.push(st);
+          }
+        } else {
+          if (!cells[3]) continue; // a row that only lists the section
+          st = byLogin(db, cells[3]);
+          if (!st) { errors.push(`Row ${n}: "${cells[3]}" has no account. Add the student ID, name and UB email to the row so the account is created.`); continue; }
+        }
+        if (st.role !== 'ST') { errors.push(`Row ${n}: ${st.name} is not a student account.`); continue; }
+        if (st.dept !== s.dept) { errors.push(`Row ${n}: ${st.name} is not in the same department as ${code}.`); continue; }
         if (!s.studentIds.includes(st.id)) { s.studentIds.push(st.id); enrolled++; }
-      });
-      return { created, enrolled, errors: errors.slice(0, 50), errorCount: errors.length };
+      }
+      // first password = the student ID / the teacher's username (they must change it at the first sign-in)
+      const all = [...freshTeachers, ...fresh];
+      for (let i = 0; i < all.length; i += 16) {
+        await Promise.all(all.slice(i, i + 16).map(async (u) => { u.passwordHash = await hashPassword(u.username); u.tempPassword = encryptText(u.username); }));
+      }
+      return { created, enrolled, accounts: fresh.length, teachers: freshTeachers.length, errors: errors.slice(0, 50), errorCount: errors.length };
     },
   },
 
@@ -602,6 +660,67 @@ export const actions = {
     run(db, { id }) { find(db.pastResults, id, 'Record'); db.pastResults = db.pastResults.filter((r) => r.id !== id); },
   },
 
+  /* ---------- HR: departments ---------- */
+  /** Adds the University of Baguio departments that are missing. */
+  addUbDepartments: {
+    roles: HR,
+    run(db) {
+      const add = missingUbDepartments(db).map((d) => ({ ...d, id: db.departments.some((x) => x.id === d.id) ? uid('d') : d.id }));
+      db.departments.push(...add);
+      return { added: add.length };
+    },
+  },
+  addDepartment: {
+    roles: HR,
+    run(db, { name, kind }) {
+      const n = text(name, 'Department name', 120);
+      if (db.departments.some((d) => d.name.toLowerCase() === n.toLowerCase())) fail('A department with this name already exists.', 409);
+      const d = { id: uid('d'), name: n, kind: kind === 'basic' ? 'basic' : 'college' };
+      db.departments.push(d);
+      return { id: d.id };
+    },
+  },
+  updateDepartment: {
+    roles: HR,
+    run(db, { deptId, name, kind }) {
+      const d = find(db.departments, deptId, 'Department');
+      if (name !== undefined) {
+        const n = text(name, 'Department name', 120);
+        if (db.departments.some((x) => x.id !== d.id && x.name.toLowerCase() === n.toLowerCase())) fail('A department with this name already exists.', 409);
+        if (db.users.some((u) => u.position === 'ci' && u.dept === d.id) && !isNursingDept({ id: d.id, name: n })) fail('Clinical Instructors work in this department, so its name must stay a Nursing department.', 409);
+        d.name = n;
+      }
+      if (kind !== undefined) d.kind = kind === 'basic' ? 'basic' : 'college';
+    },
+  },
+  deleteDepartment: {
+    roles: HR,
+    run(db, { deptId }) {
+      const d = find(db.departments, deptId, 'Department');
+      if (db.users.some((u) => u.dept === d.id) || db.sections.some((s) => s.dept === d.id) || db.instruments.some((i) => i.dept === d.id))
+        fail('People, classes or forms still belong to this department, so it can\'t be deleted.', 409);
+      db.departments = db.departments.filter((x) => x.id !== d.id);
+      for (const p of db.periods) if (p.depts) p.depts = p.depts.filter((x) => x !== d.id);
+    },
+  },
+
+  /**
+   * Start from scratch: removes every account except HR, and all departments, classes, periods,
+   * evaluations, results, notifications and imported records. Keeps the general evaluation forms,
+   * the criteria and the weights, so HR doesn't have to build them again. The audit log is never erased.
+   */
+  startFromScratch: {
+    roles: HR,
+    run(db) {
+      const removed = db.users.filter((u) => u.role !== 'HR').length;
+      db.users = db.users.filter((u) => u.role === 'HR');
+      for (const u of db.users) u.dept = null;
+      // departments go back to the UB list (HR can still add, rename or remove them)
+      Object.assign(db, { sections: [], periods: [], tasks: [], requests: [], pastResults: [], notifications: [], departments: structuredClone(UB_DEPARTMENTS) });
+      db.instruments = db.instruments.filter((i) => !i.dept && i.active !== false);
+      return { removed };
+    },
+  },
   /* ---------- HR: demo data ---------- */
   resetData: {
     roles: HR,

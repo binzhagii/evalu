@@ -149,12 +149,53 @@ export function Select({ value, onChange, children, ...p }) {
   );
 }
 
+/** Newest first: new records are added at the end, so show the list backwards. */
+export const newestFirst = (list) => [...list].reverse();
+
+/** Page bar: "Showing 11–20 of 440", First / Previous / page dropdown / Next / Last. */
+export function Pager({ page, pages, total, size, onPage, onSize }) {
+  const from = page * size + 1, to = Math.min(total, from + size - 1);
+  return (
+    <div className="pager no-print">
+      <span className="muted">Showing <b>{from}–{to}</b> of <b>{total}</b></span>
+      <span className="pager-btns">
+        <button className="ghost" disabled={page === 0} onClick={() => onPage(0)} title="First page">« First</button>
+        <button className="ghost" disabled={page === 0} onClick={() => onPage(page - 1)}>‹ Previous</button>
+        <label className="inline">Page
+          <Select value={page} onChange={(v) => onPage(Number(v))}>{Array.from({ length: pages }, (_, i) => <option key={i} value={i}>{i + 1}</option>)}</Select>
+          of {pages}</label>
+        <button className="ghost" disabled={page >= pages - 1} onClick={() => onPage(page + 1)}>Next ›</button>
+        <button className="ghost" disabled={page >= pages - 1} onClick={() => onPage(pages - 1)} title="Last page">Last »</button>
+      </span>
+      <label className="inline muted">Rows per page
+        <Select value={size} onChange={(v) => onSize(Number(v))}>{[5, 10, 25, 50, 100].map((n) => <option key={n} value={n}>{n}</option>)}</Select>
+      </label>
+    </div>
+  );
+}
+
+/**
+ * Split a long list into pages. Returns { rows, bar }: the rows for this page and the page bar.
+ * The page goes back to 1 whenever `resetKey` changes (e.g. a new search or filter).
+ */
+export function usePages(list, resetKey = '', start = 5) {
+  const [page, setPage] = useState(0);
+  const [size, setSize] = useState(start);
+  const [key, setKey] = useState(resetKey);
+  if (key !== resetKey) { setKey(resetKey); setPage(0); }
+  const pages = Math.max(1, Math.ceil(list.length / size));
+  const p = Math.min(page, pages - 1);
+  const rows = list.slice(p * size, p * size + size);
+  const bar = list.length > 5 ? <Pager page={p} pages={pages} total={list.length} size={size} onPage={setPage} onSize={(n) => { setSize(n); setPage(0); }} /> : null;
+  return { rows, bar };
+}
+
 export function PeriodPicker({ periods, value, onChange }) {
   return (
     <label className="inline">
       <span className="muted">Period</span>
       <Select value={value} onChange={onChange}>
-        {periods.map((p) => (
+        {newestFirst(periods).map((p) => (
           <option key={p.id} value={p.id}>{p.name}</option>
         ))}
       </Select>

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { AppProvider, useApp } from './lib/store';
-import { ROLES, POSITIONS } from './lib/logic';
+import { ROLES, POSITIONS, isTeacher } from './lib/logic';
 import { Icon, Avatar, NavContext } from './ui';
 import { HROverview, DirectorOverview } from './pages/Overview';
 import Tasks from './pages/Tasks';
@@ -14,7 +14,7 @@ import './index.css';
 const DEMO_PASSWORD = 'demo1234'; // sample accounts only (see server/seed.js)
 const DEMO = [
   ['hr', 'HR Specialist'], ['director', 'Director'], ['vp', 'Vice President'], ['dean_a', 'Dean'], ['chair_a', 'Program Chair'],
-  ['fac_a1', 'Faculty'], ['sec_a', 'Secretary (NTP)'], ['head_a', 'Office Head (NTP)'], ['principal', 'Principal'], ['st_a01', 'Student'],
+  ['fac_a1', 'Faculty'], ['ci_c1', 'Clinical Instructor'], ['hr_assistant', 'HRMC Assistant'], ['sec_a', 'Secretary (NTP)'], ['head_a', 'Office Head (NTP)'], ['principal', 'Principal'], ['st_a01', 'Student'],
 ];
 
 function Login() {
@@ -84,7 +84,7 @@ function Login() {
               </button>
             ))}
           </div>
-          <p>Sign in with the UB email (e.g. <code>dean_b@ubaguio.edu</code>, students <code>st_b01@s.ubaguio.edu</code>) or the username. More: dean_b, chair_b, fac_b1, fac_be1, staff_a, shead, aprincipal, st_b01 … All data is sample data.</p>
+          <p>Sign in with the UB email (e.g. <code>dean_b@ubaguio.edu</code>, students <code>st_b01@s.ubaguio.edu</code>) or the username. More: dean_b, chair_b, fac_b1, ci_c1, hr_assistant, fac_be1, staff_a, shead, aprincipal, st_b01 … All data is sample data.</p>
         </div>
       </main>
     </div>
@@ -115,16 +115,29 @@ function navFor(user) {
       ['analytics', 'Analytics', 'trend', <Analytics />, 'Trends, department comparisons and low-rated items'],
     );
   } else {
-    n.push(['tasks', 'My evaluations', 'check', <Tasks />, 'The people you are asked to evaluate']);
+    // Clinical Instructors are evaluated but don't evaluate anyone
+    if (user.position !== 'ci') n.push(['tasks', 'My evaluations', 'check', <Tasks />, 'The people you are asked to evaluate']);
     if (['dean', 'chair', 'principal', 'aprincipal'].includes(user.position)) n.push(['monitor', 'Department progress', 'chart', <Monitor deptOnly />, 'How many evaluations are done in your department']);
     if (user.position === 'dean' || user.position === 'principal') n.push(['dept', 'Department results', 'report', <DeptResults />, 'Your department results, item by item']);
-    if (user.position === 'faculty' || user.position === 'dean' || user.role === 'NTP') n.push(['results', 'My results', 'star', <MyResults />, 'Your evaluation results and your classes\' response progress']);
+    if (isTeacher(user) || user.position === 'dean' || user.role === 'NTP') n.push(['results', 'My results', 'star', <MyResults />, 'Your evaluation results and your classes\' response progress']);
   }
   n.push(
     ['notifs', 'Notifications', 'bell', <Notifications />, 'Reminders and updates sent to you'],
     ['account', 'My account', 'user', <MyAccount />, 'Your details and password'],
   );
   return n;
+}
+
+/** An error pinned to the top of the screen, so it is seen without scrolling. Closes by itself after 10 seconds. */
+function ErrorAlert({ text, onClose }) {
+  useEffect(() => { const t = setTimeout(onClose, 10000); return () => clearTimeout(t); }, [text]); // eslint-disable-line react-hooks/exhaustive-deps
+  return (
+    <div className="alert-toast" role="alert">
+      <Icon name="alert" size={20} />
+      <span>{text}</span>
+      <button className="alert-x" onClick={onClose} aria-label="Close">×</button>
+    </div>
+  );
 }
 
 function greeting() {
@@ -180,7 +193,7 @@ function Shell() {
             <h1>{isHome ? `${greeting()}, ${user.name.replace(/ \(Sample\)/, '')}` : label}</h1>
             <p>{isHome ? `${ROLES[user.role]} · ${new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}` : subtitle}</p>
           </header>
-          {error && <div className="note warn row" role="alert" style={{ justifyContent: 'space-between' }}><span><Icon name="alert" size={16} /> {error}</span><button className="ghost" onClick={clearError}>Dismiss</button></div>}
+          {error && <ErrorAlert text={error} onClose={clearError} />}
           {page}
         </main>
       </div>

@@ -119,7 +119,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     const cols = new Set(sql.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name));
     for (const [name, def] of Object.entries(defs)) if (!cols.has(name)) sql.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${def}`);
   };
-  addCols('users', { active: 'INTEGER NOT NULL DEFAULT 1', must_change_password: 'INTEGER NOT NULL DEFAULT 0', email: 'TEXT' });
+  addCols('users', { active: 'INTEGER NOT NULL DEFAULT 1', must_change_password: 'INTEGER NOT NULL DEFAULT 0', email: 'TEXT', temp_password: 'TEXT' }); // temp_password: encrypted, only until the person sets their own
   addCols('instrument_items', { category: 'TEXT' });
   addCols('periods', { rules: 'TEXT', depts: 'TEXT', approvals: 'TEXT', last_auto: 'TEXT' });
   addCols('responses', { instrument_id: 'TEXT' });
@@ -142,7 +142,7 @@ CREATE TABLE IF NOT EXISTS sessions (
 // Listed parent-first. Rows are kept in insertion order (rowid), like the old arrays.
 const TABLES = [
   { name: 'departments', key: ['id'], rows: (db) => db.departments.map((d) => ({ id: d.id, name: d.name, kind: d.kind })) },
-  { name: 'users', key: ['id'], rows: (db) => db.users.map((u) => ({ id: u.id, username: u.username, name: u.name, role: u.role, position: u.position ?? null, dept: u.dept ?? null, email: u.email ?? null, password_hash: u.passwordHash, active: u.active === false ? 0 : 1, must_change_password: u.mustChangePassword ? 1 : 0 })) },
+  { name: 'users', key: ['id'], rows: (db) => db.users.map((u) => ({ id: u.id, username: u.username, name: u.name, role: u.role, position: u.position ?? null, dept: u.dept ?? null, email: u.email ?? null, password_hash: u.passwordHash, active: u.active === false ? 0 : 1, must_change_password: u.mustChangePassword ? 1 : 0, temp_password: u.tempPassword ? JSON.stringify(u.tempPassword) : null })) },
   { name: 'sections', key: ['id'], rows: (db) => db.sections.map((s) => ({ id: s.id, code: s.code, subject: s.subject, faculty_id: s.facultyId, dept: s.dept })) },
   { name: 'section_students', key: ['section_id', 'student_id'], rows: (db) => db.sections.flatMap((s) => s.studentIds.map((st) => ({ section_id: s.id, student_id: st }))) },
   { name: 'criteria', key: ['id'], rows: (db) => db.criteria.map((c) => ({ id: c.id, text: c.text })) },
@@ -166,7 +166,7 @@ function readFromTables() {
   // password hashes stay on the server: view.js never sends them to the browser
   db.users = all('SELECT * FROM users ORDER BY rowid').map((u) => ({
     id: u.id, username: u.username, email: u.email, name: u.name, role: u.role, position: u.position, dept: u.dept,
-    passwordHash: u.password_hash, active: !!u.active, mustChangePassword: !!u.must_change_password,
+    passwordHash: u.password_hash, active: !!u.active, mustChangePassword: !!u.must_change_password, tempPassword: u.temp_password ? JSON.parse(u.temp_password) : null,
   }));
   const enrolled = {};
   for (const r of all('SELECT section_id, student_id FROM section_students ORDER BY rowid')) (enrolled[r.section_id] ||= []).push(r.student_id);

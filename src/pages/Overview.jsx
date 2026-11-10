@@ -102,7 +102,8 @@ export function DirectorOverview() {
   const { db, user } = useApp();
   const go = useNav();
   const periods = db.periods.filter((p) => canSeeAll(user, p));
-  const [pid, setPid] = useState(periods[periods.length - 1]?.id);
+  const [pidSel, setPid] = useState(periods[periods.length - 1]?.id);
+  const pid = periods.some((p) => p.id === pidSel) ? pidSel : periods[periods.length - 1]?.id; // newest if none chosen yet
   const all = useMemo(() => (pid ? computeAll(db, pid) : []), [db, pid]);
   if (!periods.length) return <Card><Empty icon="clock" title="No results released to you yet">HR releases results to Directors/VPs after a period is closed.</Empty></Card>;
 

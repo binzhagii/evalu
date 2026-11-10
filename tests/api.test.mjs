@@ -86,6 +86,20 @@ try {
   assert.ok(dv.tasks.every((t) => t.evaluatorId === null), 'director does not see who evaluated');
   assert.ok(dv.tasks.some((t) => typeof t.response?.comment === 'string'), 'director sees decrypted comments');
 
+  // a Clinical Instructor sees only their own results, and only once released
+  const ci = await login('ci_c1');
+  const civ = (await call('/api/data', { cookie: ci })).data;
+  assert.ok(civ.tasks.some((x) => x.targetId === 'ci_c1' && x.periodId === 'p1' && x.response && !x.response.redacted && x.evaluatorId === null), 'CI sees own released results');
+  assert.ok(!civ.tasks.some((x) => x.targetId === 'ci_c1' && x.periodId === 'p3' && x.response && !x.response.redacted), 'not before release');
+  // Clinical Instructors are only in the School of Nursing
+  const ciIn = (dept) => act(hr, 'createUser', { name: 'New CI', username: 'new.ci', email: 'new.ci@ubaguio.edu', role: 'TP', position: 'ci', dept });
+  assert.equal((await ciIn('A')).status, 400, 'a CI outside Nursing is refused');
+  assert.equal((await ciIn('C')).status, 200, 'a CI in the School of Nursing is accepted');
+  assert.equal((await act(hr, 'updateDepartment', { deptId: 'C', name: 'School of IT 2' })).status, 409, 'a department with CIs stays Nursing');
+  // the HRMC Assistant can do HR work
+  const asst = await login('hr_assistant');
+  assert.equal((await call('/api/audit', { cookie: asst })).status, 200, 'HRMC Assistant reads the audit log');
+
   const fac = await login('fac_a1');
   const fv = (await call('/api/data', { cookie: fac })).data;
   for (const t of fv.tasks.filter((x) => x.evaluatorId !== 'fac_a1')) {
@@ -203,6 +217,31 @@ try {
   assert.equal(imp.status, 200);
   assert.equal(imp.data.result.created, 1); assert.equal(imp.data.result.enrolled, 1); assert.equal(imp.data.result.errorCount, 2);
   assert.equal((await act(hr, 'createSection', { code: 'OJT-A', subject: 'Internship A', facultyId: 'fac_a1' })).status, 200);
+  // the full ARC list creates the student accounts that don't exist yet
+  const full = await act(hr, 'importClassList', { csv: [
+    'section code,subject,teacher email,student ID,student name,student UB email',
+    'SIT-777,Web Development,fac_a1@ubaguio.edu,20269001,Ana Reyes,20269001@s.ubaguio.edu',
+    'SIT-777,Web Development,fac_a1@ubaguio.edu,20269002,Ben Santos,20269002@s.ubaguio.edu',
+    'SIT-778,Databases,fac_a1@ubaguio.edu,20269001,Ana Reyes,20269001@s.ubaguio.edu', // same student, second class: no duplicate
+    'SIT-777,Web Development,fac_a1@ubaguio.edu,st_a03,Student A03,st_a03@s.ubaguio.edu', // already has an account
+    'SIT-777,Web Development,fac_a1@ubaguio.edu,20269003,Cara Lim,cara@gmail.com', // not a UB email
+  ].join('\n') });
+  assert.equal(full.status, 200, full.data.error);
+  assert.equal(full.data.result.accounts, 2, 'two new student accounts');
+  assert.equal(full.data.result.created, 2); assert.equal(full.data.result.enrolled, 4); assert.equal(full.data.result.errorCount, 1);
+  assert.equal(sql.prepare("SELECT count(*) n FROM users WHERE username='20269001'").get().n, 1, 'no duplicate account');
+  assert.equal(sql.prepare("SELECT dept, must_change_password m FROM users WHERE username='20269002'").get().m, 1, 'must change the first password');
+  assert.equal((await call('/api/auth/login', { body: { username: '20269002@s.ubaguio.edu', password: '20269002' } })).status, 200, 'first password is the student ID');
+  assert.equal(sql.prepare("SELECT count(*) n FROM users WHERE email='cara@gmail.com'").get().n, 0, 'non-UB email refused');
+  // 7 columns: a teacher who doesn't exist yet is created in the chosen department (SIT here = id A)
+  const t7 = 'section code,subject,teacher name,teacher email,student ID,student name,student UB email\nSIT-900,Networks,Juan Dela Cruz,jdelacruz@ubaguio.edu,20269101,Gia Cruz,20269101@s.ubaguio.edu\nSIT-900,Networks,Juan Dela Cruz,jdelacruz@ubaguio.edu,20269102,Hal Diaz,20269102@s.ubaguio.edu';
+  assert.equal((await act(hr, 'importClassList', { csv: t7 })).data.result.teachers, 0, 'no department chosen: teacher not created');
+  const imp7 = await act(hr, 'importClassList', { csv: t7, dept: 'A' });
+  assert.equal(imp7.data.result.teachers, 1); assert.equal(imp7.data.result.accounts, 2); assert.equal(imp7.data.result.errorCount, 0);
+  const jt = sql.prepare("SELECT role, position, dept, must_change_password m FROM users WHERE username='jdelacruz'").get();
+  assert.deepEqual([jt.role, jt.position, jt.dept, jt.m], ['TP', 'faculty', 'A', 1], 'new teacher is SIT faculty and must change the password');
+  assert.equal(sql.prepare("SELECT dept FROM users WHERE username='20269101'").get().dept, 'A', 'students in the same department');
+  assert.equal((await call('/api/auth/login', { body: { username: 'jdelacruz@ubaguio.edu', password: 'jdelacruz' } })).status, 200, 'teacher first password');
 
   /* ---------- FR8: a period for one department ---------- */
   const pB = (await act(hr, 'createPeriod', { name: 'Dept B only', deadline: '2030-04-01', depts: ['B'] })).data.result.id;
@@ -245,6 +284,12 @@ try {
   const { id: newId, tempPassword } = made.data.result;
   assert.equal(made.data.result.username, 'new.student');
   assert.ok(tempPassword.length >= 10);
+  // HR can see the temporary password again (e.g. after reloading the page), and only HR
+  assert.ok((await call('/api/data', { cookie: hr })).data.users.find((x) => x.id === newId).hasTempPassword, 'list shows it can be looked up');
+  assert.ok(!('tempPassword' in (await call('/api/data', { cookie: hr })).data.users.find((x) => x.id === newId)), 'never sent with the list');
+  assert.equal((await act(hr, 'showTempPassword', { userId: newId })).data.result.tempPassword, tempPassword, 'same temporary password');
+  assert.equal((await act(student, 'showTempPassword', { userId: newId })).status, 403, 'only HR');
+  assert.ok(!sql.prepare('SELECT temp_password FROM users WHERE id=?').get(newId).temp_password.includes(tempPassword), 'stored encrypted');
   assert.ok(made.data.data.sections.find((x) => x.id === secA).studentIds.includes(newId), 'enrolled in class');
   assert.ok(sql.prepare('SELECT password_hash FROM users WHERE id=?').get(newId).password_hash.startsWith('scrypt$'));
   assert.ok(made.data.data.users.every((u) => !('passwordHash' in u)), 'HR view has no password hashes');
@@ -256,14 +301,18 @@ try {
   const ns = first.setCookie.split(';')[0];
   assert.equal((await call('/api/data', { cookie: ns })).status, 403, 'blocked until password changed');
   assert.equal((await act(ns, 'markNotificationsRead')).status, 403);
-  assert.equal((await act(ns, 'changePassword', { currentPassword: 'wrong', newPassword: 'goodpass123' })).status, 400);
+  assert.equal((await act(ns, 'changePassword', { newPassword: tempPassword })).status, 400, 'the temporary password cannot be kept');
   assert.equal((await act(ns, 'changePassword', { currentPassword: tempPassword, newPassword: 'short1' })).status, 400, 'too short');
   assert.equal((await act(ns, 'changePassword', { currentPassword: tempPassword, newPassword: 'onlyletters' })).status, 400, 'needs a number');
   assert.equal((await act(ns, 'changePassword', { currentPassword: tempPassword, newPassword: 'new.student99' })).status, 400, 'no username');
-  assert.equal((await act(ns, 'changePassword', { currentPassword: tempPassword, newPassword: 'MyOwnPass2026' })).status, 200);
+  assert.equal((await act(ns, 'changePassword', { newPassword: 'MyOwnPass2026' })).status, 200, 'first sign-in: no current password needed');
+  assert.equal((await act(ns, 'changePassword', { currentPassword: 'wrong', newPassword: 'Another2026x' })).status, 400, 'after that the current password is checked');
+  assert.equal((await act(ns, 'changePassword', { newPassword: 'Another2026x' })).status, 400, 'and it is required');
   assert.equal((await call('/api/data', { cookie: ns })).status, 200, 'same session keeps working');
   assert.equal((await tryLogin('new.student', tempPassword)).status, 401, 'temporary password no longer works');
   assert.equal((await tryLogin('new.student', 'MyOwnPass2026')).data.user.mustChangePassword, false);
+  assert.equal((await act(hr, 'showTempPassword', { userId: newId })).status, 409, 'gone once they chose their own');
+  assert.equal(sql.prepare('SELECT temp_password FROM users WHERE id=?').get(newId).temp_password, null);
 
   // new period: the new student gets a task for their class
   const p2 = (await act(hr, 'createPeriod', { name: 'Accounts period', deadline: '2030-02-01' })).data.result.id;
@@ -313,6 +362,27 @@ try {
   assert.equal(sql.prepare('SELECT count(*) n FROM users WHERE id=?').get(newId).n, 0, 'reset removed created account');
   assert.equal((await tryLogin('dean_b', 'demo1234')).status, 200, 'reset restored demo password');
   assert.equal((await call('/api/auth/me', { cookie: hr })).status, 200, 'still signed in after reset');
+
+  /* ---------- start from scratch: only HR accounts, forms and weights stay ---------- */
+  assert.equal((await act(await login('dean_a'), 'startFromScratch')).status, 403, 'only HR can wipe the data');
+  const wiped = await act(hr, 'startFromScratch');
+  assert.equal(wiped.status, 200);
+  const n = (t) => sql.prepare(`SELECT count(*) n FROM ${t}`).get().n;
+  assert.equal(sql.prepare("SELECT count(*) n FROM users WHERE role <> 'HR'").get().n, 0, 'only HR accounts left');
+  assert.ok(n('users') >= 1);
+  assert.equal(n('departments'), 12, 'departments go back to the 12 UB departments');
+  assert.equal((await act(hr, 'addUbDepartments')).data.result.added, 0, 'nothing missing');
+  for (const t of ['sections', 'periods', 'tasks', 'responses', 'notifications', 'past_results', 'result_requests']) assert.equal(n(t), 0, `${t} emptied`);
+  assert.ok(n('instruments') > 0 && n('criteria') > 0 && n('group_weights') > 0, 'forms, criteria and weights kept');
+  assert.equal((await tryLogin('ghost', 'demo1234')).status, 401);
+  assert.equal((await call('/api/data', { cookie: hr })).status, 200, 'HR still signed in and can load the empty system');
+  const nd = await act(hr, 'addDepartment', { name: 'School of Nursing', kind: 'college' });
+  assert.equal(nd.status, 200);
+  assert.equal((await act(hr, 'addDepartment', { name: 'school of nursing' })).status, 409, 'no duplicate department names');
+  assert.equal((await act(hr, 'createUser', { name: 'New Teacher', username: 'newteach', email: 'newteach@ubaguio.edu', role: 'TP', position: 'faculty', dept: nd.data.result.id })).status, 200);
+  assert.equal((await act(hr, 'deleteDepartment', { deptId: nd.data.result.id })).status, 409, 'department with people kept');
+  assert.equal((await act(hr, 'updateDepartment', { deptId: nd.data.result.id, name: 'College of Nursing', kind: 'college' })).status, 200);
+
   assert.equal((await call('/api/auth/logout', { body: {}, cookie: hr })).status, 200);
   assert.equal((await call('/api/data', { cookie: hr })).status, 401);
 

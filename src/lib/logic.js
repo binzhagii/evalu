@@ -5,6 +5,8 @@
 // - FR13  qualifying subjects and several program chairs are averaged; an evaluator group with no
 //         valid result is removed from the denominator (no dean -> computed over 60%); 2 decimals
 // - Table 6  College faculty 40/40/20, Basic Education 40/20/20/20, Non-teaching: head <-> staff
+// - Clinical Instructors (CIs, allied medical programs): evaluated by their students and the dean;
+//            the interview gives no weights yet (shown as "??"), so they start at 50 / 50 for HR to change
 // - FR17  release order: HR -> Directors/VPs (review and approve) -> individual faculty
 // Anything the manuscript does not give (e.g. weights for evaluating Deans) stays blank (null)
 // until HR enters it; no score is invented.
@@ -25,6 +27,28 @@ export const neededResponses = (enrolled) => Math.floor(enrolled / 2) + 1;
 export const EXEMPT_SUBJECT = /\b(intern(ship)?s?|practicum|ojt|field ?trips?)\b/i;
 export const isExemptSection = (s) => EXEMPT_SUBJECT.test(`${s.subject} ${s.code}`);
 
+/**
+ * The departments of the University of Baguio. HR can rename, add or remove departments later
+ * (Accounts → Departments). "kind" decides the weights: college or basic (Basic Education).
+ */
+export const UB_DEPARTMENTS = [
+  { id: 'SBAA', name: 'School of Business Administration & Accountancy (SBAA)', kind: 'college' },
+  { id: 'SCJPS', name: 'School of Criminal Justice & Public Safety (SCJPS)', kind: 'college' },
+  { id: 'SOD', name: 'School of Dentistry (SOD)', kind: 'college' },
+  { id: 'SEA', name: 'School of Engineering & Architecture (SEA)', kind: 'college' },
+  { id: 'SIT', name: 'School of Information Technology (SIT)', kind: 'college' },
+  { id: 'SIHTM', name: 'School of International Hospitality & Tourism Management (SIHTM)', kind: 'college' },
+  { id: 'SOL', name: 'School of Law (SOL)', kind: 'college' },
+  { id: 'SNS', name: 'School of Natural Sciences (SNS)', kind: 'college' },
+  { id: 'SON', name: 'School of Nursing (SON)', kind: 'college' },
+  { id: 'STELA', name: 'School of Teacher Education & Liberal Arts (STELA)', kind: 'college' },
+  { id: 'GS', name: 'Graduate School', kind: 'college' },
+  { id: 'BE', name: 'Basic Education', kind: 'basic' },
+];
+/** The UB departments that are not in the system yet (matched by id or name). */
+export const missingUbDepartments = (db) =>
+  UB_DEPARTMENTS.filter((d) => !db.departments.some((x) => x.id === d.id || x.name.toLowerCase() === d.name.toLowerCase()));
+
 export const ROLES = {
   ST: 'Student',
   TP: 'Teaching Personnel',
@@ -36,13 +60,18 @@ export const ROLES = {
 // Positions allowed for each role (used when HR creates or edits an account).
 export const POSITIONS = {
   ST: { student: 'Student' },
-  TP: { faculty: 'Faculty', dean: 'Dean', chair: 'Program Chair', principal: 'Principal', aprincipal: 'Assistant Principal', shead: 'Subject Head' },
+  TP: { faculty: 'Faculty', ci: 'Clinical Instructor (CI)', dean: 'Dean', chair: 'Program Chair', principal: 'Principal', aprincipal: 'Assistant Principal', shead: 'Subject Head' },
   NTP: { secretary: 'Secretary', staff: 'Staff', head: 'Office Head' },
-  HR: { hr: 'HR Specialist' },
+  HR: { hr: 'HR Specialist', assistant: 'HRMC Assistant' },
   DIR: { director: 'Director', vp: 'Vice President' },
 };
 /** Roles that belong to a department. */
 export const needsDept = (role) => role === 'ST' || role === 'TP' || role === 'NTP';
+/** Clinical Instructors are only in the School of Nursing (their students are Nursing students). */
+export const isNursingDept = (d) => !!d && (d.id === 'SON' || /nursing/i.test(d.name));
+export const nursingDepts = (db) => db.departments.filter(isNursingDept);
+/** Someone who teaches classes: faculty and Clinical Instructors. */
+export const isTeacher = (u) => !!u && u.role === 'TP' && (u.position === 'faculty' || u.position === 'ci');
 
 export const GROUPS = {
   ST: 'Students',
@@ -60,6 +89,7 @@ export const GROUPS = {
 export const TARGET_TYPES = {
   COLLEGE_FACULTY: 'College faculty',
   BASICED_TEACHER: 'Basic Ed teacher',
+  CI: 'Clinical Instructor (CI)',
   DEAN: 'Dean',
   NTP_STAFF: 'Non-teaching staff',
   NTP_HEAD: 'Non-teaching office head',
@@ -89,6 +119,7 @@ export function targetType(db, u) {
   if (!u) return null;
   if (u.role === 'TP') {
     if (u.position === 'dean') return 'DEAN';
+    if (u.position === 'ci') return 'CI';
     if (u.position === 'faculty') {
       const d = db.departments.find((x) => x.id === u.dept);
       return d?.kind === 'basic' ? 'BASICED_TEACHER' : 'COLLEGE_FACULTY';
@@ -98,8 +129,8 @@ export function targetType(db, u) {
   if (u.role === 'NTP') return u.position === 'head' ? 'NTP_HEAD' : 'NTP_STAFF';
   return null;
 }
-/** People who get evaluation results of their own (faculty, deans, non-teaching personnel). */
-export const isEvaluatee = (u) => (u.role === 'TP' && (u.position === 'faculty' || u.position === 'dean')) || u.role === 'NTP';
+/** People who get evaluation results of their own (faculty, Clinical Instructors, deans, non-teaching personnel). */
+export const isEvaluatee = (u) => (u.role === 'TP' && ['faculty', 'ci', 'dean'].includes(u.position)) || u.role === 'NTP';
 
 export const userById = (db, id) => db.users.find((u) => u.id === id);
 export const deptName = (db, id) => db.departments.find((d) => d.id === id)?.name || id;
