@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { AppProvider, useApp } from './lib/store';
 import { ROLES, POSITIONS } from './lib/logic';
 import { Icon, Avatar, NavContext } from './ui';
@@ -18,7 +18,7 @@ const DEMO = [
 ];
 
 function Login() {
-  const { login, error } = useApp();
+  const { login, error, notice, clearNotice } = useApp();
   const [u, setU] = useState(''); const [p, setP] = useState(''); const [err, setErr] = useState(error);
   const [show, setShow] = useState(false); const [busy, setBusy] = useState(false); const [caps, setCaps] = useState(false);
   const go = async (e) => {
@@ -29,10 +29,13 @@ function Login() {
     setBusy(false);
     if (!r.ok) setErr(r.error);
   };
+  // the "logged out" banner closes by itself after a few seconds
+  useEffect(() => { if (!notice) return; const t = setTimeout(clearNotice, 4000); return () => clearTimeout(t); }, [notice]); // eslint-disable-line react-hooks/exhaustive-deps
   const pick = (id) => { setU(`${id}@${id.startsWith('st_') ? 's.' : ''}ubaguio.edu`); setP(DEMO_PASSWORD); setErr(''); };
   return (
     <div className="login-wrap">
       <div className="login-bg" aria-hidden="true" />
+      {notice && <div className="login-toast" role="status"><Icon name="check" size={18} />{notice}</div>}
       <main className="login-center">
         <header className="login-head">
           <div className="login-logo">eval<span>U</span></div>
@@ -51,7 +54,7 @@ function Login() {
             <span>UB email</span>
             <div className={'input-icon' + (err ? ' bad' : '')}>
               <Icon name="user" />
-              <input value={u} onChange={(e) => { setU(e.target.value); setErr(''); }} autoFocus autoComplete="username" placeholder="name@ubaguio.edu" />
+              <input value={u} onChange={(e) => { setU(e.target.value); setErr(''); clearNotice(); }} autoFocus autoComplete="username" placeholder="name@ubaguio.edu" />
             </div>
           </label>
           <label className="field">

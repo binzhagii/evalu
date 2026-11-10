@@ -23,8 +23,9 @@ export function AppProvider({ children }) {
   const [db, setDb] = useState(null);
   const [checking, setChecking] = useState(true); // asking the server "am I still signed in?"
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState(''); // good news shown on the sign-in screen, e.g. "You have logged out"
 
-  const signedOut = useCallback((msg = '') => { setUser(null); setDb(null); setError(msg); }, []);
+  const signedOut = useCallback((msg = '', ok = '') => { setUser(null); setDb(null); setError(msg); setNotice(ok); }, []);
 
   const loadData = useCallback(async () => {
     const r = await api('/api/data');
@@ -48,7 +49,7 @@ export function AppProvider({ children }) {
     try {
       const r = await api('/api/auth/login', { username, password });
       if (!r.ok) return { ok: false, error: r.data.error || 'Sign-in failed. Please try again.' };
-      setError('');
+      setError(''); setNotice('');
       setUser(r.data.user);
       if (!r.data.user.mustChangePassword) await loadData(); // otherwise: choose a new password first
       return { ok: true };
@@ -72,7 +73,7 @@ export function AppProvider({ children }) {
   };
 
   const logout = async () => {
-    signedOut();
+    signedOut('', 'You have successfully logged out.');
     try { await api('/api/auth/logout', {}); } catch { /* ignore */ }
   };
 
@@ -94,7 +95,7 @@ export function AppProvider({ children }) {
   }, [signedOut]);
 
   return (
-    <Ctx.Provider value={{ db, user, checking, error, clearError: () => setError(''), act, login, logout, changePassword, reload: loadData }}>
+    <Ctx.Provider value={{ db, user, checking, error, clearError: () => setError(''), notice, clearNotice: () => setNotice(''), act, login, logout, changePassword, reload: loadData }}>
       {children}
     </Ctx.Provider>
   );
