@@ -16,7 +16,7 @@ export const CLASS_TYPES = {
   skills: 'Skills laboratory (Nursing)',
   'clin-dent': 'Clinical – Dentistry',
   'clin-pt': 'Clinical – Physical Therapy',
-  'clin-mt': 'Clinical – Medical Technology (BMLS)',
+  'clin-mt': 'Clinical – Medical Technology',
 };
 
 export const UB_FORMS = [

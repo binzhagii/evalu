@@ -1,26 +1,16 @@
 section code,subject,teacher email,student ID,student name,student UB email
-IT-WEBSYS1-A,Web Systems and Technologies 1,teacher1@ubaguio.edu,20260001,Ana Reyes,20260001@s.ubaguio.edu
-IT-WEBSYS1-A,Web Systems and Technologies 1,teacher1@ubaguio.edu,20260002,Ben Santos,20260002@s.ubaguio.edu
-IT-WEBSYS1-A,Web Systems and Technologies 1,teacher1@ubaguio.edu,20260003,Carla Mendoza,20260003@s.ubaguio.edu
-IT-WEBSYS1-A,Web Systems and Technologies 1,teacher1@ubaguio.edu,20260004,Daniel Flores,20260004@s.ubaguio.edu
-IT-WEBSYS1-A,Web Systems and Technologies 1,teacher1@ubaguio.edu,20260005,Ella Garcia,20260005@s.ubaguio.edu
-IT-PROG2-A,Computer Programming 2,teacher2@ubaguio.edu,20260001,Ana Reyes,20260001@s.ubaguio.edu
-IT-PROG2-A,Computer Programming 2,teacher2@ubaguio.edu,20260002,Ben Santos,20260002@s.ubaguio.edu
-IT-PROG2-A,Computer Programming 2,teacher2@ubaguio.edu,20260003,Carla Mendoza,20260003@s.ubaguio.edu
-IT-PROG2-A,Computer Programming 2,teacher2@ubaguio.edu,20260004,Daniel Flores,20260004@s.ubaguio.edu
-IT-PROG2-A,Computer Programming 2,teacher2@ubaguio.edu,20260005,Ella Garcia,20260005@s.ubaguio.edu
-IT-DBMS1-A,Database Management Systems 1,teacher3@ubaguio.edu,20260001,Ana Reyes,20260001@s.ubaguio.edu
-IT-DBMS1-A,Database Management Systems 1,teacher3@ubaguio.edu,20260002,Ben Santos,20260002@s.ubaguio.edu
-IT-DBMS1-A,Database Management Systems 1,teacher3@ubaguio.edu,20260003,Carla Mendoza,20260003@s.ubaguio.edu
-IT-DBMS1-A,Database Management Systems 1,teacher3@ubaguio.edu,20260004,Daniel Flores,20260004@s.ubaguio.edu
-IT-DBMS1-A,Database Management Systems 1,teacher3@ubaguio.edu,20260005,Ella Garcia,20260005@s.ubaguio.edu
-IT-NET1-A,Networking 1,teacher4@ubaguio.edu,20260001,Ana Reyes,20260001@s.ubaguio.edu
-IT-NET1-A,Networking 1,teacher4@ubaguio.edu,20260002,Ben Santos,20260002@s.ubaguio.edu
-IT-NET1-A,Networking 1,teacher4@ubaguio.edu,20260003,Carla Mendoza,20260003@s.ubaguio.edu
-IT-NET1-A,Networking 1,teacher4@ubaguio.edu,20260004,Daniel Flores,20260004@s.ubaguio.edu
-IT-NET1-A,Networking 1,teacher4@ubaguio.edu,20260005,Ella Garcia,20260005@s.ubaguio.edu
-IT-SAD1-A,Systems Analysis and Design,teacher5@ubaguio.edu,20260001,Ana Reyes,20260001@s.ubaguio.edu
-IT-SAD1-A,Systems Analysis and Design,teacher5@ubaguio.edu,20260002,Ben Santos,20260002@s.ubaguio.edu
-IT-SAD1-A,Systems Analysis and Design,teacher5@ubaguio.edu,20260003,Carla Mendoza,20260003@s.ubaguio.edu
-IT-SAD1-A,Systems Analysis and Design,teacher5@ubaguio.edu,20260004,Daniel Flores,20260004@s.ubaguio.edu
-IT-SAD1-A,Systems Analysis and Design,teacher5@ubaguio.edu,20260005,Ella Garcia,20260005@s.ubaguio.edu
+IT-WEBSYS1-A,Web Systems and Technologies 1,teacher1@ubaguio.edu,20260001,Jeff,20260001@s.ubaguio.edu
+IT-WEBSYS1-A,Web Systems and Technologies 1,teacher1@ubaguio.edu,20260002,Krizza,20260002@s.ubaguio.edu
+IT-WEBSYS1-A,Web Systems and Technologies 1,teacher1@ubaguio.edu,20260003,Yssa,20260003@s.ubaguio.edu
+IT-PROG2-A,Computer Programming 2,teacher2@ubaguio.edu,20260001,Jeff,20260001@s.ubaguio.edu
+IT-PROG2-A,Computer Programming 2,teacher2@ubaguio.edu,20260002,Krizza,20260002@s.ubaguio.edu
+IT-PROG2-A,Computer Programming 2,teacher2@ubaguio.edu,20260003,Yssa,20260003@s.ubaguio.edu
+IT-DBMS1-A,Database Management Systems 1,teacher3@ubaguio.edu,20260001,Jeff,20260001@s.ubaguio.edu
+IT-DBMS1-A,Database Management Systems 1,teacher3@ubaguio.edu,20260002,Krizza,20260002@s.ubaguio.edu
+IT-DBMS1-A,Database Management Systems 1,teacher3@ubaguio.edu,20260003,Yssa,20260003@s.ubaguio.edu
+IT-NET1-A,Networking 1,teacher4@ubaguio.edu,20260001,Jeff,20260001@s.ubaguio.edu
+IT-NET1-A,Networking 1,teacher4@ubaguio.edu,20260002,Krizza,20260002@s.ubaguio.edu
+IT-NET1-A,Networking 1,teacher4@ubaguio.edu,20260003,Yssa,20260003@s.ubaguio.edu
+IT-SAD1-A,Systems Analysis and Design,teacher5@ubaguio.edu,20260001,Jeff,20260001@s.ubaguio.edu
+IT-SAD1-A,Systems Analysis and Design,teacher5@ubaguio.edu,20260002,Krizza,20260002@s.ubaguio.edu
+IT-SAD1-A,Systems Analysis and Design,teacher5@ubaguio.edu,20260003,Yssa,20260003@s.ubaguio.edu

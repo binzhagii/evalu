@@ -322,6 +322,13 @@ function CategoryPicker({ value, options, onSave }) {
   );
 }
 
+const VORDER = ['', 'lab', 'skills', 'clin-mt', 'clin-pt', 'clin-dent'];
+/** When a class-type form is used, in plain words. */
+const WHEN = {
+  lab: 'laboratory classes', skills: 'Nursing skills laboratory',
+  'clin-dent': 'Dentistry clinical classes', 'clin-pt': 'Physical Therapy clinical classes', 'clin-mt': 'Medical Technology clinical classes',
+};
+
 /* ---------------- Dynamic forms (FR3, FR4, NFR9) ---------------- */
 export function Forms() {
   const { db, act } = useApp();
@@ -353,19 +360,40 @@ export function Forms() {
   const critText = (id) => db.criteria.find((c) => c.id === id)?.text || '';
   const catTotal = cats.reduce((a, c) => a + (Number(ins?.categories?.[c]) || 0), 0);
   useEffect(() => { setOpen([]); setFind(''); }, [sel]);
-  const label = (i) => `${TARGET_TYPES[i.targetType]} ← ${GROUPS[i.group]}${i.variant ? ` · ${CLASS_TYPES[i.variant]}` : ''}${i.dept ? ` · ${deptName(db, i.dept)}` : ''} · v${i.version || 1}${i.active === false ? ' (old)' : ''}${i.name.includes('(UB tool)') ? ` · ${i.name.replace(' (UB tool)', '')}` : ''}`;
+  // plain-language names: "Rated by the Dean — laboratory classes", grouped under who is evaluated
+  const isUb = (i) => i.name.includes('(UB tool)');
+  const whenUsed = (i) => [
+    i.variant ? WHEN[i.variant] : i.targetType === 'CI' ? 'clinical area (hospital, community clinic)' : i.group === 'ST' && i.targetType === 'COLLEGE_FACULTY' && !i.dept ? 'lecture classes' : '',
+    i.dept ? `only ${deptName(db, i.dept).replace(/\s*\([A-Z]+\)$/, '')}` : '',
+  ].filter(Boolean).join(', ');
+  const label = (i) => `Rated by ${GROUPS[i.group] === 'Students' ? 'the students' : `the ${GROUPS[i.group]}`}${whenUsed(i) ? ` — ${whenUsed(i)}` : ''}${!isUb(i) ? (i.items.length ? ' (custom form)' : ' (custom form, no questions yet)') : ''}${i.active === false ? ` (old version ${i.version || 1})` : ''}`;
+  const groupOrder = Object.keys(GROUPS);
+  const byType = Object.keys(TARGET_TYPES).map((tt) => [tt, forms.filter((i) => i.targetType === tt)
+    .sort((a, b) => groupOrder.indexOf(a.group) - groupOrder.indexOf(b.group) || (a.dept ? 99 : VORDER.indexOf(a.variant || '')) - (b.dept ? 99 : VORDER.indexOf(b.variant || '')) || (b.version || 1) - (a.version || 1))]).filter(([, l]) => l.length);
 
   return (
     <>
       {msg && <div className="note">{msg}</div>}
       <Card title="Evaluation forms" actions={<label className="inline muted"><input type="checkbox" checked={showOld} onChange={(e) => setShowOld(e.target.checked)} /> Show old versions</label>}>
         <div className="row">
-          <Select value={ttF} onChange={(v) => { setTtF(v); const first = newestFirst(db.instruments.filter((i) => (showOld || i.active !== false) && (!v || i.targetType === v))).at(-1); if (first) setSel(first.id); }} aria-label="Who is evaluated"><option value="">Everyone evaluated</option>{Object.entries(TARGET_TYPES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</Select>
-          <Select value={sel} onChange={setSel} className="wide">{forms.map((i) => <option key={i.id} value={i.id}>{label(i)}</option>)}</Select>
+          <label className="inline"><span className="muted">Who is evaluated</span>
+            <Select value={ttF} onChange={(v) => { setTtF(v); const first = newestFirst(db.instruments.filter((i) => (showOld || i.active !== false) && (!v || i.targetType === v))).at(-1); if (first) setSel(first.id); }} aria-label="Who is evaluated"><option value="">Everyone</option>{Object.entries(TARGET_TYPES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</Select>
+          </label>
+          <label className="inline wide"><span className="muted">Form</span>
+            <Select value={sel} onChange={setSel} className="wide" aria-label="Form">
+              {byType.map(([tt, list]) => <optgroup key={tt} label={TARGET_TYPES[tt]}>{list.map((i) => <option key={i.id} value={i.id}>{label(i)}</option>)}</optgroup>)}
+            </Select>
+          </label>
           {ins && ins.active !== false && <button className="ghost" onClick={async () => { const r = await act('reviseForm', { instrumentId: ins.id }); if (r) { setSel(r.id); setMsg(`Version ${r.version} created. Edit it below; evaluations already submitted keep the old version.`); } }}>Create new version</button>}
         </div>
         {ins && (
           <>
+            <div className="form-about">
+              <span><b>{TARGET_TYPES[ins.targetType]}</b>, rated by <b>{GROUPS[ins.group] === 'Students' ? 'the students' : `the ${GROUPS[ins.group]}`}</b></span>
+              <span>Used for: {whenUsed(ins) || 'everyone of this kind'}</span>
+              <span>{isUb(ins) ? <>UB tool: {ins.name.replace(' (UB tool)', '')}</> : <>Custom form made in evalU (not one of UB's tools){!ins.items.length && <> · <b>no questions yet</b></>}</>}</span>
+              <span>{(ins.version || 1) === 1 ? 'Original version' : `Version ${ins.version} (changed ${ins.version - 1} time${ins.version > 2 ? 's' : ''})`}{ins.active === false ? ' · old, kept for past results' : ' · in use'}</span>
+            </div>
             {locked
               ? <div className="note warn">{ins.active === false ? 'This is an old version, kept with the results that used it. It can\'t be changed.' : 'This form already has submitted evaluations, so it is locked to keep past results unchanged. Click "Create new version" to make changes.'}</div>
               : <p className="muted">Dropdown choices save as soon as you pick them; item weights save when you leave the box. Evaluations already submitted keep the weights they were submitted with.</p>}
@@ -434,7 +462,8 @@ export function Forms() {
           </>
         )}
       </Card>
-      <Card title="Create a new form">
+      <details className="card add-form">
+        <summary><b>+ Add a custom form</b> <span className="muted">(only if UB adds a new evaluation tool; the UB forms above are already set up)</span></summary>
         <div className="row">
           <Select value={nf.targetType} onChange={(v) => setNf({ ...nf, targetType: v, group: groupsFor(v)[0] })}>{Object.entries(TARGET_TYPES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</Select>
           <Select value={nf.group} onChange={(v) => setNf({ ...nf, group: v })}>{groupsFor(nf.targetType).map((g) => <option key={g} value={g}>{GROUPS[g]}</option>)}</Select>
@@ -443,7 +472,7 @@ export function Forms() {
           <button onClick={async () => { const r = await act('createForm', nf); if (r) setSel(r.id); }}>Create empty form</button>
         </div>
         <p className="muted">A department-specific form (e.g. for Nursing) is used for that department instead of the general one. A form for a type of class (e.g. laboratory) is used for the classes set to that type under Class lists.</p>
-      </Card>
+      </details>
       <Card title="Criteria bank">
         <p className="muted">The criteria come from UB's evaluation tools. Criteria already answered in submitted evaluations can't be reworded or deleted, so past reports stay exactly as they were.</p>
         <div className="row"><input className="wide" placeholder="New criterion" value={newCrit} onChange={(e) => setNewCrit(e.target.value)} />

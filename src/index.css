@@ -505,3 +505,11 @@ input.tiny { width:70px; }
   .sum-table thead { display:table-header-group; }
   .sum-table tr { break-inside:avoid; page-break-inside:avoid; }
 }
+/* Forms page: what the chosen form is, in plain words */
+.form-about { display:flex; flex-wrap:wrap; gap:4px 22px; margin:8px 0 12px; padding:10px 12px; border:1px solid var(--bd); border-radius:8px; font-size:13.5px; background:var(--card); }
+.form-about span { color:var(--mut); }
+.form-about span b { color:var(--fg); }
+details.add-form { padding:14px 18px; }
+details.add-form > summary { cursor:pointer; list-style:none; }
+details.add-form > summary::-webkit-details-marker { display:none; }
+details.add-form[open] > summary { margin-bottom:12px; }
