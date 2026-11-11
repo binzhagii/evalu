@@ -300,16 +300,6 @@ html { -webkit-text-size-adjust:100%; }
 .login-submit:hover:not(:disabled) { background:#8f0016; }
 .login-submit:focus-visible { outline:none; box-shadow:0 0 0 3px rgba(179,0,27,.3); }
 .lc-foot { margin:18px 0 0; padding-top:14px; border-top:1px solid #eceef0; text-align:center; font-size:13px; color:var(--mut); }
-.login-demo-h { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:8px; font-size:14px; }
-.login-demo-h span, .login-demo > p { color:#a9adb5; font-size:13px; }
-.login-demo > p { margin:10px 0 0; text-align:center; }
-.login-demo code { background:rgba(255,255,255,.12); color:#fff; padding:1px 6px; border-radius:4px; }
-.chips { display:grid; grid-template-columns:repeat(2, 1fr); gap:8px; }
-.chip { background:rgba(255,255,255,.07); color:#fff; border:1px solid rgba(255,255,255,.14); border-radius:10px; padding:8px 12px; text-align:left; display:flex; flex-direction:column; gap:1px; }
-.chip b { font-size:13px; font-weight:600; } .chip small { color:#a9adb5; font-family:ui-monospace, monospace; font-size:12px; }
-.chip:hover { border-color:#ff4d63; background:rgba(255,77,99,.12); }
-.chip.on { border-color:#ff4d63; background:rgba(255,77,99,.22); }
-.chip:focus-visible { outline:2px solid #ff4d63; outline-offset:2px; }
 
 @media (max-width:760px) { .login-logo { font-size:44px; } }
 
@@ -327,7 +317,6 @@ tr.inactive td { color:var(--mut); }
 .kv th { text-transform:none; letter-spacing:0; background:none; font-size:14px; width:180px; }
 .kv tbody tr:hover td { background:none; }
 aside nav button { justify-content:flex-start; }
-.chip { align-items:flex-start; justify-content:flex-start; }
 
 /* ---- per-item reports, comments, approvals (FR14-FR19) ---- */
 .item-reports { margin-top:12px; }
@@ -407,9 +396,10 @@ button.danger:hover { background:var(--bad-l); }
 .comp-head b { font-size:17px; letter-spacing:.2px; }
 .comp-ctrl { font-family:Arial, sans-serif; font-size:13px; margin-top:6px; }
 .comp-ctrl span { margin-left:40px; font-size:15px; }
-.comp-who { display:flex; justify-content:space-between; flex-wrap:wrap; gap:6px 24px; font-family:Arial, sans-serif; font-size:16px; margin:4px 0 6px; }
+.comp-who { display:flex; justify-content:space-between; flex-wrap:nowrap; gap:6px 24px; font-family:Arial, sans-serif; font-size:16px; margin:4px 0 6px; }
+.comp-who > span { display:flex; align-items:baseline; gap:6px; white-space:nowrap; }
 .comp-who u { text-decoration:none; border-bottom:1px solid #000; padding:0 18px; display:inline-block; min-width:180px; text-align:center; }
-.comp-who .comp-school { font-weight:700; }
+.comp-who .comp-school { font-weight:700; min-width:0; padding:0 8px; }
 .comp-table { width:100%; border-collapse:collapse; margin:0; }
 .comp-table th, .comp-table td { border:1px solid #000; text-align:center; padding:4px 6px; color:#000; background:#fff; }
 .comp-table th { font-size:15px; font-weight:700; line-height:1.15; }
@@ -423,6 +413,7 @@ button.danger:hover { background:var(--bad-l); }
 .comp-key td:first-child { text-align:right; }
 @media (max-width:600px) {
   .comp-table th { font-size:11px; } .comp-table td { font-size:16px; }
+  .comp-who { flex-wrap:wrap; }
   .comp-who u { min-width:0; padding:0 6px; }
 }
 @media print {
@@ -447,3 +438,70 @@ ol.form-qs li:last-child { border-bottom:none; }
 .form-q-tools { display:flex; flex-wrap:wrap; align-items:center; gap:6px 14px; margin-top:6px; }
 .form-q-tools select { max-width:260px; }
 input.tiny { width:70px; }
+
+/* UB "Performance Evaluation" and "VERBATIM" sheets (templates and for printing pdf/SAMPLE) */
+.ub-list, .ub-mine { display:grid; gap:18px; }
+.ub-page { position:relative; }
+.eval-sheet, .verb-sheet { background:#fff; color:#000; max-width:820px; padding:28px 40px 32px; border:1px solid #d6d8dc; overflow:hidden; }
+.eval-sheet { font-family:Roboto, "Segoe UI", Arial, sans-serif; font-size:14px; }
+.ub-mark { position:absolute; top:220px; left:50%; transform:translateX(-50%) rotate(-58deg); font-family:Roboto, Arial, sans-serif; font-size:300px; line-height:1; color:#d0021b; opacity:.06; pointer-events:none; white-space:nowrap; }
+.eval-head { display:flex; flex-direction:column; align-items:center; text-align:center; font-size:15px; line-height:1.35; }
+.eval-head img { height:52px; width:auto; margin-bottom:22px; }
+.eval-head .eval-term { margin-top:22px; }
+.eval-who { border-collapse:collapse; margin:30px 0 26px; width:auto; }
+.eval-who th, .eval-who td { border:none; background:none; padding:2px 0; text-align:left; font-size:14.5px; color:#000; text-transform:none; letter-spacing:0; }
+.eval-who th { font-weight:700; padding-right:16px; white-space:nowrap; }
+.eval-who tbody tr:hover td { background:none; }
+.eval-table { width:100%; border-collapse:collapse; margin:0 0 22px; position:relative; }
+.eval-table th { text-align:left; font-weight:400; font-size:14.5px; color:#000; background:none; text-transform:none; letter-spacing:0; padding:0 0 3px; border-bottom:1.5px solid #000; }
+.eval-table td { border:none; border-bottom:1px solid #9a9da3; padding:4px 0; color:#000; background:none; font-size:14.5px; vertical-align:top; }
+.eval-table td:last-child { text-align:right; font-weight:700; width:70px; padding-left:12px; }
+.eval-table tbody tr:hover td { background:none; }
+.verb-sheet { font-family:"Times New Roman", Times, serif; font-size:14px; }
+.verb-head { display:flex; flex-direction:column; align-items:flex-end; text-align:right; margin-bottom:26px; }
+.verb-title { font-family:"Segoe Script", "Monotype Corsiva", "Brush Script MT", cursive; font-size:21px; }
+.verb-name { font-family:Calibri, "Segoe UI", Arial, sans-serif; font-weight:700; font-size:28px; }
+.verb-sheet h4 { font-family:"Bookman Old Style", Georgia, serif; font-weight:900; font-size:15px; text-decoration:underline; margin:22px 0 10px; color:#000; }
+.verb-sheet h5 { font-family:"Bookman Old Style", Georgia, serif; font-weight:900; font-size:13.5px; margin:12px 0 2px; color:#000; }
+.verb-sheet ul { margin:0 0 6px; padding-left:46px; }
+.verb-sheet li { margin:2px 0; min-height:1.2em; }
+.c-part { display:block; }
+.field-block { display:block; margin:10px 0; }
+.field-block b { display:block; margin-bottom:4px; }
+.field-block textarea { width:100%; }
+.screen-hidden { display:none; }
+.print-btns { display:flex; flex-wrap:wrap; gap:8px; justify-content:flex-end; }
+@media print {
+  .screen-hidden { display:block !important; }
+  .ub-list, .ub-mine { display:block; }
+  main:has(.ub-mine) .topbar, main:has(.ub-mine) header, main:has(.ub-mine) .card > h2, main:has(.ub-mine) .card-head { display:none !important; }
+  .eval-sheet, .verb-sheet { border:none; padding:0; max-width:none; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  .ub-page { break-after:page; page-break-after:always; }
+  .ub-page:last-child, .ub-mine > div:last-child > .ub-page:last-child { break-after:auto; page-break-after:auto; }
+  .eval-table tr { break-inside:avoid; page-break-inside:avoid; }
+}
+/* the sheets wrap their text like paper, even where phone screens keep table cells on one line */
+.comp-sheet th, .comp-sheet td, .eval-sheet td, .eval-sheet .eval-table th { white-space:normal; }
+@media print { .card { overflow:visible !important; } }
+@media print {
+  main:has(.ub-mine) .card-h { display:none !important; }
+  .my-period + .my-period { break-before:page; page-break-before:always; }
+  body.print-one .my-period:not(.print-this), body.print-one main > :not(.my-period):not(.page-h) { display:none !important; }
+}
+/* evalU's own summary printouts (Reports tabs): UB header + bordered table, like the Comprehensive Report */
+.sum-sheet { background:#fff; color:#000; border:3px solid #000; padding:10px 14px 14px; font-family:"Times New Roman", Times, serif; }
+.sum-info { display:flex; flex-wrap:wrap; gap:4px 28px; margin:12px 0 6px; font-family:Arial, sans-serif; font-size:13px; }
+.sum-sec h4 { font-family:Arial, sans-serif; font-size:13px; font-weight:700; text-transform:uppercase; margin:14px 0 4px; color:#000; }
+.sum-table { width:100%; border-collapse:collapse; margin:6px 0 0; font-family:Arial, sans-serif; font-size:12px; }
+.sum-table th, .sum-table td { border:1px solid #000; padding:3px 6px; color:#000; background:#fff; text-align:left; vertical-align:top; white-space:normal; }
+.sum-table th { font-size:11px; font-weight:700; text-align:center; background:#f0f0f0; }
+.sum-table .sum-no { width:34px; text-align:center; }
+.sum-table .sum-cat td { font-weight:700; background:#f0f0f0; }
+.sum-none { font-family:Arial, sans-serif; font-size:12px; }
+@media print {
+  main:has(.sum-print) .stats, main:has(.sum-print) .approval, main:has(.sum-print) header, main:has(.sum-print) details, main:has(.sum-print) .card-h,
+  main:has(.ub-mine) .stats, main:has(.ub-mine) .approval, main:has(.ub-mine) details { display:none !important; }
+  .sum-sheet { -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  .sum-table thead { display:table-header-group; }
+  .sum-table tr { break-inside:avoid; page-break-inside:avoid; }
+}

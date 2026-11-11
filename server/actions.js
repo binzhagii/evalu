@@ -55,7 +55,7 @@ function cleanAnswers(answers, ins) {
 function cleanComment(comment) {
   if (comment == null || comment === '') return '';
   if (typeof comment !== 'string') fail('Invalid comment.');
-  if (comment.length > 2000) fail('Comment is too long (max 2000 characters).');
+  if (comment.length > 4000) fail('Comment is too long (max 2000 characters per box).');
   return comment.trim();
 }
 
@@ -438,7 +438,7 @@ export const actions = {
       if (p.status !== 'closed') fail('Close the period before releasing results.', 409);
       const next = STAGES[STAGES.indexOf(p.releaseStage) + 1] || fail('Results are already fully released.', 409);
       if (next === 'faculty') {
-        // FR17: every Director/VP must approve before faculty see anything
+        // FR17: every VP must approve before faculty see anything
         const waiting = pendingApprovals(db, p);
         if (waiting.length) fail(`Waiting for approval from: ${waiting.map((u) => u.name).join(', ')}.`, 409);
       }
@@ -457,11 +457,12 @@ export const actions = {
       if (p.releaseStage === 'hr') p.approvals = []; // results must be reviewed again
     },
   },
-  /** FR17: a Director/VP approves the results of a period for release to faculty. */
+  /** FR17: a Vice President approves the results of a period for release to faculty. */
   approveRelease: {
     roles: DIR,
     run(db, { periodId }, user) {
       const p = period(db, periodId);
+      if (user.position !== 'vp') fail('Only the Vice Presidents approve results.', 403);
       if (p.releaseStage !== 'dir') fail('These results are not waiting for your approval.', 409);
       p.approvals ||= [];
       if (p.approvals.some((a) => a.userId === user.id)) fail('You already approved these results.', 409);
@@ -472,7 +473,7 @@ export const actions = {
           key: `appr|${p.id}|${user.id}|${h.id}`, userId: h.id, kind: 'release',
           text: waiting.length
             ? `${user.name} approved the results for ${p.name}. Still waiting for: ${waiting.map((u) => u.name).join(', ')}.`
-            : `${user.name} approved the results for ${p.name}. All Directors/VPs have approved: you can now release them to faculty.`,
+            : `${user.name} approved the results for ${p.name}. All VPs have approved: you can now release them to faculty.`,
         });
       }
       return { waiting: waiting.length };

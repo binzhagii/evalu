@@ -28,7 +28,7 @@ export function viewFor(db, user) {
     } else if (isHR) {
       tasks.push({ ...t, draft: null, response: t.response && withComment(t.response, true) });
     } else if (canSeeAll(user, p)) {
-      // Directors/VPs: released periods only, without evaluator identities
+      // VPs: released periods only, without evaluator identities
       tasks.push({ ...t, evaluatorId: null, draft: null, response: t.response && withComment(t.response, canSeeComments(user, p)) });
     } else if (t.targetId === user.id && canSeeOwn(user, p)) {
       // FR14/NFR5: my own released results, with comments grouped by source but never who gave them

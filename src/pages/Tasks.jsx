@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useApp } from '../lib/store';
-import { GROUPS, taskStatus, userById, formForTask, periodById, itemCategory, ratingWords, MAX_RATING } from '../lib/logic';
+import { GROUPS, taskStatus, userById, formForTask, periodById, itemCategory, ratingWords, MAX_RATING, targetType, hasPlanBoxes, commentParts, packComment } from '../lib/logic';
 import { Card, Badge, Avatar, Stat, Stats, Meter, Empty, Icon, dueText, pct } from '../ui';
 
 export default function Tasks() {
@@ -85,6 +85,12 @@ function EvalForm({ taskId, onClose, onDone }) {
   const sec = db.sections.find((x) => x.id === task.sectionId);
   const [answers, setAnswers] = useState(task.draft?.answers || {});
   const [comment, setComment] = useState(task.draft?.comment || '');
+  // Dean/Principal and AP/PC/SH forms: two boxes, as on UB's paper form
+  const twoBoxes = hasPlanBoxes(task.group, targetType(db, target));
+  const saved = commentParts(task.draft?.comment);
+  const [plan, setPlan] = useState(saved?.plan ?? '');
+  const [improve, setImprove] = useState(saved?.improve ?? saved?.text ?? '');
+  const finalComment = twoBoxes ? packComment(plan, improve) : comment;
   const [errors, setErrors] = useState([]);
   const [confirm, setConfirm] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -102,7 +108,7 @@ function EvalForm({ taskId, onClose, onDone }) {
 
   const saveDraft = async () => {
     setBusy(true);
-    const ok = await act('saveDraft', { taskId, answers, comment });
+    const ok = await act('saveDraft', { taskId, answers, comment: finalComment });
     setBusy(false);
     if (ok) onClose();
   };
@@ -115,7 +121,7 @@ function EvalForm({ taskId, onClose, onDone }) {
   const submit = async () => {
     // The server checks every answer, fixes the weights and encrypts the comment.
     setBusy(true);
-    const ok = await act('submitEvaluation', { taskId, answers, comment });
+    const ok = await act('submitEvaluation', { taskId, answers, comment: finalComment });
     setBusy(false);
     if (ok) onDone(`Your evaluation of ${target.name} was submitted. Thank you.`);
     else setConfirm(false);
@@ -164,12 +170,17 @@ function EvalForm({ taskId, onClose, onDone }) {
         </section>
       ))}
 
-      <Card title={task.group === 'ST' ? 'Comments (optional)' : 'Comments and areas to be improved (optional)'}>
+      <Card title={twoBoxes ? 'Development plan and areas to be improved (optional)' : 'Comments (optional)'}>
         <p className="muted">
           Your comment is stored encrypted and shown word for word in this person's results, grouped with other comments from {GROUPS[task.group]}, <b>without your name</b>.
           {task.group !== 'ST' && ' Because only one or two people evaluate in this group, the person may still guess who wrote it.'}
         </p>
-        <textarea rows={4} value={comment} maxLength={2000} onChange={(e) => setComment(e.target.value)} placeholder="Write any comments about this person's performance…" />
+        {twoBoxes ? <>
+          <label className="field-block"><b>Employee's personal and professional development plan</b>
+            <textarea rows={3} value={plan} maxLength={1500} onChange={(e) => setPlan(e.target.value)} placeholder="e.g. Will attend trainings and seminars in the discipline…" /></label>
+          <label className="field-block"><b>Areas to be improved by the employee</b>
+            <textarea rows={3} value={improve} maxLength={1500} onChange={(e) => setImprove(e.target.value)} placeholder="e.g. Submit requirements on time…" /></label>
+        </> : <textarea rows={4} value={comment} maxLength={2000} onChange={(e) => setComment(e.target.value)} placeholder="Write any comments about this person's performance…" />}
       </Card>
 
       <div className="action-bar">

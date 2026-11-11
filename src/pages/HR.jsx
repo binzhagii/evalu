@@ -69,13 +69,13 @@ export function Periods() {
                   <td className="muted">{scopeText(db, p)}</td>
                   <td><input type="date" value={p.deadline} onChange={(e) => e.target.value && act('setPeriodDeadline', { periodId: p.id, deadline: e.target.value })} /></td>
                   <td><Badge kind={p.status === 'open' ? 'pending' : 'completed'}>{p.status}</Badge></td>
-                  <td>{STAGE_LABEL[p.releaseStage]}{p.releaseStage === 'dir' && <><br /><span className="muted">{waiting.length ? `Waiting for approval: ${waiting.map((u) => u.name).join(', ')}` : 'All Directors/VPs approved'}</span></>}</td>
+                  <td>{STAGE_LABEL[p.releaseStage]}{p.releaseStage === 'dir' && <><br /><span className="muted">{waiting.length ? `Waiting for approval: ${waiting.map((u) => u.name).join(', ')}` : 'All VPs approved'}</span></>}</td>
                   <td className="row">
                     {p.status === 'open' && <button onClick={() => { if (confirm(`Close ${p.name}? Classes where fewer than half of the class plus one answered will be excluded, and everyone concerned is notified.`)) run('closePeriod', p.id, (r) => `${p.name} closed. ${r.flagged} class(es) were excluded (below half + 1); the faculty, department heads and HR were notified.`); }}>Close period</button>}
                     {p.status === 'open' && <button className="ghost" onClick={() => run('checkThreshold', p.id, (r) => (r.flagged ? `${r.flagged} class(es) are at or below half. The faculty, their department heads and HR were notified.` : 'Every class has enough responses so far.'))}>Send participation alerts</button>}
                     {p.status === 'closed' && p.releaseStage === 'hr' && <button className="ghost" onClick={() => run('reopenPeriod', p.id)}>Reopen</button>}
-                    {nextStage && p.status === 'closed' && nextStage === 'dir' && <button onClick={() => run('releaseNext', p.id, 'Results sent to the Directors/VPs for review and approval. They were notified.')}>Send to Directors/VPs for approval</button>}
-                    {nextStage === 'faculty' && <button disabled={waiting.length > 0} title={waiting.length ? 'Every Director/VP must approve first' : ''} onClick={() => run('releaseNext', p.id, 'Results released to faculty. Each person was notified.')}>Release to faculty</button>}
+                    {nextStage && p.status === 'closed' && nextStage === 'dir' && <button onClick={() => run('releaseNext', p.id, 'Results sent to the VPs for review and approval. They were notified.')}>Send to VPs for approval</button>}
+                    {nextStage === 'faculty' && <button disabled={waiting.length > 0} title={waiting.length ? 'Every VP must approve first' : ''} onClick={() => run('releaseNext', p.id, 'Results released to faculty. Each person was notified.')}>Release to faculty</button>}
                     {p.status === 'open' && <span className="muted">release after closing</span>}
                     {p.releaseStage !== 'hr' && <button className="ghost" onClick={() => run('withdrawRelease', p.id)}>Withdraw one step</button>}
                   </td>
@@ -84,7 +84,7 @@ export function Periods() {
             })}
           </tbody>
         </table>
-        <p className="muted">Release order is enforced: HR Specialist → Directors/VPs (review and approve) → individual faculty. Faculty see nothing until every Director/VP has approved and HR releases the results.</p>
+        <p className="muted">Release order is enforced: HR Specialist → VPs (review and approve) → individual faculty. Faculty see nothing until every VP has approved and HR releases the results.</p>
       </Card>
       <Card title="New evaluation period">
         <div className="row">

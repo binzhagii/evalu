@@ -83,6 +83,9 @@ export function upgradeData(db) {
     if (!Array.isArray(p.approvals)) set(p, 'approvals', []);
   }
 
+  // FR17: only the Vice Presidents approve results; Director accounts are switched off (kept for the records)
+  for (const u of db.users) if (u.role === 'DIR' && u.position !== 'vp' && u.active !== false) set(u, 'active', false);
+
   // FR4: remember which form version each submitted evaluation used
   for (const t of db.tasks) {
     if (t.response && !t.response.instrumentId) {

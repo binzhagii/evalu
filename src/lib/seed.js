@@ -26,8 +26,7 @@ export function buildSeed() {
   const U = (id, name, role, position, dept) => db.users.push({ id, username: id, email: `${id}@${role === 'ST' ? 's.' : ''}ubaguio.edu`, name, role, position, dept });
   U('hr', 'HR Specialist (Sample)', 'HR', 'hr', null);
   U('hr_assistant', 'HRMC Assistant (Sample)', 'HR', 'assistant', null); // shares the evaluation work with the HR Specialist
-  U('director', 'Director/VP (Sample)', 'DIR', 'director', null);
-  U('vp', 'Vice President (Sample)', 'DIR', 'vp', null); // FR17: both must approve before faculty release
+  U('vp', 'Vice President (Sample)', 'DIR', 'vp', null); // FR17: the VP approves before faculty release
   for (const d of ['a', 'b', 'c']) {
     const D = d.toUpperCase();
     U(`dean_${d}`, `Dean ${D}`, 'TP', 'dean', D);
@@ -117,7 +116,7 @@ export function buildSeed() {
   const iso = (ms) => new Date(ms).toISOString().slice(0, 10);
   const now = Date.now();
   const rules = () => JSON.parse(JSON.stringify(db.rules)); // NFR8: each period keeps its own weights
-  const approved = (ms) => [{ userId: 'director', at: new Date(ms).toISOString() }, { userId: 'vp', at: new Date(ms).toISOString() }];
+  const approved = (ms) => [{ userId: 'vp', at: new Date(ms).toISOString() }];
   db.periods = [
     { id: 'p1', name: 'AY 2024-25 Term 2 (sample)', deadline: iso(now - 420 * day), status: 'closed', releaseStage: 'faculty', thresholdChecked: true, rules: rules(), depts: null, approvals: approved(now - 400 * day) },
     { id: 'p2', name: 'AY 2025-26 Term 1 (sample)', deadline: iso(now - 240 * day), status: 'closed', releaseStage: 'faculty', thresholdChecked: true, rules: rules(), depts: null, approvals: approved(now - 220 * day) },
@@ -154,8 +153,11 @@ export function buildSeed() {
     }
   }
   // sample comments (plain text here; the server encrypts them). Shown verbatim, grouped by source, never with a name.
-  for (const t of db.tasks.filter((x) => x.response && (x.group === 'DEAN' || x.group === 'CHAIR')).slice(0, 6))
-    t.response.comment = 'Sample verbatim comment from the evaluator (restricted).';
+  // the Dean/Principal and AP/PC/SH forms have two boxes: development plan, and areas to be improved
+  const plans = ['Sample: will attend seminars and trainings in the discipline this year.', 'Sample: plans to finish the masters degree and join a research project.'];
+  const improve = ['Sample: ask more higher-order thinking questions and use varied assessments.', 'Sample: submit office requirements on time.'];
+  db.tasks.filter((x) => x.response && ['DEAN', 'CHAIR', 'PRIN', 'APRIN', 'SHEAD'].includes(x.group) && targetType(db, db.users.find((u) => u.id === x.targetId)) !== 'DEAN')
+    .slice(0, 12).forEach((t, i) => { t.response.comment = JSON.stringify({ plan: plans[i % 2], improve: improve[i % 2] }); });
   const studentNotes = ['Sample comment: the lessons are clear and well prepared.', 'Sample comment: please give feedback on our work sooner.', 'Sample comment: the class always starts on time.'];
   db.tasks.filter((x) => x.response && x.group === 'ST').filter((_, i) => i % 9 === 0).forEach((t, i) => { t.response.comment = studentNotes[i % studentNotes.length]; });
   // FR21: a few final ratings imported from the records kept before evalU (2022 onward)

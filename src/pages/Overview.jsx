@@ -4,9 +4,9 @@ import { GROUPS, STAGES, taskStatus, sectionStats, userById, computeAll, canSeeA
 import { ApprovalPanel } from './Reports';
 import { Card, Stat, Stats, Meter, Badge, Empty, PeriodPicker, Icon, useNav, fmt, pct, dueText, daysUntil } from '../ui';
 
-const STAGE_SHORT = { hr: 'HR only', dir: 'Directors/VPs', faculty: 'Faculty' };
+const STAGE_SHORT = { hr: 'HR only', dir: 'VPs', faculty: 'Faculty' };
 
-/** HR → Directors/VPs → Faculty, with the current step highlighted. */
+/** HR → VPs → Faculty, with the current step highlighted. */
 export function ReleaseSteps({ stage }) {
   const at = STAGES.indexOf(stage);
   return (
@@ -97,15 +97,15 @@ export function HROverview() {
   );
 }
 
-/* ---------------- Director / VP ---------------- */
-export function DirectorOverview() {
+/* ---------------- Vice President ---------------- */
+export function VpOverview() {
   const { db, user } = useApp();
   const go = useNav();
   const periods = db.periods.filter((p) => canSeeAll(user, p));
   const [pidSel, setPid] = useState(periods[periods.length - 1]?.id);
   const pid = periods.some((p) => p.id === pidSel) ? pidSel : periods[periods.length - 1]?.id; // newest if none chosen yet
   const all = useMemo(() => (pid ? computeAll(db, pid) : []), [db, pid]);
-  if (!periods.length) return <Card><Empty icon="clock" title="No results released to you yet">HR releases results to Directors/VPs after a period is closed.</Empty></Card>;
+  if (!periods.length) return <Card><Empty icon="clock" title="No results released to you yet">HR releases results to VPs after a period is closed.</Empty></Card>;
 
   const complete = all.filter(hasFinal);
   const toApprove = periods.filter((p) => p.releaseStage === 'dir');
@@ -121,7 +121,7 @@ export function DirectorOverview() {
     <>
       {toApprove.map((p) => (
         <Card key={p.id} title={`Waiting for review: ${p.name}`} actions={<button className="ghost" onClick={() => { setPid(p.id); go('reports'); }}>Review results</button>}>
-          <p className="muted">HR has sent these results to the Directors/VPs. Review them, then approve. Faculty can see their results only after every Director/VP approves and HR releases them.</p>
+          <p className="muted">HR has sent these results to the VPs. Review them, then approve. Faculty can see their results only after every VP approves and HR releases them.</p>
           <ApprovalPanel period={p} />
         </Card>
       ))}

@@ -79,12 +79,12 @@ try {
   assert.ok(sv.users.every((u) => !('password_hash' in u)), 'no password hashes');
   assert.ok(sv.sections.every((s) => s.studentIds.length === 0), 'no class lists for students');
 
-  const dir1 = await login('director');
+  const dir1 = await login('vp');
   const dv = (await call('/api/data', { cookie: dir1 })).data;
   const released = new Set(dv.periods.filter((p) => p.releaseStage !== 'hr').map((p) => p.id));
-  assert.ok(dv.tasks.length > 0 && dv.tasks.every((t) => released.has(t.periodId)), 'director sees released periods only');
-  assert.ok(dv.tasks.every((t) => t.evaluatorId === null), 'director does not see who evaluated');
-  assert.ok(dv.tasks.some((t) => typeof t.response?.comment === 'string'), 'director sees decrypted comments');
+  assert.ok(dv.tasks.length > 0 && dv.tasks.every((t) => released.has(t.periodId)), 'VP sees released periods only');
+  assert.ok(dv.tasks.every((t) => t.evaluatorId === null), 'VP does not see who evaluated');
+  assert.ok(dv.tasks.some((t) => typeof t.response?.comment === 'string'), 'VP sees decrypted comments');
 
   // a Clinical Instructor sees only their own results, and only once released
   const ci = await login('ci_c1');
@@ -177,15 +177,12 @@ try {
   assert.ok(sql.prepare("SELECT count(*) n FROM notifications WHERE kind='participation' AND user_id='dean_a'").get().n > 0, 'FR12: dean alerted');
 
   /* ---------- FR17: Vice President approval before faculty release ---------- */
-  assert.equal((await act(hr, 'releaseNext', { periodId: 'p3' })).status, 409, 'needs every Director/VP approval');
+  assert.equal((await act(hr, 'releaseNext', { periodId: 'p3' })).status, 409, 'needs the VP approval');
   assert.equal((await act(student, 'approveRelease', { periodId: 'p3' })).status, 403);
   assert.equal((await act(dir1, 'approveRelease', { periodId: 'p3' })).status, 200);
   assert.equal((await act(dir1, 'approveRelease', { periodId: 'p3' })).status, 409, 'not twice');
-  assert.equal((await act(hr, 'releaseNext', { periodId: 'p3' })).status, 409, 'still waiting for the VP');
   assert.equal((await act(dir1, 'approveRelease', { periodId: 'p4' })).status, 409, 'only periods waiting for review');
-  const vp = await login('vp');
-  assert.equal((await act(vp, 'approveRelease', { periodId: 'p3' })).status, 200);
-  assert.equal((await act(hr, 'releaseNext', { periodId: 'p3' })).status, 200, 'released after both approved');
+  assert.equal((await act(hr, 'releaseNext', { periodId: 'p3' })).status, 200, 'released after the VP approved');
   assert.ok(sql.prepare("SELECT count(*) n FROM notifications WHERE kind='release' AND user_id='fac_a1'").get().n > 0, 'faculty notified of release');
   assert.ok((await call('/api/data', { cookie: fac })).data.tasks.some((x) => x.periodId === 'p3' && x.targetId === 'fac_a1' && x.response && !x.response.redacted), 'faculty now sees p3');
 
@@ -326,7 +323,7 @@ try {
   assert.equal((await act(hr, 'updateUser', { userId: newId, name: 'Renamed Student', username: 'new.student', email: 'new.student@s.ubaguio.edu', role: 'ST', position: 'student', dept: 'A', sectionIds: [] })).status, 200);
   assert.equal(sql.prepare('SELECT name FROM users WHERE id=?').get(newId).name, 'Renamed Student');
   assert.equal(sql.prepare('SELECT count(*) n FROM section_students WHERE student_id=?').get(newId).n, 0, 'removed from class');
-  assert.equal((await act(hr, 'updateUser', { userId: 'hr', name: 'HR', username: 'hr', email: 'hr@ubaguio.edu', role: 'DIR', position: 'director' })).status, 400, 'HR cannot drop own HR role');
+  assert.equal((await act(hr, 'updateUser', { userId: 'hr', name: 'HR', username: 'hr', email: 'hr@ubaguio.edu', role: 'DIR', position: 'vp' })).status, 400, 'HR cannot drop own HR role');
   assert.equal((await act(hr, 'updateUser', { userId: 'fac_a1', name: 'F', username: 'fac_a1', email: 'fac_a1@ubaguio.edu', role: 'NTP', position: 'staff', dept: 'A' })).status, 409, 'teacher of a class stays faculty');
 
   // reset password: signed out, temporary password works and must be changed

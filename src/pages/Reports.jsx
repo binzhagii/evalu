@@ -2,11 +2,11 @@ import { useEffect, useMemo, useState } from 'react';
 import { useApp } from '../lib/store';
 import {
   GROUPS, TARGET_TYPES, computeAll, computeTarget, canSeeAll, canSeeComments, canSeeDept, deptName, userById, sectionStats,
-  itemStats, formOfTask, itemCategory, hasFinal, pendingApprovals, isEvaluatee, stageAtLeast, targetsOf,
+  itemStats, formOfTask, itemCategory, hasFinal, pendingApprovals, isEvaluatee, stageAtLeast, targetsOf, commentParts, targetType,
 } from '../lib/logic';
 import { Card, Badge, RuleNote, PeriodPicker, Select, Meter, Stat, Stats, Empty, Avatar, ItemTable, PrintButton, fmt, pct, newestFirst, usePages } from '../ui';
 import { ReleaseSteps } from './Overview';
-import { ComprehensiveReports } from './CompReport';
+import { UbPrints, CommentText, SummarySheet, ratingWord, twoDp, UbPacket } from './CompReport';
 
 export const STATUS_TEXT = { complete: 'Complete', reweighted: 'Complete (re-weighted)', incomplete: 'No valid result yet', 'weights-missing': 'Weights not set' };
 
@@ -19,7 +19,10 @@ function categoryLookup(db, tasks) {
   const ins = tasks.map((t) => t.response && formOfTask(db, t)).find(Boolean);
   if (!ins || !ins.items.some((it) => it.category)) return null;
   const m = Object.fromEntries(ins.items.map((it) => [it.criterionId, itemCategory(it)]));
-  return (cid) => m[cid] || 'General';
+  const f = (cid) => m[cid] || 'General';
+  // the order of the questions on the UB form (so I, II, III come out like the printed sheet)
+  f.order = Object.fromEntries(ins.items.map((it, i) => [it.criterionId, i]));
+  return f;
 }
 
 /** FR14: verbatim comments grouped by source (Students, Dean, Program Chair…), never with a name. */
@@ -31,7 +34,7 @@ export function CommentsBySource({ tasks }) {
     <div className="comments">
       <h4>Comments (verbatim)</h4>
       {Object.entries(by).map(([g, list]) => (
-        <div key={g}><b>From {GROUPS[g]}</b><ul>{list.map((c, i) => <li key={i}>{c}</li>)}</ul></div>
+        <div key={g}><b>From {GROUPS[g]}</b><ul>{list.map((c, i) => <li key={i}><CommentText c={c} /></li>)}</ul></div>
       ))}
       <p className="muted">Comments are shown exactly as written. The names of students are never shown.</p>
     </div>
@@ -139,7 +142,7 @@ export function DeptSummary({ db, periodId, dept }) {
   );
 }
 
-/** FR17: Directors/VPs approve results before HR can release them to faculty. */
+/** FR17: VPs approve results before HR can release them to faculty. */
 export function ApprovalPanel({ period }) {
   const { db, user, act } = useApp();
   if (period.releaseStage === 'hr') return null;
@@ -244,19 +247,92 @@ function Comments({ periodId }) {
       <thead><tr><th>Evaluated</th><th>From</th><th>Comment (verbatim)</th></tr></thead>
       <tbody>
         {rows.map((t) => (
-          <tr key={t.id}><td>{userById(db, t.targetId).name}</td><td>{GROUPS[t.group]}</td><td>{t.response.comment}</td></tr>
+          <tr key={t.id}><td>{userById(db, t.targetId).name}</td><td>{GROUPS[t.group]}</td><td><CommentText c={t.response.comment} /></td></tr>
         ))}
       </tbody>
     </table>
   );
 }
 
+/** Plain words for a comment on paper (the two-box comments are labelled). */
+const commentWords = (c) => {
+  const p = commentParts(c);
+  if (!p) return '';
+  return p.text != null ? p.text : [p.plan && `Development plan: ${p.plan}`, p.improve && `Areas to be improved: ${p.improve}`].filter(Boolean).join(' · ');
+};
+
+/** The formal printout of a Reports tab (only on paper / PDF): UB header + a bordered table. */
+function FormalPrint({ tab, db, pid, period, all, secRows, bySubject, dept, selected }) {
+  const ntpOf = (r) => String(r.type).startsWith('NTP');
+  const remark = (r) => (r.status === 'complete' ? 'Complete' : r.status === 'reweighted' ? `Computed over ${r.basis}%` : STATUS_TEXT[r.status]);
+  let sheet = null;
+  if (tab === 'overall') {
+    sheet = <SummarySheet title="Evaluation Summary of Personnel" period={period}
+      info={[['Personnel evaluated', all.length], ['With a final rating', all.filter(hasFinal).length]]}
+      sections={[{ columns: ['Name', 'Type', 'Department', 'Final rating', 'Interpretation', 'Remarks'],
+        rows: all.map((r) => [r.target.name.toUpperCase(), TARGET_TYPES[r.type], deptName(db, r.target.dept), twoDp(r.final), ratingWord(r.final, ntpOf(r)), remark(r)]) }]} />;
+  } else if (tab === 'subject') {
+    sheet = <SummarySheet title="Faculty Evaluation Summary per Subject" period={period}
+      sections={[{ columns: ['Subject', 'Sections', 'Counted sections', 'Average rating', 'Interpretation'],
+        rows: Object.entries(bySubject).map(([sub, list]) => {
+          const v = list.filter((s) => s.valid);
+          const a = v.length ? v.reduce((x, s) => x + s.score, 0) / v.length : null;
+          return [sub, list.length, v.length, twoDp(a), ratingWord(a)];
+        }) }]} />;
+  } else if (tab === 'section') {
+    sheet = <SummarySheet title="Faculty Evaluation Summary per Section" period={period}
+      info={[['Rule', 'A class counts only if at least half of the class plus one answered']]}
+      sections={[{ columns: ['Section', 'Subject', 'Faculty', 'Respondents', 'Response rate', 'Result', 'Rating', 'Interpretation'],
+        rows: secRows.map((s) => [s.section.code, s.section.subject, userById(db, s.section.facultyId)?.name.toUpperCase(), `${s.responded} of ${s.required}`, pct(s.rate), s.valid ? 'Counted' : 'Excluded', twoDp(s.score), s.valid ? ratingWord(s.score) : '—']) }]} />;
+  } else if (tab === 'department') {
+    const people = new Set(targetsOf(db).filter((u) => u.dept === dept).map((u) => u.id));
+    const valid = new Set(db.sections.filter((s) => s.dept === dept).map((s) => sectionStats(db, pid, s.id)).filter((s) => s.valid).map((s) => s.section.id));
+    const counted = db.tasks.filter((t) => t.periodId === pid && people.has(t.targetId) && (t.group !== 'ST' || valid.has(t.sectionId)));
+    const results = all.filter((r) => r.target.dept === dept);
+    const withScore = results.filter(hasFinal);
+    const avg = withScore.length ? withScore.reduce((a, r) => a + r.final, 0) / withScore.length : null;
+    // one table per evaluator group and form (e.g. the Program Chair rates the Dean and the faculty on different forms)
+    const answered = counted.filter((t) => t.response);
+    const keyOf = (t) => t.group + '|' + (formOfTask(db, t)?.id || '');
+    const groupSections = [...new Set(answered.map(keyOf))].map((k) => {
+      const ts = answered.filter((t) => keyOf(t) === k);
+      const g = ts[0].group;
+      const kinds = [...new Set(ts.map((t) => TARGET_TYPES[targetType(db, userById(db, t.targetId))]))].join(', ');
+      const catOf = categoryLookup(db, ts);
+      const order = catOf?.order || {};
+      const stats = itemStats(ts).sort((a, b) => (order[a.criterionId] ?? 999) - (order[b.criterionId] ?? 999));
+      const rows = []; let last = null; let ci = 0; let n = 0;
+      for (const x of stats) {
+        const c = catOf?.(x.criterionId);
+        if (catOf && c !== last) { rows.push({ cat: `${ROMAN_N[ci] || ci + 1}. ${c}` }); ci++; last = c; n = 0; }
+        rows.push([`${++n}. ${db.criteria.find((q) => q.id === x.criterionId)?.text || x.criterionId}`, twoDp(x.mean), x.n]);
+      }
+      return { heading: `By the ${GROUPS[g]} · rating the ${kinds} · ${ts.length} respondent${ts.length === 1 ? '' : 's'}`, columns: ['Item', 'Mean', 'Answers'], rows, num: false };
+    });
+    sheet = <SummarySheet title="Department Evaluation Summary" period={period}
+      info={[['Department', deptName(db, dept)], ['Personnel evaluated', results.length], ['Total respondents', counted.filter((t) => t.response).length], ['Average final rating', `${twoDp(avg)} ${avg == null ? '' : `(${ratingWord(avg)})`}`]]}
+      sections={[{ heading: 'Personnel', columns: ['Name', 'Final rating', 'Interpretation', 'Remarks'], rows: results.map((r) => [r.target.name.toUpperCase(), twoDp(r.final), ratingWord(r.final, ntpOf(r)), remark(r)]) }, ...groupSections]} />;
+  } else if (tab === 'comments') {
+    const rows = db.tasks.filter((t) => t.periodId === pid && t.response?.comment).map((t) => [userById(db, t.targetId)?.name.toUpperCase(), GROUPS[t.group], commentWords(t.response.comment)]);
+    sheet = <SummarySheet title="Evaluation Comments (Verbatim)" period={period} showKey={false}
+      info={[['Note', 'Comments are printed word for word, without the names of the evaluators']]}
+      sections={[{ columns: ['Evaluated', 'From', 'Comment'], rows }]} />;
+  } else if (tab === 'individual' && selected) {
+    // one person: UB's own printouts (Comprehensive, Performance Evaluation sheets, Verbatim)
+    const res = computeTarget(db, pid, selected);
+    return <div className="print-only ub-mine"><UbPacket db={db} period={period} res={res} ctrl={all.findIndex((r) => r.targetId === selected) + 1} what="all" /></div>;
+  }
+  return sheet && <div className="print-only sum-print">{sheet}</div>;
+}
+const ROMAN_N = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X'];
+const FORMAL_TABS = ['overall', 'subject', 'section', 'department', 'comments', 'individual'];
+
 export default function Reports() {
   const { db, user, act } = useApp();
   const periods = visiblePeriods(db, user);
   const [pidSel, setPid] = useState(periods[periods.length - 1]?.id);
   const pid = periods.some((p) => p.id === pidSel) ? pidSel : periods[periods.length - 1]?.id; // newest if none chosen yet
-  const [tab, setTab] = useState('overall');
+  const [tab, setTab] = useState(user.role === 'HR' ? 'ubprint' : 'overall');
   const [tid, setTid] = useState('');
   const [deptSel, setDept] = useState(db.departments[0]?.id);
   const dept = db.departments.some((d) => d.id === deptSel) ? deptSel : db.departments[0]?.id;
@@ -275,7 +351,7 @@ export default function Reports() {
   secRows.forEach((s) => { (bySubject[s.section.subject] ||= []).push(s); });
   const tabs = [['overall', 'Overall'], ['subject', 'Per subject'], ['section', 'Per section'], ['individual', 'Individual report'], ['department', 'Department summary']];
   if (canSeeComments(user, period)) tabs.push(['comments', 'All comments']);
-  if (user.role === 'HR') tabs.push(['comprehensive', 'Comprehensive report'], ['requests', 'Requests from offices']);
+  if (user.role === 'HR') { tabs.unshift(['ubprint', 'Print UB reports']); tabs.push(['requests', 'Requests from offices']); }
   tabs.push(['records', 'Earlier records']);
   const withFinal = all.filter(hasFinal);
   const avg = withFinal.length ? withFinal.reduce((x, y) => x + y.final, 0) / withFinal.length : null;
@@ -293,9 +369,11 @@ export default function Reports() {
       <Stat icon="users" label="With a final score" value={`${withFinal.length} / ${all.length}`} sub={`${all.filter((r) => r.status === 'reweighted').length} re-weighted (a group missing)`} />
       <Stat icon="chart" label="Classes excluded" value={`${invalid} / ${secRows.length}`} sub="below half of the class + 1" tone={invalid ? 'warn' : ''} />
     </Stats>
-    <Card actions={tab !== 'comprehensive' && <PrintButton />}>
+    <Card actions={tab !== 'ubprint' && <PrintButton label={tab === 'individual' ? 'Print UB report' : 'Print'} />}>
       <div className="tabs no-print" role="tablist">{tabs.map(([k, l]) => <button key={k} role="tab" aria-selected={tab === k} className={tab === k ? 'on' : ''} onClick={() => setTab(k)}>{l}</button>)}</div>
-      {tab !== 'comprehensive' && <h3 className="print-only">evalU · {period.name} · {tabs.find((t) => t[0] === tab)?.[1]}</h3>}
+      {tab !== 'ubprint' && !FORMAL_TABS.includes(tab) && <h3 className="print-only">evalU · {period.name} · {tabs.find((t) => t[0] === tab)?.[1]}</h3>}
+      {FORMAL_TABS.includes(tab) && <FormalPrint tab={tab} db={db} pid={pid} period={period} all={all} secRows={secRows} bySubject={bySubject} dept={dept} selected={selected} />}
+      <div className={FORMAL_TABS.includes(tab) ? 'no-print' : undefined}>
       {tab === 'overall' && (
         <table>
           <thead><tr><th>Name</th><th>Type</th><th>Department</th><th>Final score</th><th>Status</th></tr></thead>
@@ -337,7 +415,8 @@ export default function Reports() {
         </>
       )}
       {tab === 'comments' && <Comments periodId={pid} />}
-      {tab === 'comprehensive' && <ComprehensiveReports periodId={pid} />}
+      </div>
+      {tab === 'ubprint' && <UbPrints periodId={pid} />}
       {tab === 'requests' && <ResultRequests periodId={pid} />}
       {tab === 'records' && <PastRecords />}
     </Card>

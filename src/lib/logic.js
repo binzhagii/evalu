@@ -7,7 +7,7 @@
 // - Table 6  College faculty 40/40/20, Basic Education 40/20/20/20, Non-teaching: head <-> staff
 // - Clinical Instructors (CIs, allied medical programs): evaluated by their students and the dean;
 //            the interview gives no weights yet (shown as "??"), so they start at 50 / 50 for HR to change
-// - FR17  release order: HR -> Directors/VPs (review and approve) -> individual faculty
+// - FR17  release order: HR -> VPs (review and approve) -> individual faculty
 // Anything the manuscript does not give (e.g. weights for evaluating Deans) stays blank (null)
 // until HR enters it; no score is invented.
 
@@ -68,7 +68,7 @@ export const ROLES = {
   TP: 'Teaching Personnel',
   NTP: 'Non-Teaching Personnel',
   HR: 'HR Specialist',
-  DIR: 'Director / Vice President',
+  DIR: 'Vice President',
 };
 
 // Positions allowed for each role (used when HR creates or edits an account).
@@ -77,7 +77,7 @@ export const POSITIONS = {
   TP: { faculty: 'Faculty', ci: 'Clinical Instructor (CI)', dean: 'Dean', chair: 'Program Chair', principal: 'Principal', aprincipal: 'Assistant Principal', shead: 'Subject Head' },
   NTP: { secretary: 'Secretary', staff: 'Staff', head: 'Office Head' },
   HR: { hr: 'HR Specialist', assistant: 'HRMC Assistant' },
-  DIR: { director: 'Director', vp: 'Vice President' },
+  DIR: { vp: 'Vice President' },
 };
 /** Roles that belong to a department. */
 export const needsDept = (role) => role === 'ST' || role === 'TP' || role === 'NTP';
@@ -112,7 +112,7 @@ export const TARGET_TYPES = {
 export const STAGES = ['hr', 'dir', 'faculty'];
 export const STAGE_LABEL = {
   hr: 'HR Specialist only',
-  dir: 'With Directors/VPs for review and approval',
+  dir: 'With the VPs for review and approval',
   faculty: 'Released to individual faculty',
 };
 
@@ -158,7 +158,8 @@ export const deptHeads = (db, dept) =>
 export const isResultHead = (u) => u.role === 'TP' && (u.position === 'dean' || u.position === 'principal');
 export const resultHeads = (db, dept) => db.users.filter((u) => active(u) && u.dept === dept && isResultHead(u));
 export const hrUsers = (db) => db.users.filter((u) => active(u) && u.role === 'HR');
-export const directors = (db) => db.users.filter((u) => active(u) && u.role === 'DIR');
+/** FR17: only the Vice Presidents approve results (UB has no Director step). */
+export const directors = (db) => db.users.filter((u) => active(u) && u.role === 'DIR' && u.position === 'vp');
 
 /* ---------- forms (FR3, FR4) ---------- */
 /**
@@ -504,8 +505,25 @@ export function canSeeDept(user, period) {
 }
 export const canSeeComments = canSeeAll;
 
-/** FR17: Directors/VPs who still have to approve a period before it can go to faculty. */
+/** FR17: VPs who still have to approve a period before it can go to faculty. */
 export function pendingApprovals(db, period) {
   const done = new Set((period.approvals || []).map((a) => a.userId));
   return directors(db).filter((u) => !done.has(u.id));
+}
+
+/* ---------- comments: UB's supervisor forms have two boxes ---------- */
+/**
+ * The Dean/Principal and AP/PC/SH forms for faculty end with two boxes: "Employee's personal and
+ * professional development plan" and "Areas to be improved by the employee". Both are kept in the one
+ * (encrypted) comment as {"plan","improve"}; other forms keep a plain comment.
+ */
+export const hasPlanBoxes = (group, tt) => ['DEAN', 'CHAIR', 'PRIN', 'APRIN', 'SHEAD'].includes(group) && tt !== 'DEAN';
+export const packComment = (plan = '', improve = '') => (plan.trim() || improve.trim() ? JSON.stringify({ plan: plan.trim(), improve: improve.trim() }) : '');
+/** A stored comment as { plan, improve } (two boxes) or { text } (one box). */
+export function commentParts(c) {
+  if (!c) return null;
+  if (typeof c === 'string' && c.startsWith('{"plan"')) {
+    try { const o = JSON.parse(c); return { plan: o.plan || '', improve: o.improve || '' }; } catch { /* plain text */ }
+  }
+  return { text: String(c) };
 }

@@ -1,9 +1,10 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { useApp } from '../lib/store';
 import { computeTarget, canSeeOwn, sectionStats, STAGE_LABEL, THRESHOLD, isExemptSection } from '../lib/logic';
-import { Card, Badge, Meter, Empty, Icon, RuleNote, PrintButton } from '../ui';
+import { Card, Badge, Meter, Empty, Icon, RuleNote } from '../ui';
 import { ResultCard, PastRecords } from './Reports';
-import { CompSheet } from './CompReport';
+import { CompSheet, EvalSheet, VerbatimSheet, evalSheetsOf } from './CompReport';
 
 const KIND = {
   invalidated: { icon: 'alert', tone: 'bad', title: 'Class excluded (below half + 1)' },
@@ -47,6 +48,42 @@ export function Notifications() {
   );
 }
 
+/** One released period: UB's printed sheets first (what HR would print), then the details on screen. */
+/** UB's printouts, one button each: overall (Comprehensive), per question (Performance Evaluation sheets), comments (Verbatim). */
+const PRINTS = [['comp', 'Print overall result'], ['eval', 'Print per-question result'], ['verb', 'Print comments']];
+function MyPeriodResult({ period }) {
+  const { db, user } = useApp();
+  const res = computeTarget(db, period.id, user.id);
+  const sheets = evalSheetsOf(db, period.id, res);
+  const [what, setWhat] = useState(null); // which UB printout is being printed right now
+  const print = (w) => {
+    flushSync(() => setWhat(w));
+    document.body.classList.add('print-one'); // print only this period
+    window.print();
+    document.body.classList.remove('print-one');
+    setWhat(null);
+  };
+  const show = (w) => !what || what === w; // Ctrl+P on the page still prints everything
+  const buttons = (
+    <div className="print-btns no-print">
+      {PRINTS.map(([w, label]) => <button key={w} className="ghost" onClick={() => print(w)} disabled={w === 'eval' && !sheets.length}>{label}</button>)}
+    </div>
+  );
+  return (
+    <div className={'my-period' + (what ? ' print-this' : '')}>
+      <Card title={period.name} actions={buttons}>
+        <div className="no-print"><ResultCard res={res} db={db} periodId={period.id} own /></div>
+        {/* UB's formal printout: only on paper / PDF, never on screen */}
+        <div className="ub-mine screen-hidden">
+          {show('comp') && <div className="ub-page"><CompSheet res={res} period={period} ctrl="—" db={db} /></div>}
+          {show('eval') && sheets.map((sh) => <EvalSheet key={sh.group + (sh.section?.id || '')} db={db} period={period} res={res} sheet={sh} />)}
+          {show('verb') && <div><VerbatimSheet db={db} period={period} res={res} /></div>}
+        </div>
+      </Card>
+    </div>
+  );
+}
+
 export function MyResults() {
   const { db, user, act } = useApp();
   const myClasses = db.sections.filter((s) => s.facultyId === user.id && !isExemptSection(s));
@@ -59,7 +96,7 @@ export function MyResults() {
   return (
     <>
       {myClasses.length > 0 && open.length > 0 && (
-        <Card title="Student response progress for my classes">
+        <div className="no-print"><Card title="Student response progress for my classes">
           <p className="muted">At least half of the class plus one must answer, or that class is left out of your result. Reminding your students helps.</p>
           {open.flatMap((p) => myClasses.map((s) => {
             const st = sectionStats(db, p.id, s.id);
@@ -72,20 +109,17 @@ export function MyResults() {
               </div>
             );
           }))}
-        </Card>
+        </Card></div>
       )}
       {released.length === 0 && (
         <Card><Empty icon="clock" title="Your results have not been released yet">HR releases results to you after the Vice Presidents have reviewed and approved them.</Empty></Card>
       )}
       {[...released].reverse().map((p) => (
-        <Card key={p.id} title={p.name} actions={<PrintButton />}>
-          <CompSheet res={computeTarget(db, p.id, user.id)} period={p} ctrl="—" db={db} />
-          <ResultCard res={computeTarget(db, p.id, user.id)} db={db} periodId={p.id} own />
-        </Card>
+        <MyPeriodResult key={p.id} period={p} />
       ))}
-      {hidden.length > 0 && <p className="muted">Not yet released to you: {hidden.map((p) => `${p.name} (${STAGE_LABEL[p.releaseStage]})`).join('; ')}.</p>}
-      {mine.length > 0 && <Card title="Earlier records (before evalU)"><PastRecords userId={user.id} /></Card>}
-      <details className="note"><summary>How scores are calculated</summary><RuleNote /><p>Your final score combines each evaluator group's average using the weights set by HR. If a group has no valid result (for example, the dean did not evaluate), its weight is removed and the score is computed over the remaining groups. The final score is rounded to two decimal places.</p></details>
+      {hidden.length > 0 && <p className="muted no-print">Not yet released to you: {hidden.map((p) => `${p.name} (${STAGE_LABEL[p.releaseStage]})`).join('; ')}.</p>}
+      {mine.length > 0 && <div className="no-print"><Card title="Earlier records (before evalU)"><PastRecords userId={user.id} /></Card></div>}
+      <details className="note no-print"><summary>How scores are calculated</summary><RuleNote /><p>Your final score combines each evaluator group's average using the weights set by HR. If a group has no valid result (for example, the dean did not evaluate), its weight is removed and the score is computed over the remaining groups. The final score is rounded to two decimal places.</p></details>
     </>
   );
 }

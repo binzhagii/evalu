@@ -116,23 +116,34 @@ export function RuleNote() {
 export function ItemTable({ rows, criteria, categoryOf }) {
   if (!rows.length) return <p className="muted">No answers to show.</p>;
   const text = (id) => criteria.find((c) => c.id === id)?.text || id;
-  const sorted = categoryOf ? [...rows].sort((a, b) => (categoryOf(a.criterionId) || '').localeCompare(categoryOf(b.criterionId) || '')) : rows;
+  const order = categoryOf?.order;
+  const sorted = order ? [...rows].sort((a, b) => (order[a.criterionId] ?? 999) - (order[b.criterionId] ?? 999))
+    : categoryOf ? [...rows].sort((a, b) => (categoryOf(a.criterionId) || '').localeCompare(categoryOf(b.criterionId) || '')) : rows;
+  // numbered like UB's printed sheet: I. category, then 1. 2. 3. inside it, with the category's average
+  const cats = [];
+  for (const r of sorted) {
+    const name = categoryOf?.(r.criterionId);
+    let x = cats.find((y) => y.name === name);
+    if (!x) cats.push(x = { name, rows: [] });
+    x.rows.push(r);
+  }
+  const roman = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X'];
+  const avg = (rs) => rs.reduce((t, r) => t + r.mean, 0) / rs.length;
   return (
     <table className="items">
       <thead><tr><th>Item</th><th>Mean</th><th>Answers</th><th className="dist-h">Ratings 1 · 2 · 3 · 4</th></tr></thead>
       <tbody>
-        {sorted.flatMap((r, i) => {
-          const cat = categoryOf?.(r.criterionId);
-          const head = categoryOf && (i === 0 || cat !== categoryOf(sorted[i - 1].criterionId)) ? [<tr key={'c' + r.criterionId} className="cat-row"><td colSpan={4}>{cat}</td></tr>] : [];
-          return [...head, (
+        {cats.flatMap((c, ci) => [
+          ...(categoryOf ? [<tr key={'c' + ci} className="cat-row"><td>{roman[ci] || ci + 1}. {c.name}</td><td><b>{fmt(avg(c.rows))}</b></td><td colSpan={2} className="muted">category average</td></tr>] : []),
+          ...c.rows.map((r, n) => (
             <tr key={r.criterionId} className={r.low ? 'low' : ''}>
-              <td>{text(r.criterionId)} {r.low && <Badge kind="overdue">below {LOW_ITEM.toFixed(2)}</Badge>}</td>
+              <td>{categoryOf ? `${n + 1}. ` : ''}{text(r.criterionId)} {r.low && <Badge kind="overdue">below {LOW_ITEM.toFixed(2)}</Badge>}</td>
               <td><b>{fmt(r.mean)}</b></td>
               <td>{r.n}</td>
-              <td><span className="dist">{r.dist.map((c, i) => <span key={i} title={`${c} rated ${i + 1}`} style={{ flexGrow: c || 0.0001 }} className={`d${i + 1}`}>{c || ''}</span>)}</span></td>
+              <td><span className="dist">{r.dist.map((x, i) => <span key={i} title={`${x} rated ${i + 1}`} style={{ flexGrow: x || 0.0001 }} className={`d${i + 1}`}>{x || ''}</span>)}</span></td>
             </tr>
-          )];
-        })}
+          )),
+        ])}
       </tbody>
     </table>
   );

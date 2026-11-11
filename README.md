@@ -1,6 +1,6 @@
 # evalU
 
-evalU is a web app for running a school's performance evaluations. Students, faculty, deans, program chairs and staff answer evaluation forms. HR runs each evaluation period, checks progress and releases the results step by step: first to Directors/VPs, then to each faculty member.
+evalU is a web app for running a school's performance evaluations. Students, faculty, deans, program chairs and staff answer evaluation forms. HR runs each evaluation period, checks progress and releases the results step by step: first to VPs, then to each faculty member.
 
 It works on computers, tablets and phones.
 
@@ -17,7 +17,7 @@ It works on computers, tablets and phones.
    - [Faculty](#faculty)
    - [Dean and Program Chair](#dean-and-program-chair)
    - [Secretary, staff and principals](#secretary-staff-and-principals)
-   - [Director/VP](#directorvp)
+   - [Vice President](#vice-president)
    - [Everyone](#everyone)
 5. [A full evaluation cycle, step by step](#a-full-evaluation-cycle-step-by-step)
 6. [How scores are calculated](#how-scores-are-calculated)
@@ -79,7 +79,6 @@ Sign in with your **official UB email** (`…@ubaguio.edu`; students `…@s.ubag
 | Email | Role |
 | --- | --- |
 | `hr@ubaguio.edu` | HR Specialist (runs everything) |
-| `director@ubaguio.edu` | Director |
 | `vp@ubaguio.edu` | Vice President |
 | `dean_a@ubaguio.edu` | Dean |
 | `chair_a@ubaguio.edu` | Program Chair |
@@ -117,7 +116,7 @@ Your home page. It shows:
 - **Create a period**: enter a name (for example "2nd Semester 2026–2027") and a deadline. Tick departments to open the evaluation for only those departments (none ticked = all). Then generate the tasks under Assignments.
 - **Send participation alerts** while a period is open: the teacher, the department heads and HR are told which classes are at or below half.
 - **Close a period** when the deadline has passed. Classes where fewer than half of the class plus one answered are excluded, and the teacher, department heads and HR are notified.
-- **Release results** one step at a time: **HR only → Directors/VPs → Faculty**. After you send results to the Directors/VPs, **every Director/VP must click "Approve"** before the *Release to faculty* button works.
+- **Release results** one step at a time: **HR only → VPs → Faculty**. After you send results to the VPs, **every VP must click "Approve"** before the *Release to faculty* button works.
 - **Reset simulated data** puts all the sample data back. It erases every change, so use it only while testing.
 
 #### Assignments
@@ -172,7 +171,7 @@ How much each evaluator group counts: College faculty 40 / 40 / 20, Basic Educat
 - Use the search box, the role filter and *Show deactivated* to find people.
 
 #### Reports and Analytics
-- **Reports**: overall, per subject, per section, **individual report** (final breakdown, each class, Dean and Program Chair, with **per-item results and the spread of ratings 1–4**, and comments grouped by source), **department summary**, **Comprehensive report** (HR: UB's HRMC report, one sheet per person with each evaluator group's average, the final rating and the interpretation 3.51–4.00 Outstanding, 3.00–3.50 Satisfactory, 2.50–2.99 Fair, 2.49 and below Poor; print one or three per page), **requests from offices** (results are released only through the person's dean), and **earlier records** (import final scores kept before evalU). Use **Print / save as PDF** for a file.
+- **Reports**: overall, per subject, per section, **individual report** (final breakdown, each class, Dean and Program Chair, with **per-item results and the spread of ratings 1–4**, and comments grouped by source), **department summary**, **Print UB reports** (HR; the same layouts as the HRMC samples in `templates and for printing pdf/SAMPLE`): the **Comprehensive report** (one sheet per person with each evaluator group's average, the final rating and the interpretation 3.51–4.00 Outstanding, 3.00–3.50 Satisfactory, 2.50–2.99 Fair, 2.49 and below Poor; one or three per page), the **Performance evaluation** sheets (one per evaluator group, and per class for students: summary by category weighted by its percentage, over-all, interpretation, and the average of every question) and the **Verbatim** sheet (supervisors' comments only, like UB's sample: "BY THE DEAN AS A FACULTY", "BY THE AP/PC/SH AS A FACULTY", each with the employee's development plan and the areas to be improved; students' comments stay on screen in the individual report); faculty get the same sheets under **My results**, **requests from offices** (results are released only through the person's dean), and **earlier records** (import final scores kept before evalU). Use **Print / save as PDF** for a file. The other tabs (Overall, Per subject, Per section, Department summary, All comments) print as a formal HRMC sheet too: UB logo and header, the semester, a bordered table with the interpretation, the rating key and the "computer generated" line; the Individual report prints that person's UB sheets.
 - **Analytics**: trends over time, department comparison, and **item-level results** that flag items below 3.50 and items that stay low across periods.
 
 #### Audit log
@@ -212,11 +211,11 @@ Sign in as `dean_a` or `chair_a`.
 
 Sign in as `sec_a`, `staff_a`, `head_a` or `principal`. Open **My evaluations** and answer your forms. Office heads and staff evaluate each other, and see their results under **My results**.
 
-### Director/VP
+### Vice President
 
-Sign in as `director` or `vp`. Directors/VPs only see periods that HR has sent to them.
+Sign in as `vp`. Only the Vice Presidents approve results (there is no Director step). VPs only see periods that HR has sent to them.
 
-- **Overview**: results **waiting for your review**, with an **Approve for release to faculty** button. Faculty can't see their results until every Director/VP approves. Also the average score and each department's average.
+- **Overview**: results **waiting for your review**, with an **Approve for release to faculty** button. Faculty can't see their results until every VP approves. Also the average score and each department's average.
 - **Reports**: every person's results, including comments, but without evaluator names.
 - **Analytics**: trends and department comparisons.
 
@@ -250,8 +249,8 @@ Try this with the sample accounts to see the whole flow:
 3. **Student** (`st_a01@s.ubaguio.edu`): submit an evaluation with a comment.
 4. **Dean** (`dean_a@ubaguio.edu`): evaluate a faculty member.
 5. **HR**: check **Progress**, send participation alerts and reminders.
-6. **HR**: **close** the period, then **send it to Directors/VPs**.
-7. **Director** and **VP** (`director`, `vp`): review **Reports**, then each clicks **Approve**.
+6. **HR**: **close** the period, then **send it to VPs**.
+7. **VP** (`vp`): review **Reports**, then click **Approve**.
 8. **HR**: **release to faculty**.
 9. **Faculty** (`fac_a1`): open **My results**. **Dean**: open **Department results**.
 10. **HR**: open **Audit log** to see every view and release.
@@ -317,7 +316,7 @@ Requirements from Chapter 3, Tables 8 and 9.
 | FR14 | Comments verbatim, grouped by source, no student identity | Comments in individual reports and My results |
 | FR15 | Per-subject, dean, chair, final reports with per-item distributions | Reports → Individual report (print / save as PDF) |
 | FR16 | Department-wide per-item summaries for deans | Reports → Department summary; Dean → Department results |
-| FR17 | HR review → VP approval → faculty | Periods & release + Director/VP Approve button |
+| FR17 | HR review → VP approval → faculty | Periods & release + VP Approve button |
 | FR18 | Requests from other offices go only through the dean | Reports → Requests from offices |
 | FR19 | Item-level results, flag consistently low items | Analytics → Item-level results; low items marked in reports |
 | FR20 | Log who viewed, changed or released each result | HR → Audit log |
@@ -327,7 +326,7 @@ Requirements from Chapter 3, Tables 8 and 9.
 | NFR3 | Correct weighted ratings | Automated tests (`npm test`) check the rules |
 | NFR4 | 20,000 students without lag | Not tested at that scale (outside the study's scope, Chapter 2) |
 | NFR5 | Faculty never see which student rated them | Evaluator names removed by the server |
-| NFR6 | Faculty can't see results before VP approval | Release requires every Director/VP's approval |
+| NFR6 | Faculty can't see results before VP approval | Release requires every VP's approval |
 | NFR7 | Every view, change and release attributable | Audit log |
 | NFR8 | Revising a form or weights doesn't change past results | Form versions; each period keeps its weights |
 | NFR9 | Change forms and weights without code | Forms and Weights pages |
@@ -392,6 +391,6 @@ Tables: `departments`, `users`, `sections`, `section_students`, `criteria`, `ins
 - Passwords are stored only as salted scrypt hashes. Sessions use an `HttpOnly`, `SameSite=Strict` cookie (8 hours; `Secure` when `NODE_ENV=production`), and only a hash of the session token is stored.
 - After 5 failed sign-ins for the same username from the same address, sign-in is blocked for 15 minutes.
 - Every action checks the user's role on the server. Students and staff can only answer their own tasks; only HR can manage periods, assignments, forms, weights and accounts.
-- Each role receives only what it may see. Students see only their own tasks; faculty see their own results only after release, without evaluator names or comments; Directors/VPs see released periods only, without evaluator names.
+- Each role receives only what it may see. Students see only their own tasks; faculty see their own results only after release, without evaluator names or comments; VPs see released periods only, without evaluator names.
 - Dean/Chair comments are encrypted in the database with a key kept on the server (`server/data/secret.key`, or the `EVALU_SECRET` environment variable).
 - `server/data/` (the database and the key) is git-ignored. **Back it up.** Without `secret.key`, encrypted comments can't be read.

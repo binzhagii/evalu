@@ -131,10 +131,10 @@ assert.equal(L.runDailyAutomation(d7), 0, 'not too early');
 
 // FR17 / NFR6: release order, faculty only after release (which needs VP approval)
 const P = { releaseStage: 'hr' }, u = (id) => db.users.find((x) => x.id === id);
-assert.ok(L.canSeeAll(u('hr'), P) && !L.canSeeAll(u('director'), P) && !L.canSeeOwn(u('fac_a1'), P));
-P.releaseStage = 'dir'; assert.ok(L.canSeeAll(u('director'), P) && !L.canSeeOwn(u('fac_a1'), P) && !L.canSeeDept(u('dean_a'), P));
+assert.ok(L.canSeeAll(u('hr'), P) && !L.canSeeAll(u('vp'), P) && !L.canSeeOwn(u('fac_a1'), P));
+P.releaseStage = 'dir'; assert.ok(L.canSeeAll(u('vp'), P) && !L.canSeeOwn(u('fac_a1'), P) && !L.canSeeDept(u('dean_a'), P));
 P.releaseStage = 'faculty'; assert.ok(L.canSeeOwn(u('fac_a1'), P) && L.canSeeOwn(u('staff_a'), P) && L.canSeeDept(u('dean_a'), P) && !L.canSeeDept(u('chair_a'), P));
-assert.deepEqual(L.pendingApprovals(db, db.periods.find((p) => p.id === 'p3')).map((x) => x.id), ['director', 'vp']);
+assert.deepEqual(L.pendingApprovals(db, db.periods.find((p) => p.id === 'p3')).map((x) => x.id), ['vp']);
 assert.deepEqual(L.pendingApprovals(db, db.periods.find((p) => p.id === 'p1')), []);
 
 // Table 6: non-teaching head and staff evaluate each other; a secretary also evaluates the dean

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { AppProvider, useApp } from './lib/store';
 import { ROLES, POSITIONS, isTeacher } from './lib/logic';
 import { Icon, Avatar, NavContext } from './ui';
-import { HROverview, DirectorOverview } from './pages/Overview';
+import { HROverview, VpOverview } from './pages/Overview';
 import Tasks from './pages/Tasks';
 import { Periods, Assignments, Forms, Weights, Monitor, Classes, AuditLog } from './pages/HR';
 import Reports, { DeptResults } from './pages/Reports';
@@ -10,12 +10,6 @@ import Analytics from './pages/Analytics';
 import { Notifications, MyResults } from './pages/Misc';
 import { Accounts, MyAccount, ForcedPasswordChange } from './pages/Accounts';
 import './index.css';
-
-const DEMO_PASSWORD = 'demo1234'; // sample accounts only (see server/seed.js)
-const DEMO = [
-  ['hr', 'HR Specialist'], ['director', 'Director'], ['vp', 'Vice President'], ['dean_a', 'Dean'], ['chair_a', 'Program Chair'],
-  ['fac_a1', 'Faculty'], ['ci_c1', 'Clinical Instructor'], ['hr_assistant', 'HRMC Assistant'], ['sec_a', 'Secretary (NTP)'], ['head_a', 'Office Head (NTP)'], ['principal', 'Principal'], ['st_a01', 'Student'],
-];
 
 function Login() {
   const { login, error, notice, clearNotice } = useApp();
@@ -31,7 +25,6 @@ function Login() {
   };
   // the "logged out" banner closes by itself after a few seconds
   useEffect(() => { if (!notice) return; const t = setTimeout(clearNotice, 4000); return () => clearTimeout(t); }, [notice]); // eslint-disable-line react-hooks/exhaustive-deps
-  const pick = (id) => { setU(`${id}@${id.startsWith('st_') ? 's.' : ''}ubaguio.edu`); setP(DEMO_PASSWORD); setErr(''); };
   return (
     <div className="login-wrap">
       <div className="login-bg" aria-hidden="true" />
@@ -72,20 +65,6 @@ function Login() {
           </button>
           <p className="lc-foot">Trouble signing in? Contact the HRMC office.</p>
         </form>
-        <div className="login-demo">
-          <div className="login-demo-h">
-            <b>Test accounts</b>
-            <span>Password: <code>{DEMO_PASSWORD}</code></span>
-          </div>
-          <div className="chips">
-            {DEMO.map(([id, l]) => (
-              <button key={id} type="button" className={'chip' + (u.startsWith(id + '@') ? ' on' : '')} onClick={() => pick(id)}>
-                <b>{l}</b><small>{id}</small>
-              </button>
-            ))}
-          </div>
-          <p>Sign in with the UB email (e.g. <code>dean_b@ubaguio.edu</code>, students <code>st_b01@s.ubaguio.edu</code>) or the username. More: dean_b, chair_b, fac_b1, ci_c1, hr_assistant, fac_be1, staff_a, shead, aprincipal, st_b01 … All data is sample data.</p>
-        </div>
       </main>
     </div>
   );
@@ -110,7 +89,7 @@ function navFor(user) {
     );
   } else if (user.role === 'DIR') {
     n.push(
-      ['home', 'Overview', 'home', <DirectorOverview />, 'A summary of the results released to you'],
+      ['home', 'Overview', 'home', <VpOverview />, 'A summary of the results released to you'],
       ['reports', 'Reports', 'report', <Reports />, 'Final scores and results by person, class and subject'],
       ['analytics', 'Analytics', 'trend', <Analytics />, 'Trends, department comparisons and low-rated items'],
     );
