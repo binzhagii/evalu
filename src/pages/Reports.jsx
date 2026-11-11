@@ -6,6 +6,7 @@ import {
 } from '../lib/logic';
 import { Card, Badge, RuleNote, PeriodPicker, Select, Meter, Stat, Stats, Empty, Avatar, ItemTable, PrintButton, fmt, pct, newestFirst, usePages } from '../ui';
 import { ReleaseSteps } from './Overview';
+import { ComprehensiveReports } from './CompReport';
 
 export const STATUS_TEXT = { complete: 'Complete', reweighted: 'Complete (re-weighted)', incomplete: 'No valid result yet', 'weights-missing': 'Weights not set' };
 
@@ -53,7 +54,7 @@ export function ResultCard({ res, db, periodId, own = false }) {
         </div>
         <div className={`score-box ${shown ? '' : 'none'}`}>
           <span className="score-num">{shown ? fmt(res.final) : '—'}</span>
-          <span className="muted">{res.status === 'complete' ? 'final score / 5' : res.status === 'reweighted' ? `final score / 5 · over ${res.basis}%` : STATUS_TEXT[res.status]}</span>
+          <span className="muted">{res.status === 'complete' ? 'final score / 4' : res.status === 'reweighted' ? `final score / 4 · over ${res.basis}%` : STATUS_TEXT[res.status]}</span>
         </div>
       </div>
       {res.status === 'reweighted' && <div className="note">Computed over <b>{res.basis}%</b> instead of {res.total}%: there is no valid result from {res.missing.map((g) => GROUPS[g]).join(', ')}, so {res.missing.length > 1 ? 'their weights are' : 'its weight is'} removed from the computation (HRMC rule). Rounded to two decimal places.</div>}
@@ -63,7 +64,7 @@ export function ResultCard({ res, db, periodId, own = false }) {
         {Object.entries(res.groups).map(([g, v]) => (
           <div key={g} className="meter-row big">
             <span><b>{GROUPS[g]}</b> <span className="muted">{v.weight == null ? 'weight not set' : `counts ${v.weight}%`} · {v.responded}/{v.required} responses</span></span>
-            <Meter value={v.score == null ? 0 : v.score / 5} tone="brand" />
+            <Meter value={v.score == null ? 0 : v.score / 4} tone="brand" />
             <b>{fmt(v.score)}</b>
           </div>
         ))}
@@ -274,7 +275,7 @@ export default function Reports() {
   secRows.forEach((s) => { (bySubject[s.section.subject] ||= []).push(s); });
   const tabs = [['overall', 'Overall'], ['subject', 'Per subject'], ['section', 'Per section'], ['individual', 'Individual report'], ['department', 'Department summary']];
   if (canSeeComments(user, period)) tabs.push(['comments', 'All comments']);
-  if (user.role === 'HR') tabs.push(['requests', 'Requests from offices']);
+  if (user.role === 'HR') tabs.push(['comprehensive', 'Comprehensive report'], ['requests', 'Requests from offices']);
   tabs.push(['records', 'Earlier records']);
   const withFinal = all.filter(hasFinal);
   const avg = withFinal.length ? withFinal.reduce((x, y) => x + y.final, 0) / withFinal.length : null;
@@ -292,15 +293,15 @@ export default function Reports() {
       <Stat icon="users" label="With a final score" value={`${withFinal.length} / ${all.length}`} sub={`${all.filter((r) => r.status === 'reweighted').length} re-weighted (a group missing)`} />
       <Stat icon="chart" label="Classes excluded" value={`${invalid} / ${secRows.length}`} sub="below half of the class + 1" tone={invalid ? 'warn' : ''} />
     </Stats>
-    <Card actions={<PrintButton />}>
+    <Card actions={tab !== 'comprehensive' && <PrintButton />}>
       <div className="tabs no-print" role="tablist">{tabs.map(([k, l]) => <button key={k} role="tab" aria-selected={tab === k} className={tab === k ? 'on' : ''} onClick={() => setTab(k)}>{l}</button>)}</div>
-      <h3 className="print-only">evalU · {period.name} · {tabs.find((t) => t[0] === tab)?.[1]}</h3>
+      {tab !== 'comprehensive' && <h3 className="print-only">evalU · {period.name} · {tabs.find((t) => t[0] === tab)?.[1]}</h3>}
       {tab === 'overall' && (
         <table>
           <thead><tr><th>Name</th><th>Type</th><th>Department</th><th>Final score</th><th>Status</th></tr></thead>
           <tbody>{all.map((r) => (
             <tr key={r.targetId}><td><button className="link" onClick={() => { setTid(r.targetId); setTab('individual'); }}>{r.target.name}</button></td><td>{TARGET_TYPES[r.type]}</td><td>{deptName(db, r.target.dept)}</td>
-              <td><div className="meter-row"><Meter value={r.final == null ? 0 : r.final / 5} tone="brand" /><b>{fmt(r.final)}</b></div></td>
+              <td><div className="meter-row"><Meter value={r.final == null ? 0 : r.final / 4} tone="brand" /><b>{fmt(r.final)}</b></div></td>
               <td>{r.status === 'complete' ? <Badge kind="completed">complete</Badge> : r.status === 'reweighted' ? <Badge kind="info">over {r.basis}%</Badge> : <Badge kind="pending">{STATUS_TEXT[r.status].toLowerCase()}</Badge>}</td></tr>
           ))}</tbody>
         </table>
@@ -336,6 +337,7 @@ export default function Reports() {
         </>
       )}
       {tab === 'comments' && <Comments periodId={pid} />}
+      {tab === 'comprehensive' && <ComprehensiveReports periodId={pid} />}
       {tab === 'requests' && <ResultRequests periodId={pid} />}
       {tab === 'records' && <PastRecords />}
     </Card>
@@ -375,7 +377,7 @@ export function DeptResults() {
           <thead><tr><th>Name</th><th>Type</th><th>Final score</th><th>Status</th></tr></thead>
           <tbody>{people.map((r) => (
             <tr key={r.targetId}><td><button className="link" onClick={() => setTid(r.targetId)}>{r.target.name}</button></td><td>{TARGET_TYPES[r.type]}</td>
-              <td><div className="meter-row"><Meter value={r.final == null ? 0 : r.final / 5} tone="brand" /><b>{fmt(r.final)}</b></div></td><td>{STATUS_TEXT[r.status]}</td></tr>
+              <td><div className="meter-row"><Meter value={r.final == null ? 0 : r.final / 4} tone="brand" /><b>{fmt(r.final)}</b></div></td><td>{STATUS_TEXT[r.status]}</td></tr>
           ))}</tbody>
         </table>
         {selected && people.some((r) => r.targetId === selected) && <ResultCard res={computeTarget(db, pid, selected)} db={db} periodId={pid} />}

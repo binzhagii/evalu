@@ -138,7 +138,8 @@ try {
   // someone else's task rejected
   assert.equal((await act(fac, 'submitEvaluation', { taskId: task.id, answers: {} })).status, 403);
   // full submit works and is stored in the answers table
-  const all5 = Object.fromEntries(items.map((c) => [c, 5]));
+  const all5 = Object.fromEntries(items.map((c) => [c, 4]));
+  assert.equal((await act(student, 'saveDraft', { taskId: task.id, answers: { [items[0]]: 5 } })).status, 400, 'UB scale is 1-4');
   const sub = await act(student, 'submitEvaluation', { taskId: task.id, answers: all5, comment: 'students can comment too' });
   assert.equal(sub.status, 200);
   assert.equal(sql.prepare('SELECT count(*) n FROM answers WHERE task_id=?').get(task.id).n, items.length);
@@ -201,13 +202,14 @@ try {
   assert.equal((await call('/api/data', { cookie: student })).data.requests.length, 0);
 
   /* ---------- FR4: used forms are locked; changes make a new version ---------- */
-  const usedForm = 'i_COLLEGE_FACULTY_ST';
-  assert.equal((await act(hr, 'setFormItemWeight', { instrumentId: usedForm, criterionId: 'c1', weight: 3 })).status, 409, 'used form is locked');
-  assert.equal((await act(hr, 'renameCriterion', { criterionId: 'c1', text: 'Reworded' })).status, 409, 'answered criterion keeps its wording');
+  const usedForm = sql.prepare("SELECT id FROM instruments WHERE target_type='COLLEGE_FACULTY' AND evaluator_group='ST' AND active=1 AND dept IS NULL AND variant IS NULL").get().id;
+  const c1 = sql.prepare('SELECT criterion_id FROM instrument_items WHERE instrument_id=? ORDER BY rowid').get(usedForm).criterion_id;
+  assert.equal((await act(hr, 'setFormItemWeight', { instrumentId: usedForm, criterionId: c1, weight: 3 })).status, 409, 'used form is locked');
+  assert.equal((await act(hr, 'renameCriterion', { criterionId: c1, text: 'Reworded' })).status, 409, 'answered criterion keeps its wording');
   const rev = await act(hr, 'reviseForm', { instrumentId: usedForm });
-  assert.equal(rev.status, 200); assert.equal(rev.data.result.version, 2);
-  assert.equal((await act(hr, 'setFormItemWeight', { instrumentId: rev.data.result.id, criterionId: 'c1', weight: 3 })).status, 200, 'new version is editable');
-  assert.equal((await act(hr, 'setFormItemCategory', { instrumentId: rev.data.result.id, criterionId: 'c1', category: 'Teaching' })).status, 200);
+  assert.equal(rev.status, 200); assert.equal(rev.data.result.version, 3, 'v1 sample form, v2 UB tool, v3 the new version');
+  assert.equal((await act(hr, 'setFormItemWeight', { instrumentId: rev.data.result.id, criterionId: c1, weight: 3 })).status, 200, 'new version is editable');
+  assert.equal((await act(hr, 'setFormItemCategory', { instrumentId: rev.data.result.id, criterionId: c1, category: 'Teaching' })).status, 200);
   assert.equal((await act(hr, 'setFormCategoryWeight', { instrumentId: rev.data.result.id, category: 'Teaching', weight: 60 })).status, 200);
   assert.equal(sql.prepare('SELECT active FROM instruments WHERE id=?').get(usedForm).active, 0, 'old version kept, inactive');
   assert.equal(sql.prepare('SELECT count(*) n FROM responses WHERE instrument_id=?').get(usedForm).n > 0, true, 'past answers still point to the old version');
@@ -250,7 +252,7 @@ try {
   assert.deepEqual(deptsInB, ['B']);
 
   /* ---------- FR21: earlier records ---------- */
-  const pr = await act(hr, 'importPastResults', { csv: 'user, period, score\nfac_a1@ubaguio.edu, AY 2021-22 Term 2, 4.1\nnobody, X, 4\nfac_a1, Y, 9' });
+  const pr = await act(hr, 'importPastResults', { csv: 'user, period, score\nfac_a1@ubaguio.edu, AY 2021-22 Term 2, 3.41\nnobody, X, 4\nfac_a1, Y, 9' });
   assert.equal(pr.data.result.added, 1); assert.equal(pr.data.result.errorCount, 2);
   assert.ok((await call('/api/data', { cookie: fac })).data.pastResults.some((x) => x.periodLabel === 'AY 2021-22 Term 2'), 'faculty sees own earlier records');
   assert.ok(!(await call('/api/data', { cookie: student })).data.pastResults.length, 'students see none');
@@ -267,7 +269,7 @@ try {
   const c = await act(hr, 'addCriterion', { text: 'New criterion' });
   assert.equal((await act(hr, 'renameCriterion', { criterionId: c.data.result.id, text: 'Renamed' })).status, 200);
   assert.equal(sql.prepare('SELECT text FROM criteria WHERE id=?').get(c.data.result.id).text, 'Renamed');
-  assert.equal((await act(hr, 'deleteCriterion', { criterionId: 'c1' })).status, 409, 'criterion in use cannot be deleted');
+  assert.equal((await act(hr, 'deleteCriterion', { criterionId: c1 })).status, 409, 'criterion in use cannot be deleted');
 
   /* ---------- accounts ---------- */
   const tryLogin = (username, password) => call('/api/auth/login', { body: { username, password } });

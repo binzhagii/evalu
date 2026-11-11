@@ -12,7 +12,21 @@
 // until HR enters it; no score is invented.
 
 export const THRESHOLD = 0.5;           // the line drawn on progress bars (the rule itself is half PLUS ONE)
-export const LOW_ITEM = 3.5;            // FR19: items averaging below "Very Satisfactory" (Table 4) are flagged
+export const LOW_ITEM = 3.0;            // FR19: items averaging below "Satisfactory" (UB's 4-point scale) are flagged
+export { MAX_RATING, SCALES, CLASS_TYPES } from './ubForms.js';
+import { MAX_RATING, SCALES } from './ubForms.js';
+
+/** UB's rating interpretation (HRMC comprehensive report): 3.51-4.00, 3.00-3.50, 2.50-2.99, 2.49 and below. */
+export function interpretation(score, nonTeaching = false) {
+  if (score == null) return '';
+  const s = Math.round((score + Number.EPSILON) * 100) / 100;
+  const words = nonTeaching ? ['Excellent', 'Good', 'Fair', 'Poor'] : ['Outstanding', 'Satisfactory', 'Fair', 'Poor'];
+  return s >= 3.51 ? words[0] : s >= 3.0 ? words[1] : s >= 2.5 ? words[2] : words[3];
+}
+export const INTERPRETATION_TABLE = [['3.51 - 4.00', 0], ['3.00 - 3.50', 1], ['2.50 - 2.99', 2], ['2.49 and below', 3]];
+/** The words for each rating (1..4) on a form: the item's own levels if it has them, else the form's scale. */
+export const scaleOf = (ins) => SCALES[ins && String(ins.targetType).startsWith('NTP') ? 'perf' : 'demo'];
+export const ratingWords = (ins, criterion) => (criterion?.levels?.length === MAX_RATING ? criterion.levels : scaleOf(ins));
 export const REMIND_DAYS = 7;           // FR10: automatic reminders start this many days before the deadline
 export const INSTITUTION_DOMAIN = 'ubaguio.edu';
 
@@ -147,15 +161,34 @@ export const hrUsers = (db) => db.users.filter((u) => active(u) && u.role === 'H
 export const directors = (db) => db.users.filter((u) => active(u) && u.role === 'DIR');
 
 /* ---------- forms (FR3, FR4) ---------- */
-/** The form in use for a pairing: a department-specific one if it exists, else the general one. */
-export function instrumentFor(db, tt, group, dept = null) {
+/**
+ * The form in use for a pairing. Most specific first: for this type of class and department, for this
+ * type of class, for this department, then the general one. "Type of class" (lecture, laboratory,
+ * clinical...) is set per class; lecture is the standard form.
+ */
+export function instrumentFor(db, tt, group, dept = null, variant = null) {
   const list = db.instruments.filter((i) => i.targetType === tt && i.group === group && i.active !== false);
-  return (dept && list.find((i) => i.dept === dept)) || list.find((i) => !i.dept) || null;
+  const v = (i) => i.variant || null;
+  return (variant && dept && list.find((i) => v(i) === variant && i.dept === dept))
+    || (variant && list.find((i) => v(i) === variant && !i.dept))
+    || (dept && list.find((i) => !v(i) && i.dept === dept))
+    || list.find((i) => !v(i) && !i.dept) || null;
+}
+/**
+ * The type of class a task is about: the class itself for students; for the dean or program chair,
+ * the type most of the person's evaluated classes have (e.g. a clinical instructor in the dental infirmary).
+ */
+export function taskVariant(db, task) {
+  if (task.sectionId) return db.sections.find((s) => s.id === task.sectionId)?.classType || null;
+  const count = {};
+  for (const s of db.sections) if (s.facultyId === task.targetId && !isExemptSection(s)) count[s.classType || ''] = (count[s.classType || ''] || 0) + 1;
+  const top = Object.entries(count).sort((a, b) => b[1] - a[1])[0];
+  return top?.[0] || null;
 }
 /** The form a not-yet-submitted task is answered on. */
 export function formForTask(db, task) {
   const tg = userById(db, task.targetId);
-  return tg ? instrumentFor(db, targetType(db, tg), task.group, tg.dept) : null;
+  return tg ? instrumentFor(db, targetType(db, tg), task.group, tg.dept, taskVariant(db, task)) : null;
 }
 /** The form a task was (or will be) answered on: the version stored with a submitted response. */
 export const formOfTask = (db, task) =>
@@ -268,15 +301,15 @@ export function computeAll(db, periodId) {
 
 /**
  * FR15/FR16/FR19: per-item results. For each criterion: number of answers, the mean and the
- * distribution of ratings 1..5. Student identities are never part of this.
+ * distribution of ratings 1..4. Student identities are never part of this.
  */
 export function itemStats(tasks) {
   const m = new Map();
   for (const t of tasks) {
     if (!t.response || t.response.redacted) continue;
     for (const [cid, v] of Object.entries(t.response.answers)) {
-      const x = m.get(cid) || { criterionId: cid, n: 0, sum: 0, dist: [0, 0, 0, 0, 0] };
-      x.n++; x.sum += v; x.dist[v - 1]++;
+      const x = m.get(cid) || { criterionId: cid, n: 0, sum: 0, dist: Array(MAX_RATING).fill(0) };
+      x.n++; x.sum += v; if (v >= 1 && v <= MAX_RATING) x.dist[v - 1]++;
       m.set(cid, x);
     }
   }

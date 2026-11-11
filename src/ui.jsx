@@ -112,14 +112,14 @@ export function RuleNote() {
   );
 }
 
-/** FR15/FR19: per-item results: mean, number of answers and how many gave each rating 1–5. */
+/** FR15/FR19: per-item results: mean, number of answers and how many gave each rating 1–4. */
 export function ItemTable({ rows, criteria, categoryOf }) {
   if (!rows.length) return <p className="muted">No answers to show.</p>;
   const text = (id) => criteria.find((c) => c.id === id)?.text || id;
   const sorted = categoryOf ? [...rows].sort((a, b) => (categoryOf(a.criterionId) || '').localeCompare(categoryOf(b.criterionId) || '')) : rows;
   return (
     <table className="items">
-      <thead><tr><th>Item</th><th>Mean</th><th>Answers</th><th className="dist-h">Ratings 1 · 2 · 3 · 4 · 5</th></tr></thead>
+      <thead><tr><th>Item</th><th>Mean</th><th>Answers</th><th className="dist-h">Ratings 1 · 2 · 3 · 4</th></tr></thead>
       <tbody>
         {sorted.flatMap((r, i) => {
           const cat = categoryOf?.(r.criterionId);

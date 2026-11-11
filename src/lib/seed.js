@@ -3,6 +3,7 @@
 // Used by the server (server/seed.js) to fill an empty database, and by the tests.
 // Passwords are not part of this data; the server hashes DEMO_PASSWORD for every account.
 import { UB_DEPARTMENTS, generateTasks, runThresholdCheck, formForTask, targetType, effectiveWeights } from './logic.js';
+import { installUbForms } from './ubInstall.js';
 
 export const DEMO_PASSWORD = 'demo1234';
 
@@ -97,6 +98,9 @@ export function buildSeed() {
   inst('NTP_HEAD', 'NTPSTAFF');
   inst('CI', 'ST', null, bank.CI_ST);
   inst('CI', 'DEAN', null, bank.CI_DEAN);
+  // UB's own evaluation tools replace the sample forms above wherever UB has a tool
+  // (the Dean evaluated by the secretary keeps the sample form: UB has no tool for it).
+  installUbForms(db);
 
   // Weights from Table 6 of the manuscript. Weights for evaluating Deans are not given, so they stay blank
   // until HR enters them. Non-teaching personnel have one evaluator group each, so it counts 100%.
@@ -122,11 +126,11 @@ export function buildSeed() {
   ];
 
   const baseline = {}; // per-target quality
-  db.users.forEach((u) => { if (targetType(db, u)) baseline[u.id] = 3.2 + R() * 1.4; });
+  db.users.forEach((u) => { if (targetType(db, u)) baseline[u.id] = 2.7 + R() * 1.25; });
   const answer = (task, drift) => {
     const ins = formForTask(db, task);
     const answers = {};
-    for (const it of ins.items) answers[it.criterionId] = Math.max(1, Math.min(5, Math.round(baseline[task.targetId] + drift + (R() - 0.5) * 1.6)));
+    for (const it of ins.items) answers[it.criterionId] = Math.max(1, Math.min(4, Math.round(baseline[task.targetId] + drift + (R() - 0.5) * 1.3)));
     return { answers, weights: effectiveWeights(ins), instrumentId: ins.id, comment: null, submittedAt: new Date().toISOString() };
   };
 
@@ -156,7 +160,7 @@ export function buildSeed() {
   db.tasks.filter((x) => x.response && x.group === 'ST').filter((_, i) => i % 9 === 0).forEach((t, i) => { t.response.comment = studentNotes[i % studentNotes.length]; });
   // FR21: a few final ratings imported from the records kept before evalU (2022 onward)
   const imported = new Date(now - 500 * day).toISOString();
-  [['fac_a1', 3.91], ['fac_a2', 4.12], ['fac_b1', 3.67], ['fac_be1', 4.25]].forEach(([userId, v], i) => {
+  [['fac_a1', 3.31], ['fac_a2', 3.52], ['fac_b1', 3.07], ['fac_be1', 3.65]].forEach(([userId, v], i) => {
     db.pastResults.push({ id: `pr${i + 1}`, userId, periodLabel: 'AY 2022-23 Term 1 (imported sample)', final: v, note: 'From the HRMC computation system', importedAt: imported });
     db.pastResults.push({ id: `pr${i + 11}`, userId, periodLabel: 'AY 2023-24 Term 1 (imported sample)', final: Math.round((v + 0.08) * 100) / 100, note: 'From the HRMC computation system', importedAt: imported });
   });

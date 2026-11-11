@@ -127,7 +127,7 @@ export function DirectorOverview() {
       ))}
       <div className="row between"><span className="muted">Showing results for</span><PeriodPicker periods={periods} value={pid} onChange={setPid} /></div>
       <Stats>
-        <Stat icon="star" label="Average final score" value={fmt(avg(complete))} sub="out of 5" tone="good" />
+        <Stat icon="star" label="Average final score" value={fmt(avg(complete))} sub="out of 4" tone="good" />
         <Stat icon="users" label="Personnel with a final score" value={`${complete.length} / ${all.length}`} sub={all.length - complete.length ? `${all.length - complete.length} without a score yet` : 'All have a final score'} />
         <Stat icon="chart" label="Class sections excluded" value={`${invalid} / ${secs.length}`} sub="fewer than half of the class + 1 answered" tone={invalid ? 'warn' : ''} />
         <Stat icon="calendar" label="Periods released to you" value={periods.length} />
@@ -136,7 +136,7 @@ export function DirectorOverview() {
         {depts.map(({ d, avg: a, n, total }) => (
           <div key={d.id} className="meter-row big">
             <span>{d.name}</span>
-            <Meter value={a == null ? 0 : a / 5} tone="brand" />
+            <Meter value={a == null ? 0 : a / 4} tone="brand" />
             <b>{fmt(a)}</b>
             <span className="muted">{n}/{total} with a score</span>
           </div>

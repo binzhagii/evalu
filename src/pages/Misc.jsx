@@ -3,6 +3,7 @@ import { useApp } from '../lib/store';
 import { computeTarget, canSeeOwn, sectionStats, STAGE_LABEL, THRESHOLD, isExemptSection } from '../lib/logic';
 import { Card, Badge, Meter, Empty, Icon, RuleNote, PrintButton } from '../ui';
 import { ResultCard, PastRecords } from './Reports';
+import { CompSheet } from './CompReport';
 
 const KIND = {
   invalidated: { icon: 'alert', tone: 'bad', title: 'Class excluded (below half + 1)' },
@@ -78,6 +79,7 @@ export function MyResults() {
       )}
       {[...released].reverse().map((p) => (
         <Card key={p.id} title={p.name} actions={<PrintButton />}>
+          <CompSheet res={computeTarget(db, p.id, user.id)} period={p} ctrl="—" db={db} />
           <ResultCard res={computeTarget(db, p.id, user.id)} db={db} periodId={p.id} own />
         </Card>
       ))}

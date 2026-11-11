@@ -1,6 +1,7 @@
 // Brings a database made by an earlier version of evalU up to date, without losing data.
 // Runs once at start-up (see seed.js). Safe to run many times: it only fills in what is missing.
 import { formForTask, uid, UB_DEPARTMENTS } from '../src/lib/logic.js';
+import { installUbForms, UB_FORM_MARK } from '../src/lib/ubInstall.js';
 
 const clone = (x) => JSON.parse(JSON.stringify(x));
 
@@ -64,6 +65,10 @@ export function upgradeData(db) {
   for (const i of db.instruments.filter((x) => x.active === false && !activeKeys.has(formKey(x))))
     if (!newest.has(formKey(i)) || (i.version || 1) > (newest.get(formKey(i)).version || 1)) newest.set(formKey(i), i);
   for (const i of newest.values()) set(i, 'active', true);
+
+  // UB's own evaluation tools (4-point scale), added once. They replace the sample forms;
+  // forms HR made and every submitted evaluation stay as they are.
+  if (!db.instruments.some((i) => i.name.includes(UB_FORM_MARK)) && installUbForms(db)) changed = true;
 
   // NFR8: each period keeps its own weights; FR17: approvals list
   for (const p of db.periods) {

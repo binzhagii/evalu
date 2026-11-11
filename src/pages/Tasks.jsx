@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useApp } from '../lib/store';
-import { GROUPS, taskStatus, userById, formForTask, periodById } from '../lib/logic';
+import { GROUPS, taskStatus, userById, formForTask, periodById, itemCategory, ratingWords, MAX_RATING } from '../lib/logic';
 import { Card, Badge, Avatar, Stat, Stats, Meter, Empty, Icon, dueText, pct } from '../ui';
 
 export default function Tasks() {
@@ -88,7 +88,16 @@ function EvalForm({ taskId, onClose, onDone }) {
   const [errors, setErrors] = useState([]);
   const [confirm, setConfirm] = useState(false);
   const [busy, setBusy] = useState(false);
-  const crit = (id) => db.criteria.find((c) => c.id === id)?.text || id;
+  const critOf = (id) => db.criteria.find((c) => c.id === id);
+  const crit = (id) => critOf(id)?.text || id;
+  // the form's categories in order, e.g. "Content knowledge and pedagogy (35%)"
+  const parts = [];
+  ins.items.forEach((it, i) => {
+    const name = itemCategory(it);
+    if (parts.at(-1)?.name !== name) parts.push({ name, weight: ins.categories?.[name], items: [] });
+    parts.at(-1).items.push({ it, n: i + 1 });
+  });
+  const showHeads = parts.length > 1 || parts[0]?.name !== 'General';
   const answered = ins.items.filter((it) => answers[it.criterionId] != null).length;
 
   const saveDraft = async () => {
@@ -124,29 +133,38 @@ function EvalForm({ taskId, onClose, onDone }) {
           </div>
         </div>
         <div className="meter-row"><span>{answered} of {ins.items.length} answered</span><Meter value={answered / ins.items.length} tone="brand" /></div>
-        <p className="muted">Rate each statement from <b>1 (lowest)</b> to <b>5 (highest)</b>. Your answers are private: the person you evaluate never sees your name.</p>
+        <p className="muted">Rate each statement from <b>{MAX_RATING} (highest)</b> to <b>1 (lowest)</b>, like on the paper form. Your answers are private: the person you evaluate never sees your name.</p>
+        <div className="scale-key">{ratingWords(ins).map((w, i) => <span key={w}><b>{i + 1}</b> {w}</span>).reverse()}</div>
         {task.group === 'ST' && <p className="muted">This class's evaluation counts only if more than half of the class (half plus one) answers.</p>}
       </Card>
 
       {errors.length > 0 && <div className="note warn"><Icon name="alert" size={16} /> {errors.length} item(s) are not answered yet. They are marked in red below. Your other answers are kept.</div>}
 
-      {ins.items.map((it, i) => (
-        <div key={it.criterionId} id={`q-${it.criterionId}`} className={`q ${errors.includes(it.criterionId) ? 'err' : ''} ${answers[it.criterionId] != null ? 'answered' : ''}`}>
-          <div className="q-text"><span className="q-num">{i + 1}</span>{crit(it.criterionId)}</div>
-          <div className="rating" role="radiogroup" aria-label={`Rating for item ${i + 1}`}>
-            {[1, 2, 3, 4, 5].map((v) => (
-              <label key={v} className={answers[it.criterionId] === v ? 'on' : ''}>
-                <input type="radio" name={it.criterionId} checked={answers[it.criterionId] === v}
-                  onChange={() => { setAnswers({ ...answers, [it.criterionId]: v }); setErrors(errors.filter((x) => x !== it.criterionId)); }} />
-                {v}
-              </label>
-            ))}
-            <span className="rating-ends"><span>Lowest</span><span>Highest</span></span>
-          </div>
-        </div>
+      {parts.map((p) => (
+        <section key={p.name} className="q-part">
+          {showHeads && <h3 className="q-head">{p.name}{p.weight != null && <span className="muted"> · {p.weight}%</span>}</h3>}
+          {p.items.map(({ it, n: i }) => {
+            const words = ratingWords(ins, critOf(it.criterionId));
+            const own = words !== ratingWords(ins);
+            return (
+              <div key={it.criterionId} id={`q-${it.criterionId}`} className={`q ${errors.includes(it.criterionId) ? 'err' : ''} ${answers[it.criterionId] != null ? 'answered' : ''}`}>
+                <div className="q-text"><span className="q-num">{i}</span>{crit(it.criterionId)}</div>
+                <div className={`rating ${own ? 'rating-own' : ''}`} role="radiogroup" aria-label={`Rating for item ${i}`}>
+                  {Array.from({ length: MAX_RATING }, (_, k) => MAX_RATING - k).map((v) => (
+                    <label key={v} className={answers[it.criterionId] === v ? 'on' : ''} title={words[v - 1]}>
+                      <input type="radio" name={it.criterionId} checked={answers[it.criterionId] === v}
+                        onChange={() => { setAnswers({ ...answers, [it.criterionId]: v }); setErrors(errors.filter((x) => x !== it.criterionId)); }} />
+                      <b>{v}</b><small>{words[v - 1]}</small>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </section>
       ))}
 
-      <Card title="Comments (optional)">
+      <Card title={task.group === 'ST' ? 'Comments (optional)' : 'Comments and areas to be improved (optional)'}>
         <p className="muted">
           Your comment is stored encrypted and shown word for word in this person's results, grouped with other comments from {GROUPS[task.group]}, <b>without your name</b>.
           {task.group !== 'ST' && ' Because only one or two people evaluate in this group, the person may still guess who wrote it.'}

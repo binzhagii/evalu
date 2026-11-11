@@ -130,6 +130,7 @@ Your home page. It shows:
 Completion by department (students and personnel), then every class: how many answered, how many are needed (half + 1), and whether it would count.
 
 #### Class lists
+- **Type of class** (in the list of sections): Lecture (standard), Laboratory, Clinical – Dentistry / Physical Therapy / Medical Technology, or for Nursing CIs Clinical area / Skills laboratory. It decides which UB tool the students (and the dean) answer.
 The class sections from the Registrar / ARC. **Import a class list**: choose the **Department of this list**, then click **Choose CSV file…** (or paste), one student per line:
 
 ```
@@ -145,7 +146,18 @@ section code,subject,teacher name,teacher email,student ID,student name,student 
 You can also add a section by hand. Practicum, internship and field trip subjects are listed but marked "not evaluated".
 
 #### Forms
-- **Evaluation forms**: the criteria on each form, grouped into **categories** with weights (for example 60% / 40%). A form can also be made for one department only.
+- **UB's own evaluation tools** are built in (from the Word, Excel and PDF files in `templates and for printing pdf/`), with the same categories, weights and questions. They use UB's **4-point scale**: 4 Extensively demonstrated, 3 Adequately demonstrated, 2 Fairly demonstrated, 1 Not demonstrated (non-teaching: 4 Excellent, 3 Good, 2 Fair, 1 Poor). "Points" items on the Dean's tools (outreach, linkages, seminars, research) show their own words for each rating.
+  | Tool | Used for |
+  | --- | --- |
+  | Faculty by the Students (Lecture) / Grade 4-12 | students of college / Basic Ed classes |
+  | Graduate School / Law Professors | students in the Graduate School and School of Law |
+  | Laboratory, Dentistry CI, PT CI, MedTech CI (by students) | classes set to that **type of class** |
+  | Faculty by the Dean / Principal; by the AP / PC / SH | deans, principals, program chairs, assistant principals, subject heads |
+  | Non-science lab, Dental infirmary, PT, BMLS (by the Dean / PC) | follow the type of the teacher's classes |
+  | Nursing CI: clinical area or skills lab (students and Dean / PC) | Clinical Instructors in the School of Nursing |
+  | Dean / Principal by the Faculty | faculty and program chairs evaluating the dean |
+  | Office Staff by the Director; Director / Head by the Office Staff | non-teaching personnel |
+- **Evaluation forms**: the criteria on each form, grouped into **categories** with weights (for example 60% / 40%). A form can also be made for one department or one type of class only.
 - **Versions**: once a form has submitted answers it is locked. Click **Create new version** to change it; past results keep the old version.
 - **Criteria bank**: criteria already answered can't be reworded or deleted, so old reports stay the same.
 
@@ -160,7 +172,7 @@ How much each evaluator group counts: College faculty 40 / 40 / 20, Basic Educat
 - Use the search box, the role filter and *Show deactivated* to find people.
 
 #### Reports and Analytics
-- **Reports**: overall, per subject, per section, **individual report** (final breakdown, each class, Dean and Program Chair, with **per-item results and the spread of ratings 1–5**, and comments grouped by source), **department summary**, **requests from offices** (results are released only through the person's dean), and **earlier records** (import final scores kept before evalU). Use **Print / save as PDF** for a file.
+- **Reports**: overall, per subject, per section, **individual report** (final breakdown, each class, Dean and Program Chair, with **per-item results and the spread of ratings 1–4**, and comments grouped by source), **department summary**, **Comprehensive report** (HR: UB's HRMC report, one sheet per person with each evaluator group's average, the final rating and the interpretation 3.51–4.00 Outstanding, 3.00–3.50 Satisfactory, 2.50–2.99 Fair, 2.49 and below Poor; print one or three per page), **requests from offices** (results are released only through the person's dean), and **earlier records** (import final scores kept before evalU). Use **Print / save as PDF** for a file.
 - **Analytics**: trends over time, department comparison, and **item-level results** that flag items below 3.50 and items that stay low across periods.
 
 #### Audit log
@@ -248,7 +260,7 @@ To start over afterwards, sign in as HR and click **Reset simulated data** under
 
 ## How scores are calculated
 
-1. Each evaluation gets a weighted average of its ratings (1–5), using the form's category and item weights.
+1. Each evaluation gets a weighted average of its ratings (1–4), using the form's category and item weights.
 2. **Students**: a class counts only if **at least half of the class plus one** answered (26 of 50). Qualifying classes are averaged. Several program chairs are averaged too.
 3. The groups (Students, Dean, Program Chair…) are combined with the **weights** in force for that period.
 4. If a group has **no valid result**, its weight is **removed from the denominator** (no dean → computed over 60%).
@@ -311,7 +323,7 @@ Requirements from Chapter 3, Tables 8 and 9.
 | FR20 | Log who viewed, changed or released each result | HR → Audit log |
 | FR21 | Keep history; hold results imported from 2022 | Reports → Earlier records (import); My results |
 | NFR1 | Works directly on mobile phones | Phone layout, no redirects |
-| NFR2 | Simple forms | One question per row, 1–5 buttons, save and continue later |
+| NFR2 | Simple forms | One question per row, 4-point buttons (4 → 1, like the paper tools), save and continue later |
 | NFR3 | Correct weighted ratings | Automated tests (`npm test`) check the rules |
 | NFR4 | 20,000 students without lag | Not tested at that scale (outside the study's scope, Chapter 2) |
 | NFR5 | Faculty never see which student rated them | Evaluator names removed by the server |

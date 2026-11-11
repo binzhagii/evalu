@@ -27,7 +27,7 @@ const t = structuredClone(db);
 t.tasks = []; t.sections = [{ id: 's', code: 'X', subject: 'X', facultyId: 'fac_a1', dept: 'A', studentIds: ['st_a01', 'st_a02'] }];
 const mk = (ev, g, v, sec) => t.tasks.push({ id: ev + g, periodId: 'p4', evaluatorId: ev, targetId: 'fac_a1', group: g, sectionId: sec || null,
   response: { answers: { c1: v }, weights: { c1: 1 }, comment: null } });
-mk('st_a01', 'ST', 5, 's'); mk('st_a02', 'ST', 3, 's'); mk('dean_a', 'DEAN', 4); mk('chair_a', 'CHAIR', 2);
+mk('st_a01', 'ST', 4, 's'); mk('st_a02', 'ST', 4, 's'); mk('dean_a', 'DEAN', 4); mk('chair_a', 'CHAIR', 2);
 const r = L.computeTarget(t, 'p4', 'fac_a1');
 assert.equal(r.final, 3.6); // ST=4, Dean=4, Chair=2 -> .4*4+.4*4+.2*2
 assert.equal(r.status, 'complete');
@@ -70,9 +70,36 @@ assert.deepEqual(L.effectiveWeights({ categories: {}, items: [{ criterionId: 'x'
 assert.equal(L.responseScore({ answers: { x: 5, y: 5, z: 1 }, weights: cat }), 3.4); // .3*5+.3*5+.4*1
 
 // FR15: per-item mean and rating distribution
-const items = L.itemStats([{ response: { answers: { c1: 5, c2: 3 } } }, { response: { answers: { c1: 3, c2: 2 } } }, { response: null }]);
+const items = L.itemStats([{ response: { answers: { c1: 4, c2: 3 } } }, { response: { answers: { c1: 3, c2: 2 } } }, { response: null }]);
 const c1 = items.find((x) => x.criterionId === 'c1'), c2 = items.find((x) => x.criterionId === 'c2');
-assert.equal(c1.mean, 4); assert.deepEqual(c1.dist, [0, 0, 1, 0, 1]); assert.equal(c1.n, 2);
+assert.equal(c1.mean, 3.5); assert.deepEqual(c1.dist, [0, 0, 1, 1]); assert.equal(c1.n, 2);
+
+// UB's rating interpretation (HRMC comprehensive report)
+assert.deepEqual([4, 3.51, 3.505, 3.5, 3, 2.99, 2.5, 2.49, 1].map((s) => L.interpretation(s)),
+  ['Outstanding', 'Outstanding', 'Outstanding', 'Satisfactory', 'Satisfactory', 'Fair', 'Fair', 'Poor', 'Poor']);
+assert.equal(L.interpretation(3.6, true), 'Excellent');
+assert.equal(L.interpretation(null), '');
+
+// UB tools: every pairing in the sample data has an active form, on the 4-point scale
+for (const [tt, r] of Object.entries(db.rules)) for (const g of Object.keys(r)) assert.ok(L.instrumentFor(db, tt, g), `form for ${tt} / ${g}`);
+const ubForm = L.instrumentFor(db, 'COLLEGE_FACULTY', 'ST');
+assert.match(ubForm.name, /Lecture classes.*UB tool/);
+assert.deepEqual(ubForm.categories, { 'Management of teaching and learning processes': 60, 'Assessment of learners & learning environment': 35, 'Research and Extension': 5 });
+assert.equal(ubForm.items.length, 20);
+assert.ok(db.tasks.every((x) => !x.response || Object.values(x.response.answers).every((v) => v >= 1 && v <= 4)), 'sample answers are 1-4');
+// the type of class picks the tool: laboratory, clinical, Graduate School / Law
+assert.match(L.instrumentFor(db, 'COLLEGE_FACULTY', 'ST', 'A', 'lab').name, /Laboratory classes/);
+assert.match(L.instrumentFor(db, 'COLLEGE_FACULTY', 'DEAN', null, 'clin-dent').name, /Dental Infirmary/);
+assert.match(L.instrumentFor(db, 'COLLEGE_FACULTY', 'CHAIR', null, 'lab').name, /Asst. Principal/, 'no lab tool for chairs: standard form');
+assert.match(L.instrumentFor(db, 'COLLEGE_FACULTY', 'ST', 'GS').name, /Graduate School/);
+assert.match(L.instrumentFor(db, 'CI', 'ST', 'C', 'skills').name, /Skills Laboratory/);
+const ct = structuredClone(db); ct.sections.find((s) => s.facultyId === 'fac_a1').classType = 'lab';
+const labTask = ct.tasks.find((x) => x.periodId === 'p4' && x.targetId === 'fac_a1' && x.group === 'ST' && ct.sections.find((s) => s.id === x.sectionId)?.classType === 'lab');
+assert.match(L.formForTask(ct, labTask).name, /Laboratory classes/);
+assert.equal(L.taskVariant(ct, { targetId: 'fac_a1', sectionId: null }), 'lab', "the dean's form follows the type of the person's classes");
+const rub = db.criteria.find((c) => c.levels && /Community outreach/.test(c.text));
+assert.equal(rub.levels.length, 4); assert.deepEqual(L.ratingWords(null, rub), rub.levels);
+assert.equal(L.ratingWords(L.instrumentFor(db, 'NTP_STAFF', 'NTPHEAD'), {})[3], 'Excellent');
 assert.equal(c2.low, true, `FR19: below ${L.LOW_ITEM} is flagged`); assert.equal(c1.low, false);
 
 // FR12: final check notifies the faculty, the department heads and HR; running it twice adds nothing
@@ -123,7 +150,7 @@ const pb = d8.tasks.filter((x) => x.periodId === 'pB');
 assert.ok(pb.length > 0 && pb.every((x) => d8.users.find((y) => y.id === x.targetId).dept === 'B'));
 
 // FR4: a form with submitted answers is "used"; the response remembers its version
-const used = db.instruments.find((i) => i.id === 'i_COLLEGE_FACULTY_ST');
+const used = L.instrumentFor(db, 'COLLEGE_FACULTY', 'ST');
 assert.ok(L.formUsed(db, used));
 assert.ok(db.tasks.filter((x) => x.response).every((x) => x.response.instrumentId));
 

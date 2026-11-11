@@ -25,3 +25,4 @@ dist-ssr
 
 # evalU backend data (hashed passwords)
 server/data/
+Thumbs.db

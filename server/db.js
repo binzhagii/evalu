@@ -121,6 +121,9 @@ CREATE TABLE IF NOT EXISTS sessions (
   };
   addCols('users', { active: 'INTEGER NOT NULL DEFAULT 1', must_change_password: 'INTEGER NOT NULL DEFAULT 0', email: 'TEXT', temp_password: 'TEXT' }); // temp_password: encrypted, only until the person sets their own
   addCols('instrument_items', { category: 'TEXT' });
+  addCols('criteria', { levels: 'TEXT' });        // JSON: own words for ratings 1..4 (e.g. "One program outreach" ... "More than three")
+  addCols('sections', { class_type: 'TEXT' });    // lecture (NULL), lab, skills, clin-dent, clin-pt, clin-mt
+  addCols('instruments', { variant: 'TEXT' });    // the type of class this form is for; NULL = standard
   addCols('periods', { rules: 'TEXT', depts: 'TEXT', approvals: 'TEXT', last_auto: 'TEXT' });
   addCols('responses', { instrument_id: 'TEXT' });
   // Forms used to allow only one per pairing (UNIQUE). Versions need several, so rebuild that table once.
@@ -143,10 +146,10 @@ CREATE TABLE IF NOT EXISTS sessions (
 const TABLES = [
   { name: 'departments', key: ['id'], rows: (db) => db.departments.map((d) => ({ id: d.id, name: d.name, kind: d.kind })) },
   { name: 'users', key: ['id'], rows: (db) => db.users.map((u) => ({ id: u.id, username: u.username, name: u.name, role: u.role, position: u.position ?? null, dept: u.dept ?? null, email: u.email ?? null, password_hash: u.passwordHash, active: u.active === false ? 0 : 1, must_change_password: u.mustChangePassword ? 1 : 0, temp_password: u.tempPassword ? JSON.stringify(u.tempPassword) : null })) },
-  { name: 'sections', key: ['id'], rows: (db) => db.sections.map((s) => ({ id: s.id, code: s.code, subject: s.subject, faculty_id: s.facultyId, dept: s.dept })) },
+  { name: 'sections', key: ['id'], rows: (db) => db.sections.map((s) => ({ id: s.id, code: s.code, subject: s.subject, faculty_id: s.facultyId, dept: s.dept, class_type: s.classType || null })) },
   { name: 'section_students', key: ['section_id', 'student_id'], rows: (db) => db.sections.flatMap((s) => s.studentIds.map((st) => ({ section_id: s.id, student_id: st }))) },
-  { name: 'criteria', key: ['id'], rows: (db) => db.criteria.map((c) => ({ id: c.id, text: c.text })) },
-  { name: 'instruments', key: ['id'], rows: (db) => db.instruments.map((i) => ({ id: i.id, name: i.name, target_type: i.targetType, evaluator_group: i.group, dept: i.dept ?? null, version: i.version ?? 1, active: i.active === false ? 0 : 1, categories: i.categories && Object.keys(i.categories).length ? JSON.stringify(i.categories) : null })) },
+  { name: 'criteria', key: ['id'], rows: (db) => db.criteria.map((c) => ({ id: c.id, text: c.text, levels: c.levels?.length ? JSON.stringify(c.levels) : null })) },
+  { name: 'instruments', key: ['id'], rows: (db) => db.instruments.map((i) => ({ id: i.id, name: i.name, target_type: i.targetType, evaluator_group: i.group, dept: i.dept ?? null, version: i.version ?? 1, active: i.active === false ? 0 : 1, categories: i.categories && Object.keys(i.categories).length ? JSON.stringify(i.categories) : null, variant: i.variant || null })) },
   { name: 'instrument_items', key: ['instrument_id', 'criterion_id'], rows: (db) => db.instruments.flatMap((i) => i.items.map((it) => ({ instrument_id: i.id, criterion_id: it.criterionId, weight: it.weight, category: it.category || null }))) },
   { name: 'group_weights', key: ['target_type', 'evaluator_group'], rows: (db) => Object.entries(db.rules).flatMap(([tt, r]) => Object.entries(r).map(([g, w]) => ({ target_type: tt, evaluator_group: g, weight: w }))) },
   { name: 'periods', key: ['id'], rows: (db) => db.periods.map((p) => ({ id: p.id, name: p.name, deadline: p.deadline, status: p.status, release_stage: p.releaseStage, threshold_checked: p.thresholdChecked ? 1 : 0, rules: p.rules ? JSON.stringify(p.rules) : null, depts: p.depts?.length ? JSON.stringify(p.depts) : null, approvals: p.approvals?.length ? JSON.stringify(p.approvals) : null, last_auto: p.lastAuto ?? null })) },
@@ -170,13 +173,13 @@ function readFromTables() {
   }));
   const enrolled = {};
   for (const r of all('SELECT section_id, student_id FROM section_students ORDER BY rowid')) (enrolled[r.section_id] ||= []).push(r.student_id);
-  db.sections = all('SELECT * FROM sections ORDER BY rowid').map((s) => ({ id: s.id, code: s.code, subject: s.subject, facultyId: s.faculty_id, dept: s.dept, studentIds: enrolled[s.id] || [] }));
-  db.criteria = all('SELECT id, text FROM criteria ORDER BY rowid').map((c) => ({ ...c }));
+  db.sections = all('SELECT * FROM sections ORDER BY rowid').map((s) => ({ id: s.id, code: s.code, subject: s.subject, facultyId: s.faculty_id, dept: s.dept, studentIds: enrolled[s.id] || [], ...(s.class_type && { classType: s.class_type }) }));
+  db.criteria = all('SELECT id, text, levels FROM criteria ORDER BY rowid').map((c) => ({ id: c.id, text: c.text, ...(c.levels && { levels: JSON.parse(c.levels) }) }));
   const items = {};
   for (const r of all('SELECT * FROM instrument_items ORDER BY rowid')) (items[r.instrument_id] ||= []).push({ criterionId: r.criterion_id, weight: r.weight, ...(r.category && { category: r.category }) });
   db.instruments = all('SELECT * FROM instruments ORDER BY rowid').map((i) => ({
     id: i.id, name: i.name, targetType: i.target_type, group: i.evaluator_group, dept: i.dept, version: i.version, active: !!i.active,
-    categories: i.categories ? JSON.parse(i.categories) : {}, items: items[i.id] || [],
+    categories: i.categories ? JSON.parse(i.categories) : {}, items: items[i.id] || [], ...(i.variant && { variant: i.variant }),
   }));
   db.rules = {};
   for (const r of all('SELECT * FROM group_weights ORDER BY rowid')) (db.rules[r.target_type] ||= {})[r.evaluator_group] = r.weight;

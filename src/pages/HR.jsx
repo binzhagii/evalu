@@ -2,8 +2,13 @@ import { useEffect, useState } from 'react';
 import { useApp } from '../lib/store';
 import {
   GROUPS, TARGET_TYPES, STAGES, STAGE_LABEL, taskStatus, userById, sectionStats, targetsOf, evaluatorGroups, deptName,
-  formUsed, itemCategory, effectiveWeights, isExemptSection, isTeacher, pendingApprovals, periodCovers,
+  formUsed, itemCategory, effectiveWeights, isExemptSection, isTeacher, pendingApprovals, periodCovers, CLASS_TYPES,
 } from '../lib/logic';
+
+/** Types of class HR can pick for a section. A Clinical Instructor (Nursing) works in the clinical area or the skills lab. */
+const classTypesFor = (teacher) => (teacher?.position === 'ci'
+  ? [['', 'Clinical area (hospital, community clinic)'], ['skills', CLASS_TYPES.skills]]
+  : Object.entries(CLASS_TYPES).filter(([k]) => k !== 'skills'));
 import { Card, StatusBadge, RuleNote, PeriodPicker, Select, Badge, SaveInput, Meter, Empty, pct, newestFirst, usePages } from '../ui';
 
 const scopeText = (db, p) => (p.depts?.length ? p.depts.map((d) => deptName(db, d)).join(', ') : 'All departments');
@@ -267,10 +272,15 @@ export function Classes() {
         </div>
         {listed.length === 0 ? <Empty icon="list" title="No sections match">Change the filters above.</Empty> : <>
         <table>
-          <thead><tr><th>Section</th><th>Subject</th><th>Teacher</th><th>Department</th><th>Students</th><th>Evaluated?</th><th /></tr></thead>
+          <thead><tr><th>Section</th><th>Subject</th><th>Teacher</th><th>Department</th><th>Students</th><th>Type of class (decides the form)</th><th>Evaluated?</th><th /></tr></thead>
           <tbody>{rows.map((s) => (
             <tr key={s.id}>
               <td>{s.code}</td><td>{s.subject}</td><td>{userById(db, s.facultyId)?.name}</td><td>{deptName(db, s.dept)}</td><td>{s.studentIds.length}</td>
+              <td>{isExemptSection(s) ? <span className="muted">—</span> : (
+                <Select value={s.classType || ''} onChange={(v) => act('setClassType', { sectionId: s.id, classType: v })} aria-label={`Type of class for ${s.code}`}>
+                  {classTypesFor(userById(db, s.facultyId)).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                </Select>
+              )}</td>
               <td>{isExemptSection(s) ? <Badge kind="muted">not evaluated</Badge> : <Badge kind="completed">yes</Badge>}</td>
               <td>{!used.has(s.id) && <button className="ghost" onClick={() => { if (confirm(`Delete section ${s.code}?`)) act('deleteSection', { sectionId: s.id }); }}>Delete</button>}</td>
             </tr>
@@ -317,12 +327,15 @@ export function Forms() {
   const { db, act } = useApp();
   const [newCrit, setNewCrit] = useState('');
   const [showOld, setShowOld] = useState(false);
-  const forms = newestFirst(db.instruments.filter((i) => showOld || i.active !== false));
-  const [sel, setSel] = useState(forms[forms.length - 1]?.id);
+  const [ttF, setTtF] = useState('');
+  const forms = newestFirst(db.instruments.filter((i) => (showOld || i.active !== false) && (!ttF || i.targetType === ttF)));
+  // start on the form most people answer: college faculty evaluated by students
+  const [sel, setSel] = useState(() => (db.instruments.find((i) => i.active !== false && i.targetType === 'COLLEGE_FACULTY' && i.group === 'ST' && !i.dept && !i.variant) || forms[forms.length - 1])?.id);
   // every category name used on any form, so HR can pick one instead of typing it
-  const allCats = [...new Set(db.instruments.flatMap((i) => [...i.items.map((it) => it.category), ...Object.keys(i.categories || {})]).filter(Boolean))].sort();
+  // (only forms in use: old and sample forms that were replaced don't add their categories)
+  const allCats = [...new Set(db.instruments.filter((i) => i.active !== false || i.id === sel).flatMap((i) => [...i.items.map((it) => it.category), ...Object.keys(i.categories || {})]).filter(Boolean))].sort();
   const crit = usePages(newestFirst(db.criteria));
-  const [nf, setNf] = useState({ targetType: 'COLLEGE_FACULTY', group: 'ST', dept: '' });
+  const [nf, setNf] = useState({ targetType: 'COLLEGE_FACULTY', group: 'ST', dept: '', variant: '' });
   const [msg, setMsg] = useState('');
   const ins = db.instruments.find((i) => i.id === sel);
   const used = new Set(ins?.items.map((i) => i.criterionId));
@@ -332,14 +345,23 @@ export function Forms() {
   const cats = ins ? [...new Set(ins.items.map(itemCategory))] : [];
   const eff = ins ? effectiveWeights(ins) : {};
   const effTotal = Object.values(eff).reduce((a, w) => a + w, 0);
-  const label = (i) => `${TARGET_TYPES[i.targetType]} ← ${GROUPS[i.group]}${i.dept ? ` · ${deptName(db, i.dept)}` : ''} · v${i.version || 1}${i.active === false ? ' (old)' : ''}`;
+  // categories start closed so the page stays short; open one to work on its questions
+  const [open, setOpen] = useState([]);
+  const [find, setFind] = useState('');
+  const q = find.trim().toLowerCase();
+  const toggle = (c) => setOpen(open.includes(c) ? open.filter((x) => x !== c) : [...open, c]);
+  const critText = (id) => db.criteria.find((c) => c.id === id)?.text || '';
+  const catTotal = cats.reduce((a, c) => a + (Number(ins?.categories?.[c]) || 0), 0);
+  useEffect(() => { setOpen([]); setFind(''); }, [sel]);
+  const label = (i) => `${TARGET_TYPES[i.targetType]} ← ${GROUPS[i.group]}${i.variant ? ` · ${CLASS_TYPES[i.variant]}` : ''}${i.dept ? ` · ${deptName(db, i.dept)}` : ''} · v${i.version || 1}${i.active === false ? ' (old)' : ''}${i.name.includes('(UB tool)') ? ` · ${i.name.replace(' (UB tool)', '')}` : ''}`;
 
   return (
     <>
       {msg && <div className="note">{msg}</div>}
       <Card title="Evaluation forms" actions={<label className="inline muted"><input type="checkbox" checked={showOld} onChange={(e) => setShowOld(e.target.checked)} /> Show old versions</label>}>
         <div className="row">
-          <Select value={sel} onChange={setSel}>{forms.map((i) => <option key={i.id} value={i.id}>{label(i)}</option>)}</Select>
+          <Select value={ttF} onChange={(v) => { setTtF(v); const first = newestFirst(db.instruments.filter((i) => (showOld || i.active !== false) && (!v || i.targetType === v))).at(-1); if (first) setSel(first.id); }} aria-label="Who is evaluated"><option value="">Everyone evaluated</option>{Object.entries(TARGET_TYPES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</Select>
+          <Select value={sel} onChange={setSel} className="wide">{forms.map((i) => <option key={i.id} value={i.id}>{label(i)}</option>)}</Select>
           {ins && ins.active !== false && <button className="ghost" onClick={async () => { const r = await act('reviseForm', { instrumentId: ins.id }); if (r) { setSel(r.id); setMsg(`Version ${r.version} created. Edit it below; evaluations already submitted keep the old version.`); } }}>Create new version</button>}
         </div>
         {ins && (
@@ -347,30 +369,65 @@ export function Forms() {
             {locked
               ? <div className="note warn">{ins.active === false ? 'This is an old version, kept with the results that used it. It can\'t be changed.' : 'This form already has submitted evaluations, so it is locked to keep past results unchanged. Click "Create new version" to make changes.'}</div>
               : <p className="muted">Dropdown choices save as soon as you pick them; item weights save when you leave the box. Evaluations already submitted keep the weights they were submitted with.</p>}
-            <table>
-              <thead><tr><th>Criterion</th><th>Category</th><th>Item weight</th><th>Counts</th><th /></tr></thead>
-              <tbody>{ins.items.map((it) => (
-                <tr key={it.criterionId}>
-                  <td>{db.criteria.find((c) => c.id === it.criterionId)?.text}</td>
-                  <td>{locked ? itemCategory(it) : <CategoryPicker value={it.category} options={allCats} onSave={(category) => act('setFormItemCategory', { instrumentId: ins.id, criterionId: it.criterionId, category })} />}</td>
-                  <td>{locked ? it.weight : <SaveInput type="number" min="0" step="0.5" value={it.weight} onSave={(weight) => act('setFormItemWeight', { instrumentId: ins.id, criterionId: it.criterionId, weight })} />}</td>
-                  <td className="muted">{effTotal ? pct(eff[it.criterionId] / effTotal) : '—'}</td>
-                  <td>{!locked && <button className="ghost" onClick={() => act('removeFormItem', { instrumentId: ins.id, criterionId: it.criterionId })}>Remove</button>}</td>
-                </tr>
-              ))}</tbody>
-            </table>
-            <h4>Category weights</h4>
-            <p className="muted">Group items into categories (e.g. "Management of the Teaching and Learning Process" 60% and "Assessment of Learners and Learning Environment" 40%). If every category has a weight, each category counts that share of the score. Leave them blank to use the item weights only.</p>
             <div className="row">
-              {cats.map((c) => (
-                <label key={c} className="inline">{c}{' '}
-                  {locked ? <b>{ins.categories?.[c] ?? '—'}%</b> : <PercentPicker value={ins.categories?.[c]} onSave={(weight) => act('setFormCategoryWeight', { instrumentId: ins.id, category: c, weight })} />}
-                </label>
-              ))}
+              <input placeholder="Find a question on this form…" value={find} onChange={(e) => setFind(e.target.value)} className="wide" />
+              <button className="ghost" onClick={() => setOpen(open.length === cats.length ? [] : cats)}>{open.length === cats.length ? 'Hide all questions' : 'Show all questions'}</button>
             </div>
+            <table className="form-cats">
+              <thead><tr><th>Category</th><th>Weight</th><th>Questions</th><th /></tr></thead>
+              <tbody>
+                {cats.map((c) => {
+                  const items = ins.items.filter((it) => itemCategory(it) === c);
+                  const shown = q ? items.filter((it) => critText(it.criterionId).toLowerCase().includes(q)) : items;
+                  const isOpen = q ? shown.length > 0 : open.includes(c);
+                  if (q && !shown.length) return null;
+                  return [
+                    <tr key={c} className={`cat-head ${isOpen ? 'on' : ''}`}>
+                      <td><button className="link" onClick={() => toggle(c)}>{isOpen ? '▾' : '▸'} {c}</button></td>
+                      <td>{locked ? <b>{ins.categories?.[c] != null ? `${ins.categories[c]}%` : '—'}</b> : <PercentPicker value={ins.categories?.[c]} onSave={(weight) => act('setFormCategoryWeight', { instrumentId: ins.id, category: c, weight })} />}</td>
+                      <td>{q ? `${shown.length} of ${items.length}` : items.length}</td>
+                      <td><button className="ghost" onClick={() => toggle(c)}>{isOpen ? 'Hide' : 'Show questions'}</button></td>
+                    </tr>,
+                    isOpen && (
+                      <tr key={`${c}-q`} className="cat-body"><td colSpan={4}>
+                        <ol className="form-qs">
+                          {shown.map((it) => {
+                            const cr = db.criteria.find((x) => x.id === it.criterionId);
+                            return (
+                              <li key={it.criterionId}>
+                                <div className="form-q-text">{cr?.text}
+                                  {cr?.levels && <div className="muted small">{cr.levels.map((l, k) => `${k + 1} = ${l}`).join(' · ')}</div>}
+                                  <span className="muted small"> · counts {effTotal ? pct(eff[it.criterionId] / effTotal) : '—'} of the score</span>
+                                </div>
+                                {!locked && (
+                                  <div className="form-q-tools">
+                                    <label className="inline small muted">Move to <CategoryPicker value={it.category} options={allCats} onSave={(category) => act('setFormItemCategory', { instrumentId: ins.id, criterionId: it.criterionId, category })} /></label>
+                                    <label className="inline small muted">Weight <SaveInput type="number" min="0" step="0.5" className="tiny" value={it.weight} onSave={(weight) => act('setFormItemWeight', { instrumentId: ins.id, criterionId: it.criterionId, weight })} /></label>
+                                    <button className="ghost" onClick={() => act('removeFormItem', { instrumentId: ins.id, criterionId: it.criterionId })}>Remove</button>
+                                  </div>
+                                )}
+                              </li>
+                            );
+                          })}
+                        </ol>
+                        {!locked && !q && (
+                          <Select value="" onChange={(v) => v && act('addFormItem', { instrumentId: ins.id, criterionId: v, category: c === 'General' ? '' : c })}>
+                            <option value="">+ Add a question to "{c}"…</option>
+                            {db.criteria.filter((x) => !used.has(x.id)).map((x) => <option key={x.id} value={x.id}>{x.text}</option>)}
+                          </Select>
+                        )}
+                      </td></tr>
+                    ),
+                  ];
+                })}
+                <tr className="cat-total"><td>Total</td><td>{cats.some((c) => ins.categories?.[c] != null) ? <b>{catTotal}%</b> : <span className="muted">no category weights</span>} {catTotal !== 100 && cats.some((c) => ins.categories?.[c] != null) && <Badge kind="overdue">should be 100%</Badge>}</td><td>{ins.items.length}</td><td /></tr>
+              </tbody>
+            </table>
+            {q && !cats.some((c) => ins.items.some((it) => itemCategory(it) === c && critText(it.criterionId).toLowerCase().includes(q))) && <p className="muted">No question on this form matches "{find}".</p>}
+            <p className="muted small">Each category counts its weight of the score, shared equally by its questions (unless you change a question's weight). Click a category to see, move or remove its questions.</p>
             {!locked && (
               <Select value="" onChange={(v) => v && act('addFormItem', { instrumentId: ins.id, criterionId: v })}>
-                <option value="">Add criterion to this form…</option>
+                <option value="">+ Add a question (no category)…</option>
                 {db.criteria.filter((c) => !used.has(c.id)).map((c) => <option key={c.id} value={c.id}>{c.text}</option>)}
               </Select>
             )}
@@ -382,12 +439,13 @@ export function Forms() {
           <Select value={nf.targetType} onChange={(v) => setNf({ ...nf, targetType: v, group: groupsFor(v)[0] })}>{Object.entries(TARGET_TYPES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</Select>
           <Select value={nf.group} onChange={(v) => setNf({ ...nf, group: v })}>{groupsFor(nf.targetType).map((g) => <option key={g} value={g}>{GROUPS[g]}</option>)}</Select>
           <Select value={nf.dept} onChange={(v) => setNf({ ...nf, dept: v })}><option value="">All departments</option>{db.departments.map((d) => <option key={d.id} value={d.id}>Only {d.name}</option>)}</Select>
+          <Select value={nf.variant} onChange={(v) => setNf({ ...nf, variant: v })}>{Object.entries(CLASS_TYPES).map(([k, l]) => <option key={k} value={k}>{k ? `Only for: ${l}` : 'Any type of class'}</option>)}</Select>
           <button onClick={async () => { const r = await act('createForm', nf); if (r) setSel(r.id); }}>Create empty form</button>
         </div>
-        <p className="muted">A department-specific form (e.g. for Nursing) is used for that department instead of the general one.</p>
+        <p className="muted">A department-specific form (e.g. for Nursing) is used for that department instead of the general one. A form for a type of class (e.g. laboratory) is used for the classes set to that type under Class lists.</p>
       </Card>
       <Card title="Criteria bank">
-        <p className="muted">Criteria text below is sample content. Criteria already answered in submitted evaluations can't be reworded or deleted, so past reports stay exactly as they were.</p>
+        <p className="muted">The criteria come from UB's evaluation tools. Criteria already answered in submitted evaluations can't be reworded or deleted, so past reports stay exactly as they were.</p>
         <div className="row"><input className="wide" placeholder="New criterion" value={newCrit} onChange={(e) => setNewCrit(e.target.value)} />
           <button onClick={async () => { if (newCrit.trim() && await act('addCriterion', { text: newCrit })) setNewCrit(''); }}>Add criterion</button></div>
         <table><tbody>

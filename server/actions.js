@@ -5,12 +5,13 @@ import { randomInt } from 'node:crypto';
 import {
   GROUPS, TARGET_TYPES, STAGES, ROLES, POSITIONS, needsDept, uid, userById, periodById, targetType, evaluatorGroups,
   instrumentFor, formForTask, formUsed, effectiveWeights, generateTasks, runThresholdCheck, participationAlerts, sendReminders,
-  isInstitutionalEmail, INSTITUTION_DOMAIN, notify, directors, pendingApprovals, resultHeads, hrUsers, isEvaluatee, isTeacher, isNursingDept, stageAtLeast, UB_DEPARTMENTS, missingUbDepartments,
+  isInstitutionalEmail, INSTITUTION_DOMAIN, notify, directors, pendingApprovals, resultHeads, hrUsers, isEvaluatee, isTeacher, isNursingDept, stageAtLeast, UB_DEPARTMENTS, missingUbDepartments, MAX_RATING, CLASS_TYPES,
 } from '../src/lib/logic.js';
 import { HttpError } from './http.js';
 import { encryptText, decryptText, hashPassword, verifyPassword } from './secrets.js';
 import { deleteUserSessions, addAudit } from './db.js';
 import { seedDatabase } from './seed.js';
+import { installUbForms, UB_FORM_MARK } from '../src/lib/ubInstall.js';
 
 const HR = ['HR'];
 const DIR = ['DIR'];
@@ -37,14 +38,14 @@ const period = (db, id) => find(db.periods, id, 'Evaluation period');
 const instrument = (db, id) => find(db.instruments, id, 'Form');
 const clone = (x) => JSON.parse(JSON.stringify(x));
 
-/** Keep only answers for this form's items, each a whole number 1–5. */
+/** Keep only answers for this form's items, each a whole number 1–4 (UB's 4-point scale). */
 function cleanAnswers(answers, ins) {
   const out = {};
   if (answers && typeof answers === 'object') {
     for (const it of ins.items) {
       const v = answers[it.criterionId];
       if (v == null) continue;
-      if (!Number.isInteger(v) || v < 1 || v > 5) fail('Each answer must be a rating from 1 to 5.');
+      if (!Number.isInteger(v) || v < 1 || v > MAX_RATING) fail(`Each answer must be a rating from 1 to ${MAX_RATING}.`);
       out[it.criterionId] = v;
     }
   }
@@ -287,6 +288,16 @@ export const actions = {
       if (next.facultyId !== s.facultyId && db.tasks.some((t) => t.sectionId === s.id)) fail('This class already has evaluation tasks, so its teacher can\'t be changed. Create a new section instead.', 409);
       if (next.dept !== s.dept) s.studentIds = s.studentIds.filter((id) => userById(db, id)?.dept === next.dept);
       Object.assign(s, next);
+    },
+  },
+  /** Lecture, laboratory or clinical: decides which UB tool the students (and the dean) answer. */
+  setClassType: {
+    roles: HR,
+    run(db, { sectionId, classType }) {
+      const s = find(db.sections, sectionId, 'Class section');
+      const v = classType || '';
+      if (!(v in CLASS_TYPES)) fail('Choose a type of class from the list.');
+      if (v) s.classType = v; else delete s.classType;
     },
   },
   deleteSection: {
@@ -550,11 +561,13 @@ export const actions = {
   },
   createForm: {
     roles: HR,
-    run(db, { targetType: tt, group, dept }) {
+    run(db, { targetType: tt, group, dept, variant }) {
       if (!(tt in db.rules) || !(group in db.rules[tt])) fail('Choose a valid evaluated role and evaluator group.');
       const d = dept ? find(db.departments, dept, 'Department').id : null;
-      if (db.instruments.some((i) => i.active !== false && i.targetType === tt && i.group === group && (i.dept || null) === d)) fail('A form already exists for this pairing. Edit it, or create a new version.', 409);
-      const i = { id: uid('i'), name: 'custom', targetType: tt, group, dept: d, version: 1, active: true, categories: {}, items: [] };
+      const v = variant || null;
+      if (v && !(v in CLASS_TYPES)) fail('Choose a type of class from the list.');
+      if (db.instruments.some((i) => i.active !== false && i.targetType === tt && i.group === group && (i.dept || null) === d && (i.variant || null) === v)) fail('A form already exists for this pairing. Edit it, or create a new version.', 409);
+      const i = { id: uid('i'), name: 'custom', targetType: tt, group, dept: d, ...(v && { variant: v }), version: 1, active: true, categories: {}, items: [] };
       db.instruments.push(i);
       return { id: i.id };
     },
@@ -565,7 +578,7 @@ export const actions = {
     run(db, { instrumentId }) {
       const old = instrument(db, instrumentId);
       if (old.active === false) fail('This is already an old version.', 409);
-      const versions = db.instruments.filter((i) => i.targetType === old.targetType && i.group === old.group && (i.dept || null) === (old.dept || null));
+      const versions = db.instruments.filter((i) => i.targetType === old.targetType && i.group === old.group && (i.dept || null) === (old.dept || null) && (i.variant || null) === (old.variant || null));
       const i = { ...clone(old), id: uid('i'), version: Math.max(...versions.map((v) => v.version || 1)) + 1, active: true };
       old.active = false;
       db.instruments.push(i);
@@ -647,7 +660,7 @@ export const actions = {
         if (!u || !isEvaluatee(u)) return errors.push(`Row ${n}: "${who}" is not an evaluated person's account.`);
         if (!label) return errors.push(`Row ${n}: the period label is missing.`);
         const v = Number(score);
-        if (!Number.isFinite(v) || v < 1 || v > 5) return errors.push(`Row ${n}: the final score must be from 1 to 5.`);
+        if (!Number.isFinite(v) || v < 1 || v > MAX_RATING) return errors.push(`Row ${n}: the final score must be from 1 to ${MAX_RATING}.`);
         if (db.pastResults.some((r) => r.userId === u.id && r.periodLabel.toLowerCase() === label.toLowerCase())) return errors.push(`Row ${n}: ${u.name} already has a record for "${label}".`);
         db.pastResults.push({ id: uid('pr'), userId: u.id, periodLabel: label.slice(0, 80), final: Math.round(v * 100) / 100, note: rest.join(', ').slice(0, 200) || null, importedAt: new Date().toISOString() });
         added++;
@@ -717,7 +730,8 @@ export const actions = {
       for (const u of db.users) u.dept = null;
       // departments go back to the UB list (HR can still add, rename or remove them)
       Object.assign(db, { sections: [], periods: [], tasks: [], requests: [], pastResults: [], notifications: [], departments: structuredClone(UB_DEPARTMENTS) });
-      db.instruments = db.instruments.filter((i) => !i.dept && i.active !== false);
+      db.instruments = db.instruments.filter((i) => (!i.dept || db.departments.some((d) => d.id === i.dept)) && i.active !== false);
+      if (!db.instruments.some((i) => i.name.includes(UB_FORM_MARK))) installUbForms(db);
       return { removed };
     },
   },

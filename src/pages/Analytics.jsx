@@ -56,7 +56,7 @@ export default function Analytics() {
     <>
       <Card title="Trend over time" actions={<label className="inline">Department <Select value={dept} onChange={setDept}><option value="ALL">All</option>{db.departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</Select></label>}>
         <p className="muted">Average final score of personnel with a final score. Only periods released to you are shown. The dashed grey line shows earlier records imported by HR (from before evalU); they are ordered by their period label.</p>
-        <div className="chart"><ResponsiveContainer><LineChart data={trend}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="period" /><YAxis domain={[1, 5]} /><Tooltip /><Legend /><Line type="monotone" dataKey="score" name="evalU periods" stroke="#b3001b" strokeWidth={2} connectNulls /><Line type="monotone" dataKey="earlier" name="Earlier records" stroke="#6b6b6b" strokeWidth={2} strokeDasharray="5 4" connectNulls /></LineChart></ResponsiveContainer></div>
+        <div className="chart"><ResponsiveContainer><LineChart data={trend}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="period" /><YAxis domain={[1, 4]} /><Tooltip /><Legend /><Line type="monotone" dataKey="score" name="evalU periods" stroke="#b3001b" strokeWidth={2} connectNulls /><Line type="monotone" dataKey="earlier" name="Earlier records" stroke="#6b6b6b" strokeWidth={2} strokeDasharray="5 4" connectNulls /></LineChart></ResponsiveContainer></div>
       </Card>
       <Card title="Comparison across departments" actions={<PeriodPicker periods={periods} value={pid} onChange={setPid} />}>
         <div className="chart"><ResponsiveContainer><BarChart data={compare}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="department" /><YAxis domain={[0, 5]} /><Tooltip /><Legend /><Bar dataKey="Average final score" fill="#b3001b" /></BarChart></ResponsiveContainer></div>
@@ -64,7 +64,7 @@ export default function Analytics() {
           <tbody>{compare.map((c) => <tr key={c.department}><td>{c.department}</td><td>{c['Average final score'] ?? '—'}</td><td>{c['Evaluated (complete)']}</td></tr>)}</tbody></table>
       </Card>
       <Card title="Item-level results" actions={<span className="muted">{dept === 'ALL' ? 'All departments' : db.departments.find((d) => d.id === dept)?.name} · {periods[idx]?.name}</span>}>
-        <p className="muted">Each evaluation item, lowest first. Items averaging below <b>{LOW_ITEM.toFixed(2)}</b> (below "Very Satisfactory") are flagged; <b>consistently low</b> means it was also below {LOW_ITEM.toFixed(2)} in the previous period. Use these to plan training. Change the department above and the period in the comparison card.</p>
+        <p className="muted">Each evaluation item, lowest first. Items averaging below <b>{LOW_ITEM.toFixed(2)}</b> (below "Satisfactory") are flagged; <b>consistently low</b> means it was also below {LOW_ITEM.toFixed(2)} in the previous period. Use these to plan training. Change the department above and the period in the comparison card.</p>
         {items.length === 0 ? <p className="muted">No item results for this selection.</p> : (
           <table className="items">
             <thead><tr><th>Item</th><th>Evaluator group</th><th>Mean</th><th>Previous period</th><th>Answers</th><th>Flag</th></tr></thead>
