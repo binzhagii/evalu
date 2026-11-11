@@ -513,3 +513,16 @@ details.add-form { padding:14px 18px; }
 details.add-form > summary { cursor:pointer; list-style:none; }
 details.add-form > summary::-webkit-details-marker { display:none; }
 details.add-form[open] > summary { margin-bottom:12px; }
+/* confirmation dialog (no animation, on purpose) */
+.ask-backdrop { position:fixed; inset:0; z-index:100; background:rgba(15,17,20,.55); display:flex; align-items:center; justify-content:center; padding:16px; }
+.ask-box { background:var(--card); color:var(--fg); width:100%; max-width:440px; border-radius:14px; border-top:5px solid var(--pri); box-shadow:0 20px 50px rgba(0,0,0,.28); padding:24px 24px 20px; text-align:center; }
+.ask-box.is-danger { border-top-color:var(--bad); }
+.ask-icon { width:52px; height:52px; margin:0 auto 12px; border-radius:50%; display:flex; align-items:center; justify-content:center; background:var(--pri-l); color:var(--pri); }
+.ask-box.is-danger .ask-icon { background:var(--bad-l); color:var(--bad); }
+.ask-box h2 { font-size:18px; margin:0 0 8px; }
+.ask-box p { margin:0 0 20px; color:var(--mut); font-size:14.5px; line-height:1.5; white-space:pre-line; }
+.ask-actions { display:flex; gap:10px; justify-content:center; flex-wrap:wrap; }
+.ask-actions button { min-width:130px; }
+.ask-actions .ask-danger { background:var(--bad); border-color:var(--bad); color:#fff; }
+.ask-actions .ask-danger:hover { background:#8f1c13; }
+@media print { .ask-backdrop { display:none !important; } }

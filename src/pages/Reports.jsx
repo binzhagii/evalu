@@ -4,7 +4,7 @@ import {
   GROUPS, TARGET_TYPES, computeAll, computeTarget, canSeeAll, canSeeComments, canSeeDept, deptName, userById, sectionStats,
   itemStats, formOfTask, itemCategory, hasFinal, pendingApprovals, isEvaluatee, stageAtLeast, targetsOf, commentParts, targetType,
 } from '../lib/logic';
-import { Card, Badge, RuleNote, PeriodPicker, Select, Meter, Stat, Stats, Empty, Avatar, ItemTable, PrintButton, fmt, pct, newestFirst, usePages } from '../ui';
+import { Card, Badge, RuleNote, PeriodPicker, Select, Meter, Stat, Stats, Empty, Avatar, ItemTable, PrintButton, fmt, pct, newestFirst, usePages, ask } from '../ui';
 import { ReleaseSteps } from './Overview';
 import { UbPrints, CommentText, SummarySheet, ratingWord, twoDp, UbPacket } from './CompReport';
 
@@ -157,7 +157,7 @@ export function ApprovalPanel({ period }) {
         {period.releaseStage === 'dir' && (waiting.length ? `Waiting for: ${waiting.map((u) => u.name).join(', ')}.` : 'All approved: HR can release the results to faculty.')}
       </div>
       {user.role === 'DIR' && period.releaseStage === 'dir' && !mine && (
-        <button onClick={() => { if (confirm(`Approve the results for ${period.name} for release to faculty?`)) act('approveRelease', { periodId: period.id }); }}>Approve for release to faculty</button>
+        <button onClick={async () => { if (await ask('Approve for release to faculty?', `You approve the results of ${period.name}. HR can then release them to faculty.`, { ok: 'Approve' })) act('approveRelease', { periodId: period.id }); }}>Approve for release to faculty</button>
       )}
     </div>
   );
@@ -179,7 +179,7 @@ export function PastRecords({ userId }) {
           <tbody>{rows.map((r) => (
             <tr key={r.id}>
               {!userId && <td>{userById(db, r.userId)?.name}</td>}<td>{r.periodLabel}</td><td><b>{fmt(r.final)}</b></td><td className="muted">{r.note || '—'}</td>
-              {isHR && <td><button className="ghost" onClick={() => { if (confirm('Delete this imported record?')) act('deletePastResult', { id: r.id }); }}>Delete</button></td>}
+              {isHR && <td><button className="ghost" onClick={async () => { if (await ask('Delete this imported record?', 'This earlier final score is removed from the records.', { ok: 'Delete record', danger: true })) act('deletePastResult', { id: r.id }); }}>Delete</button></td>}
             </tr>
           ))}</tbody>
         </table>

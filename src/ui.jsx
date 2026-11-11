@@ -1,4 +1,4 @@
-import { createContext, useContext, useState } from 'react';
+import { createContext, useContext, useEffect, useState } from 'react';
 import { LOW_ITEM } from './lib/logic';
 
 /** go('reports') switches the page (provided by the app shell). */
@@ -239,5 +239,44 @@ export function SaveInput({ value, onSave, ...p }) {
   return (
     <input {...p} value={v} onChange={(e) => setV(e.target.value)} onBlur={commit}
       onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') setV(value ?? ''); }} />
+  );
+}
+
+/* ---------- confirmation dialog (instead of the browser's plain confirm box) ---------- */
+let openAsk = null;
+/**
+ * Ask before something important happens:  if (await ask('Delete section?', 'SEC-A1 will be removed.', { ok: 'Delete', danger: true })) …
+ * Resolves true only when the person clicks the action button (Cancel, Esc or clicking outside = false).
+ */
+export function ask(title, text = '', { ok = 'Yes, continue', danger = false } = {}) {
+  return new Promise((resolve) => {
+    if (openAsk) openAsk({ title, text, ok, danger, resolve });
+    else resolve(window.confirm(text ? `${title}\n\n${text}` : title)); // fallback if the dialog is not on the page
+  });
+}
+/** Put once in the app; shows the dialog that ask() opens. */
+export function AskHost() {
+  const [d, setD] = useState(null);
+  useEffect(() => { openAsk = setD; return () => { openAsk = null; }; }, []);
+  useEffect(() => {
+    if (!d) return undefined;
+    const key = (e) => { if (e.key === 'Escape') { d.resolve(false); setD(null); } };
+    window.addEventListener('keydown', key);
+    return () => window.removeEventListener('keydown', key);
+  }, [d]);
+  if (!d) return null;
+  const done = (v) => { d.resolve(v); setD(null); };
+  return (
+    <div className="ask-backdrop" onClick={() => done(false)}>
+      <div className={`ask-box ${d.danger ? 'is-danger' : ''}`} role="alertdialog" aria-modal="true" aria-labelledby="ask-title" onClick={(e) => e.stopPropagation()}>
+        <div className="ask-icon"><Icon name="alert" size={26} /></div>
+        <h2 id="ask-title">{d.title}</h2>
+        {d.text && <p>{d.text}</p>}
+        <div className="ask-actions">
+          <button className="ghost" autoFocus onClick={() => done(false)}>Cancel</button>
+          <button className={d.danger ? 'ask-danger' : ''} onClick={() => done(true)}>{d.ok}</button>
+        </div>
+      </div>
+    </div>
   );
 }

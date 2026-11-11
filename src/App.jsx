@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { AppProvider, useApp } from './lib/store';
 import { ROLES, POSITIONS, isTeacher } from './lib/logic';
-import { Icon, Avatar, NavContext } from './ui';
+import { Icon, Avatar, NavContext, AskHost } from './ui';
 import { HROverview, VpOverview } from './pages/Overview';
 import Tasks from './pages/Tasks';
 import { Periods, Assignments, Forms, Weights, Monitor, Classes, AuditLog } from './pages/HR';
@@ -181,5 +181,5 @@ function Shell() {
 }
 
 export default function App() {
-  return <AppProvider><Shell /></AppProvider>;
+  return <AppProvider><Shell /><AskHost /></AppProvider>;
 }

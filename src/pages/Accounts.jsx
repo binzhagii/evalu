@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useApp } from '../lib/store';
 import { ROLES, POSITIONS, needsDept, deptName, missingUbDepartments, isNursingDept, nursingDepts } from '../lib/logic';
-import { Card, Select, Badge, Avatar, Empty, SaveInput, newestFirst, usePages } from '../ui';
+import { Card, Select, Badge, Avatar, Empty, SaveInput, newestFirst, usePages, ask } from '../ui';
 
 /* ---------------- change your own password ---------------- */
 export function PasswordForm({ onDone, submitLabel = 'Change password', askCurrent = true }) {
@@ -194,7 +194,7 @@ function Departments() {
               <td><Select value={d.kind} onChange={(v) => act('updateDepartment', { deptId: d.id, kind: v })}><option value="college">College</option><option value="basic">Basic Education</option></Select></td>
               <td>{people(d.id)}</td>
               <td><button className="ghost" disabled={inUse(d.id)} title={inUse(d.id) ? 'People, classes or forms still belong to this department' : ''}
-                onClick={() => { if (confirm(`Delete ${d.name}?`)) act('deleteDepartment', { deptId: d.id }); }}>Delete</button></td>
+                onClick={async () => { if (await ask(`Delete ${d.name}?`, 'This department is removed from the list.', { ok: 'Delete department', danger: true })) act('deleteDepartment', { deptId: d.id }); }}>Delete</button></td>
             </tr>
           ))}</tbody>
         </table>
@@ -226,13 +226,13 @@ export function Accounts() {
     if (await act('updateUser', { userId: editing, ...f })) { setEditing(null); setMsg('Account updated.'); }
   };
   const reset = async (u) => {
-    if (!confirm(`Give ${u.name} a new temporary password? Their current password stops working and they are signed out.`)) return;
+    if (!(await ask('Reset password?', `Give ${u.name} a new temporary password? Their current password stops working and they are signed out.`, { ok: 'Reset password' }))) return;
     setMsg('');
     const r = await act('resetPassword', { userId: u.id });
     if (r) setTemp(r);
   };
   const setActive = async (u, active) => {
-    if (!active && !confirm(`Deactivate ${u.name}? They are signed out and can't sign in until reactivated. Their past evaluations are kept.`)) return;
+    if (!active && !(await ask(`Deactivate ${u.name}?`, "They are signed out and can't sign in until reactivated. Their past evaluations are kept.", { ok: 'Deactivate', danger: true }))) return;
     setMsg('');
     if (await act('setUserActive', { userId: u.id, active })) setMsg(`${u.name} was ${active ? 'reactivated' : 'deactivated'}.`);
   };

@@ -9,7 +9,7 @@ import {
 const classTypesFor = (teacher) => (teacher?.position === 'ci'
   ? [['', 'Clinical area (hospital, community clinic)'], ['skills', CLASS_TYPES.skills]]
   : Object.entries(CLASS_TYPES).filter(([k]) => k !== 'skills'));
-import { Card, StatusBadge, RuleNote, PeriodPicker, Select, Badge, SaveInput, Meter, Empty, pct, newestFirst, usePages } from '../ui';
+import { Card, StatusBadge, RuleNote, PeriodPicker, Select, Badge, SaveInput, Meter, Empty, pct, newestFirst, usePages, ask } from '../ui';
 
 const scopeText = (db, p) => (p.depts?.length ? p.depts.map((d) => deptName(db, d)).join(', ') : 'All departments');
 
@@ -71,13 +71,13 @@ export function Periods() {
                   <td><Badge kind={p.status === 'open' ? 'pending' : 'completed'}>{p.status}</Badge></td>
                   <td>{STAGE_LABEL[p.releaseStage]}{p.releaseStage === 'dir' && <><br /><span className="muted">{waiting.length ? `Waiting for approval: ${waiting.map((u) => u.name).join(', ')}` : 'All VPs approved'}</span></>}</td>
                   <td className="row">
-                    {p.status === 'open' && <button onClick={() => { if (confirm(`Close ${p.name}? Classes where fewer than half of the class plus one answered will be excluded, and everyone concerned is notified.`)) run('closePeriod', p.id, (r) => `${p.name} closed. ${r.flagged} class(es) were excluded (below half + 1); the faculty, department heads and HR were notified.`); }}>Close period</button>}
-                    {p.status === 'open' && <button className="ghost" onClick={() => run('checkThreshold', p.id, (r) => (r.flagged ? `${r.flagged} class(es) are at or below half. The faculty, their department heads and HR were notified.` : 'Every class has enough responses so far.'))}>Send participation alerts</button>}
-                    {p.status === 'closed' && p.releaseStage === 'hr' && <button className="ghost" onClick={() => run('reopenPeriod', p.id)}>Reopen</button>}
-                    {nextStage && p.status === 'closed' && nextStage === 'dir' && <button onClick={() => run('releaseNext', p.id, 'Results sent to the VPs for review and approval. They were notified.')}>Send to VPs for approval</button>}
-                    {nextStage === 'faculty' && <button disabled={waiting.length > 0} title={waiting.length ? 'Every VP must approve first' : ''} onClick={() => run('releaseNext', p.id, 'Results released to faculty. Each person was notified.')}>Release to faculty</button>}
+                    {p.status === 'open' && <button onClick={async () => { if (await ask(`Close ${p.name}?`, 'Classes where fewer than half of the class plus one answered will be excluded, and everyone concerned is notified.', { ok: 'Close period' })) run('closePeriod', p.id, (r) => `${p.name} closed. ${r.flagged} class(es) were excluded (below half + 1); the faculty, department heads and HR were notified.`); }}>Close period</button>}
+                    {p.status === 'open' && <button className="ghost" onClick={async () => (await ask('Send participation alerts?', 'Teachers and department heads of classes below half + 1 are notified now.', { ok: 'Send alerts' })) && run('checkThreshold', p.id, (r) => (r.flagged ? `${r.flagged} class(es) are at or below half. The faculty, their department heads and HR were notified.` : 'Every class has enough responses so far.'))}>Send participation alerts</button>}
+                    {p.status === 'closed' && p.releaseStage === 'hr' && <button className="ghost" onClick={async () => (await ask(`Reopen ${p.name}?`, 'Evaluators can answer again until you close it.', { ok: 'Reopen' })) && run('reopenPeriod', p.id)}>Reopen</button>}
+                    {nextStage && p.status === 'closed' && nextStage === 'dir' && <button onClick={async () => (await ask('Send results to the VPs?', `The results of ${p.name} go to the VPs for review and approval. They will be notified.`, { ok: 'Send to VPs' })) && run('releaseNext', p.id, 'Results sent to the VPs for review and approval. They were notified.')}>Send to VPs for approval</button>}
+                    {nextStage === 'faculty' && <button disabled={waiting.length > 0} title={waiting.length ? 'Every VP must approve first' : ''} onClick={async () => (await ask('Release results to faculty?', `Every person will see their own results for ${p.name} and be notified.`, { ok: 'Release to faculty' })) && run('releaseNext', p.id, 'Results released to faculty. Each person was notified.')}>Release to faculty</button>}
                     {p.status === 'open' && <span className="muted">release after closing</span>}
-                    {p.releaseStage !== 'hr' && <button className="ghost" onClick={() => run('withdrawRelease', p.id)}>Withdraw one step</button>}
+                    {p.releaseStage !== 'hr' && <button className="ghost" onClick={async () => (await ask('Withdraw the last release step?', `The people who could see the results of ${p.name} will no longer see them.`, { ok: 'Withdraw', danger: true })) && run('withdrawRelease', p.id)}>Withdraw one step</button>}
                   </td>
                 </tr>
               );
@@ -119,12 +119,12 @@ export function Periods() {
       <Card title="Start over">
         <div className="row">
           <button className="danger" onClick={async () => {
-            if (!confirm('START FROM SCRATCH?\n\nThis deletes every account except HR, and all classes, evaluation periods, evaluations, results, notifications and imported records. Departments go back to the University of Baguio list.\n\nThe evaluation forms, questions and weights are kept. This cannot be undone.')) return;
-            if (!confirm('Are you sure? Everything except the HR accounts, the UB departments and the forms will be gone.')) return;
+            if (!(await ask('Start from scratch?', 'This deletes every account except HR, and all classes, evaluation periods, evaluations, results, notifications and imported records. Departments go back to the University of Baguio list.\n\nThe evaluation forms, questions and weights are kept. This cannot be undone.', { ok: 'Delete everything', danger: true }))) return;
+            if (!(await ask('Are you really sure?', 'Everything except the HR accounts, the UB departments and the forms will be gone.', { ok: 'Yes, start from scratch', danger: true }))) return;
             const r = await act('startFromScratch');
             if (r) setMsg(`Done. ${r.removed} account(s) and all records were deleted. Next: add the accounts under Accounts (the UB departments are ready), then your class lists, then create an evaluation period.`);
           }}>Start from scratch (keep only HR)</button>
-          <button className="ghost" onClick={async () => { if (confirm('Replace ALL data with the sample (demo) data? Everything you entered is replaced.') && await act('resetData')) setMsg('All data was replaced with the sample data.'); }}>Load sample data</button>
+          <button className="ghost" onClick={async () => { if (await ask('Load the sample data?', 'ALL data is replaced with the sample (demo) data. Everything you entered is replaced.', { ok: 'Replace with sample data', danger: true }) && await act('resetData')) setMsg('All data was replaced with the sample data.'); }}>Load sample data</button>
         </div>
         <p className="muted"><b>Start from scratch</b> empties the system for real use: only HR accounts stay, with their passwords, plus the UB departments and the evaluation forms, questions and weights, so you don't have to build them again. <b>Load sample data</b> brings back the demo accounts (password demo1234). The audit log is never erased.</p>
       </Card>
@@ -194,7 +194,7 @@ export function Assignments() {
               <tr key={t.id}>
                 <td>{userById(db, t.evaluatorId).name}</td><td>{GROUPS[t.group]}</td><td>{userById(db, t.targetId).name}</td>
                 <td>{db.sections.find((x) => x.id === t.sectionId)?.code || '—'}</td><td><StatusBadge s={taskStatus(db, t)} /></td>
-                <td>{!t.response && <button className="ghost" onClick={() => act('removeTask', { taskId: t.id })}>Remove</button>}</td>
+                <td>{!t.response && <button className="ghost" onClick={async () => (await ask('Remove this task?', `${userById(db, t.evaluatorId).name} will no longer evaluate ${userById(db, t.targetId).name} in this period.`, { ok: 'Remove task', danger: true })) && act('removeTask', { taskId: t.id })}>Remove</button>}</td>
               </tr>
             ))}
           </tbody>
@@ -282,7 +282,7 @@ export function Classes() {
                 </Select>
               )}</td>
               <td>{isExemptSection(s) ? <Badge kind="muted">not evaluated</Badge> : <Badge kind="completed">yes</Badge>}</td>
-              <td>{!used.has(s.id) && <button className="ghost" onClick={() => { if (confirm(`Delete section ${s.code}?`)) act('deleteSection', { sectionId: s.id }); }}>Delete</button>}</td>
+              <td>{!used.has(s.id) && <button className="ghost" onClick={async () => { if (await ask(`Delete section ${s.code}?`, `${s.code} · ${s.subject} and its class list will be removed.`, { ok: 'Delete section', danger: true })) act('deleteSection', { sectionId: s.id }); }}>Delete</button>}</td>
             </tr>
           ))}</tbody>
         </table>
@@ -431,7 +431,7 @@ export function Forms() {
                                   <div className="form-q-tools">
                                     <label className="inline small muted">Move to <CategoryPicker value={it.category} options={allCats} onSave={(category) => act('setFormItemCategory', { instrumentId: ins.id, criterionId: it.criterionId, category })} /></label>
                                     <label className="inline small muted">Weight <SaveInput type="number" min="0" step="0.5" className="tiny" value={it.weight} onSave={(weight) => act('setFormItemWeight', { instrumentId: ins.id, criterionId: it.criterionId, weight })} /></label>
-                                    <button className="ghost" onClick={() => act('removeFormItem', { instrumentId: ins.id, criterionId: it.criterionId })}>Remove</button>
+                                    <button className="ghost" onClick={async () => (await ask('Remove this question from the form?', `"${cr?.text || ''}"`, { ok: 'Remove question', danger: true })) && act('removeFormItem', { instrumentId: ins.id, criterionId: it.criterionId })}>Remove</button>
                                   </div>
                                 )}
                               </li>
@@ -481,7 +481,7 @@ export function Forms() {
           {crit.rows.map((c) => (
             <tr key={c.id}>
               <td>{answered.has(c.id) ? <span>{c.text} <Badge kind="muted">used</Badge></span> : <SaveInput className="wide" value={c.text} onSave={(text) => act('renameCriterion', { criterionId: c.id, text })} />}</td>
-              <td><button className="ghost" disabled={answered.has(c.id) || db.instruments.some((i) => i.items.some((it) => it.criterionId === c.id))} title="Remove from forms first" onClick={() => act('deleteCriterion', { criterionId: c.id })}>Delete</button></td>
+              <td><button className="ghost" disabled={answered.has(c.id) || db.instruments.some((i) => i.items.some((it) => it.criterionId === c.id))} title="Remove from forms first" onClick={async () => (await ask('Delete this question from the criteria bank?', `"${c.text}"`, { ok: 'Delete question', danger: true })) && act('deleteCriterion', { criterionId: c.id })}>Delete</button></td>
             </tr>
           ))}
         </tbody></table>
