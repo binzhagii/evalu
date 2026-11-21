@@ -20,16 +20,16 @@ export function ReleaseSteps({ stage }) {
 /** What HR does each term, in order, with a button to the right page. Steps already done get a check. */
 function TermSteps({ db, open, tasks, go }) {
   const steps = [
-    ['Create the evaluation period', 'Choose the school year, term and deadline.', 'periods', 'Periods & release', open.length > 0],
-    ['Import the class lists', 'The file from the Registrar/ARC. Student accounts are made for you.', 'classes', 'Class lists', db.sections.length > 0],
-    ['Generate tasks', 'evalU lists who evaluates whom. Everyone then sees their evaluations when they sign in.', 'assign', 'Assignments', tasks.length > 0],
-    ['Watch the progress', 'See which classes still need answers, and send reminders.', 'monitor', 'Progress'],
-    ['Close the period after the deadline', 'Classes with too few answers are left out automatically.', 'periods', 'Periods & release'],
-    ['Send the results to the VPs, then release them to faculty', 'Faculty see their results only after the VPs approve.', 'periods', 'Periods & release'],
-    ['Print the UB reports', 'Comprehensive report, per-question sheets and comments.', 'reports', 'Reports'],
+    ['Create this term’s evaluation', 'Choose the school year, term, and closing date.', 'periods', 'Dates & release', open.length > 0],
+    ['Add classes and students', 'Import the class list from the Registrar or ARC.', 'classes', 'Classes & students', db.sections.length > 0],
+    ['Create evaluation tasks', 'evalU prepares the evaluations people need to complete.', 'assign', 'Evaluation tasks', tasks.length > 0],
+    ['Check responses', 'See who has responded and which classes need more answers.', 'monitor', 'Response progress'],
+    ['Close the evaluation', 'Do this after the deadline; classes with too few answers are left out.', 'periods', 'Dates & release'],
+    ['Share results in order', 'Send results to the VPs first, then release them to faculty.', 'periods', 'Dates & release'],
+    ['View or print reports', 'Choose the reports you need for this term.', 'reports', 'View & print results'],
   ];
   return (
-    <Card title="Each term, step by step">
+    <Card title="Start here · each term, step by step">
       <ol className="term-steps">
         {steps.map(([title, what, page, label, done], i) => (
           <li key={title} className={done ? 'done' : ''}>
@@ -59,14 +59,15 @@ export function HROverview() {
 
   return (
     <>
+      <div className="note"><b>Start with the checklist.</b> Follow it from top to bottom. You usually do not need to change questions, scoring, or rules unless UB’s policy changes.</div>
+      <TermSteps db={db} open={open} tasks={tasks} go={go} />
+
       <Stats>
         <Stat icon="check" label="Responses received" value={tasks.length ? pct(done / tasks.length) : '—'} sub={`${done} of ${tasks.length} evaluations in open periods`} tone="good" />
-        <Stat icon="clock" label="Overdue evaluations" value={overdue} sub={overdue ? 'Send reminders under Assignments' : 'Nothing overdue'} tone={overdue ? 'bad' : ''} />
-        <Stat icon="chart" label="Classes below half + 1" value={`${low.length} / ${classes.length}`} sub="Would be excluded if closed now" tone={low.length ? 'warn' : ''} />
-        <Stat icon="users" label="Active accounts" value={active.length} sub={waiting ? `${waiting} not signed in yet` : 'All have signed in'} />
+        <Stat icon="clock" label="Late evaluations" value={overdue} sub={overdue ? 'Send reminders from Evaluation tasks' : 'Nothing overdue'} tone={overdue ? 'bad' : ''} />
+        <Stat icon="chart" label="Classes needing more answers" value={`${low.length} / ${classes.length}`} sub="May not count if the period closed now" tone={low.length ? 'warn' : ''} />
+        <Stat icon="users" label="Active accounts" value={active.length} sub={waiting ? `${waiting} have not signed in yet` : 'Everyone has signed in'} />
       </Stats>
-
-      <TermSteps db={db} open={open} tasks={tasks} go={go} />
 
       <div className="grid-2">
         <Card title="Open evaluation periods" actions={<button className="ghost" onClick={() => go('periods')}>Manage</button>}>

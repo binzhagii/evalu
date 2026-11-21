@@ -43,6 +43,7 @@ export default function Policy() {
 
   return (
     <>
+      <div className="note"><b>These settings affect how every evaluation is counted.</b> Leave them unchanged unless HRMC has approved a policy change. Saving requires a reason; closed terms keep their original rules.</div>
       {msg && <div className="note ok">{msg}</div>}
       <Card title={`Evaluation rules · ${version ? `version ${version}` : "UB's starting rules"}`}>
         <p className="muted">These rules turn the answers into ratings. HR can change them when HRMC changes its policy. Each change is saved with a reason, and <b>closed periods keep the rules they used</b>, so past results never change.</p>

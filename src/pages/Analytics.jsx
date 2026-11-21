@@ -232,7 +232,7 @@ export default function Analytics() {
   return (
     <>
       <div className="row between">
-        <p className="muted" style={{ margin: 0 }}>What happened in the released evaluations. Each card shows <b>where its numbers come from</b>.</p>
+        <p className="muted" style={{ margin: 0 }}>Start with <b>Key findings</b> for a short summary. Choose a term and department to explore the details below.</p>
         {filters}
       </div>
 

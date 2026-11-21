@@ -16,11 +16,23 @@ aside { width:240px; flex:none; background:var(--side); color:#fff; padding:20px
 .brand { font-size:28px; font-weight:800; letter-spacing:-.5px; padding:0 10px; }
 .brand span { color:#ff4d63; }
 aside nav { display:flex; flex-direction:column; gap:2px; flex:1; overflow-y:auto; }
+aside nav .nav-section { margin:2px 0; }
+aside nav .nav-section > summary { cursor:pointer; list-style:none; padding:8px 10px 5px; color:#a9adb5; font-size:11px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; }
+aside nav .nav-section > summary::-webkit-details-marker { display:none; }
+aside nav .nav-section > summary::after { content:'+'; float:right; font-size:14px; line-height:1; }
+aside nav .nav-section[open] > summary::after { content:'−'; }
+aside nav .nav-section > div[role=group] { display:flex; flex-direction:column; gap:2px; }
 aside nav button { display:flex; align-items:center; gap:11px; text-align:left; background:transparent; color:#c9ccd2; border:0; padding:9px 10px; border-radius:8px; font-size:14px; }
 aside nav button:hover { background:rgba(255,255,255,.07); color:#fff; }
 aside nav button.on { background:var(--pri); color:#fff; font-weight:600; }
 aside nav button .pill { margin-left:auto; background:#ff4d63; color:#fff; border-radius:99px; font-size:11px; font-weight:700; padding:1px 7px; }
 aside nav button.on .pill { background:#fff; color:var(--pri); }
+details.advanced-panel > summary { cursor:pointer; list-style:none; }
+details.advanced-panel > summary::-webkit-details-marker { display:none; }
+details.advanced-panel > summary::after { content:'Show'; float:right; color:var(--pri); font-weight:600; }
+details.advanced-panel[open] > summary::after { content:'Hide'; }
+details.advanced-panel[open] > summary { margin-bottom:12px; }
+details.advanced-panel .advanced-content > .card:last-child { margin-bottom:0; }
 .who { display:flex; align-items:center; gap:10px; padding:12px 8px 2px; border-top:1px solid rgba(255,255,255,.1); }
 .who .avatar { background:#3a3f47; color:#fff; }
 .who-text { display:flex; flex-direction:column; min-width:0; flex:1; font-size:13px; }

@@ -78,19 +78,19 @@ function navFor(user) {
   const n = [];
   if (user.role === 'HR') {
     n.push(
-      ['home', 'Overview', 'home', <HROverview />, 'Everything happening in evaluations right now'],
-      ['periods', 'Periods & release', 'calendar', <Periods />, 'Open and close evaluation periods, and release results step by step'],
-      ['assign', 'Assignments', 'list', <Assignments />, 'Who evaluates whom in each period'],
-      ['monitor', 'Progress', 'chart', <Monitor />, 'How many evaluations are done, by department and class'],
-      ['classes', 'Class lists', 'list', <Classes />, 'Class sections and enrolment from the Registrar / ARC'],
-      ['forms', 'Forms', 'form', <Forms />, 'The criteria and questions on each evaluation form'],
-      ['weights', 'Weights', 'scale', <Weights />, 'How much each evaluator group counts toward the final score'],
-      ['formulas', 'Rating formula', 'scale', <Formulas />, 'How the final rating is computed. Changes need VP approval.'],
-      ['policy', 'Policy & rules', 'form', <Policy />, 'The rules that turn answers into ratings, with every change kept as a version'],
-      ['accounts', 'Accounts', 'users', <Accounts />, 'Create and manage the people who can sign in'],
-      ['reports', 'Reports', 'report', <Reports />, 'Final scores and results by person, class and subject'],
-      ['analytics', 'Analytics', 'trend', <Analytics />, 'Trends, department comparisons and low-rated items'],
-      ['audit', 'Audit log', 'lock', <AuditLog />, 'Who viewed, changed or released results'],
+      ['home', 'Overview', 'home', <HROverview />, 'Your checklist for this term and a quick look at what needs attention'],
+      ['periods', 'Dates & release', 'calendar', <Periods />, 'Set an evaluation deadline, then close the term and share results'],
+      ['classes', 'Classes & students', 'list', <Classes />, 'Import class lists from the Registrar or ARC'],
+      ['assign', 'Evaluation tasks', 'list', <Assignments />, 'Create the evaluations students and staff need to complete'],
+      ['monitor', 'Response progress', 'chart', <Monitor />, 'See which classes and departments have responded'],
+      ['reports', 'View & print results', 'report', <Reports />, 'Read, print, or share results for a completed term'],
+      ['analytics', 'Patterns in results', 'trend', <Analytics />, 'Compare scores and find areas that may need support'],
+      ['accounts', 'People & sign-in', 'users', <Accounts />, 'Manage accounts, passwords, and departments'],
+      ['forms', 'Evaluation questions', 'form', <Forms />, 'View the questions people answer; changes are usually not needed'],
+      ['weights', 'Scoring percentages', 'scale', <Weights />, 'Change how much each evaluator group counts'],
+      ['formulas', 'Score calculation', 'scale', <Formulas />, 'Change how group scores are combined; VP approval is required'],
+      ['policy', 'Evaluation rules', 'form', <Policy />, 'Change participation, rating, and release rules'],
+      ['audit', 'Change history', 'lock', <AuditLog />, 'Review a record of important actions and changes'],
     );
   } else if (user.role === 'DIR') {
     n.push(
@@ -112,6 +112,14 @@ function navFor(user) {
   );
   return n;
 }
+
+const HR_NAV_SECTIONS = [
+  { label: 'Home', keys: ['home'] },
+  { label: 'Run an evaluation', keys: ['periods', 'classes', 'assign', 'monitor'] },
+  { label: 'Results', keys: ['reports', 'analytics'] },
+  { label: 'System setup', keys: ['accounts', 'forms', 'weights', 'formulas', 'policy'] },
+  { label: 'Other', keys: ['audit', 'notifs', 'account'] },
+];
 
 /** An error pinned to the top of the screen, so it is seen without scrolling. Closes by itself after 10 seconds. */
 function ErrorAlert({ text, onClose }) {
@@ -139,6 +147,9 @@ function Shell() {
   if (user.mustChangePassword) return <ForcedPasswordChange />;
   if (!db) return <div className="login-loading">{error || 'Loading…'}</div>;
   const nav = navFor(user);
+  const navSections = user.role === 'HR'
+    ? HR_NAV_SECTIONS.map((section) => ({ ...section, items: nav.filter(([k]) => section.keys.includes(k)) })).filter((section) => section.items.length)
+    : [{ label: '', items: nav }];
   const cur = nav.find((n) => n[0] === tab) || nav[0];
   const [key, label, , page, subtitle] = cur;
   const isHome = key === nav[0][0];
@@ -160,11 +171,18 @@ function Shell() {
             <button className="icon-btn aside-close" onClick={() => setMenu(false)} aria-label="Close menu"><Icon name="close" size={22} /></button>
           </div>
           <nav>
-            {nav.map(([k, l, icon]) => (
-              <button key={k} className={key === k ? 'on' : ''} onClick={() => { setTab(k); setMenu(false); window.scrollTo(0, 0); }} aria-current={key === k ? 'page' : undefined}>
-                <Icon name={icon} /><span>{l}</span>
-                {k === 'notifs' && unread > 0 && <span className="pill">{unread}</span>}
-              </button>
+            {navSections.map((section) => (
+              <details key={section.label || 'all'} className="nav-section" open={section.items.some(([k]) => k === key) || undefined}>
+                {section.label && <summary>{section.label}</summary>}
+                <div role="group" aria-label={section.label || 'Navigation'}>
+                  {section.items.map(([k, l, icon]) => (
+                    <button key={k} className={key === k ? 'on' : ''} onClick={() => { setTab(k); setMenu(false); window.scrollTo(0, 0); }} aria-current={key === k ? 'page' : undefined}>
+                      <Icon name={icon} /><span>{l}</span>
+                      {k === 'notifs' && unread > 0 && <span className="pill">{unread}</span>}
+                    </button>
+                  ))}
+                </div>
+              </details>
             ))}
           </nav>
           <div className="who">

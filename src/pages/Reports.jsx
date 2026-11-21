@@ -442,6 +442,7 @@ export default function Reports() {
 
   return (
     <>
+    {user.role === 'HR' && <div className="note"><b>For the standard UB printouts, leave “Print UB reports” selected.</b> Choose a period above first. Use the other tabs for a specific summary, person, department, or earlier records.</div>}
     <div className="row between no-print">
       <PeriodPicker periods={periods} value={pid} onChange={setPid} />
       <span className="row" style={{ margin: 0 }}><span className="muted">Who can see these results:</span><ReleaseSteps stage={period.releaseStage} /></span>

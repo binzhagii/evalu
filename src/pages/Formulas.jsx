@@ -187,6 +187,7 @@ export default function Formulas() {
 
   return (
     <>
+      {isHR && <div className="note"><b>Most HR users do not need to change this.</b> This changes how group ratings are combined. Only make a change approved by HRMC; a VP must approve it before it can be used.</div>}
       {msg && <div className="note ok">{msg}</div>}
       {!isHR && pendingAll.length > 0 && (
         <Card title={`Waiting for your approval (${pendingAll.length})`}>

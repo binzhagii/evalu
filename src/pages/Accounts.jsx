@@ -245,8 +245,7 @@ export function Accounts() {
   return (
     <>
       <div className="note">
-        <b>Accounts are created by HR</b>, not by sign-up, so nobody can give themselves a role. A new account gets a
-        temporary password that the person must change the first time they sign in.
+        <b>Most student and teacher accounts are created when you import a class list.</b> Use this page for one person at a time, or to update a name, reset a password, or manage departments. New accounts get a temporary password that must be changed at first sign-in.
       </div>
       <Departments />
 

@@ -56,6 +56,7 @@ export function Periods() {
   const toggle = (d) => setDepts((x) => (x.includes(d) ? x.filter((y) => y !== d) : [...x, d]));
   return (
     <>
+      <div className="note"><b>Use this page for the three main dates:</b> create the term, close it after the deadline, then send results to the VPs and release them to faculty.</div>
       <RuleNote />
       {msg && <div className="note">{msg}</div>}
       <Card title="Evaluation periods">
@@ -120,7 +121,9 @@ export function Periods() {
         <div className="row"><button onClick={add} disabled={exists}>Create {name}</button></div>
         <p className="muted">You can open and close evaluations for one department at a time by creating a period for just that department. The current evaluator weights are saved with the period.</p>
       </Card>
-      <Card title="Start over">
+      <details className="card advanced-panel">
+        <summary><b>Reset or replace data</b> <span className="muted">· Advanced. These actions can permanently remove information.</span></summary>
+        <div className="advanced-content">
         <div className="row">
           <button className="danger" onClick={async () => {
             if (!(await ask('Start from scratch?', 'This deletes every account except HR, and all classes, evaluation periods, evaluations, results, notifications and imported records. Departments go back to the University of Baguio list.\n\nThe evaluation forms, questions and weights are kept. This cannot be undone.', { ok: 'Delete everything', danger: true }))) return;
@@ -131,7 +134,8 @@ export function Periods() {
           <button className="ghost" onClick={async () => { if (await ask('Load the sample data?', 'ALL data is replaced with the sample (demo) data. Everything you entered is replaced.', { ok: 'Replace with sample data', danger: true }) && await act('resetData')) setMsg('All data was replaced with the sample data.'); }}>Load sample data</button>
         </div>
         <p className="muted"><b>Start from scratch</b> empties the system for real use: only HR accounts stay, with their passwords, plus the UB departments and the evaluation forms, questions and weights, so you don't have to build them again. <b>Load sample data</b> brings back the demo accounts (password demo1234). The audit log is never erased.</p>
-      </Card>
+        </div>
+      </details>
     </>
   );
 }
@@ -165,27 +169,30 @@ export function Assignments() {
 
   return (
     <>
-      <Card title="Evaluation workflow" actions={<PeriodPicker periods={db.periods} value={pid} onChange={setPid} />}>
+      <Card title="Start and follow evaluations" actions={<PeriodPicker periods={db.periods} value={pid} onChange={setPid} />}>
         {msg && <div className="note">{msg}</div>}
         <div className="row">
-          <button onClick={async () => { const r = await act('generateTasks', { periodId: pid }); if (r) setMsg(`${r.added} task(s) generated from the class lists and the role, position and department rules.${r.skippedNoForm ? ` ${r.skippedNoForm} skipped because no form exists.` : ''} Internship, practicum and field trip subjects were skipped.`); }}>Generate tasks for period</button>
+          <button onClick={async () => { const r = await act('generateTasks', { periodId: pid }); if (r) setMsg(`${r.added} evaluation(s) prepared from the class lists and staff roles.${r.skippedNoForm ? ` ${r.skippedNoForm} skipped because no form exists.` : ''} Internship, practicum and field trip subjects were skipped.`); }}>Create evaluation tasks</button>
           <button className="ghost" onClick={async () => { const r = await act('sendReminders', { periodId: pid }); if (r) setMsg(`Reminders sent to ${r.sent} evaluator(s) with unfinished evaluations. Their department heads and HR were alerted too.`); }}>Send reminders now</button>
         </div>
-        <p className="muted"><b>Generate tasks</b> makes the list of who evaluates whom in this period: students from the class lists, and deans, chairs and staff from their positions. Do it once after you create the period and import the class lists. Doing it again only adds what is new.</p>
+        <p className="muted"><b>Do this after creating a term and importing its class lists.</b> evalU uses the lists and staff roles to prepare who evaluates whom. You can click again after updating a class list; only new evaluations are added.</p>
         <p className="muted">Reminders are also sent automatically once a day during the last 7 days before the deadline, and every day after it until the period is closed.</p>
         <table>
           <thead><tr><th>Evaluator group</th><th>Pending</th><th>Completed</th><th>Overdue</th></tr></thead>
           <tbody>{Object.entries(summary).map(([g, x]) => <tr key={g}><td>{GROUPS[g]}</td><td>{x.pending}</td><td>{x.completed}</td><td>{x.overdue}</td></tr>)}</tbody>
         </table>
       </Card>
-      <Card title="Add an evaluator assignment">
-        <div className="row">
-          <Select value={add.evaluatorId} onChange={(v) => setAdd({ ...add, evaluatorId: v })}><option value="">Evaluator…</option>{evaluators.map((u) => <option key={u.id} value={u.id}>{u.name} ({evaluatorGroups(u).map((g) => GROUPS[g]).join(' / ')})</option>)}</Select>
-          <Select value={add.targetId} onChange={(v) => setAdd({ ...add, targetId: v })}><option value="">Evaluates…</option>{targetsOf(db).map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}</Select>
-          <button onClick={addOne}>Add</button>
-        </div>
-      </Card>
-      <Card title={`Assigned tasks (${listed.length})`}>
+      <details className="card advanced-panel">
+        <summary><b>Manage individual evaluations</b> <span className="muted">· For fixing a one-off assignment or finding a specific task.</span></summary>
+        <div className="advanced-content">
+        <Card title="Add an evaluator assignment">
+          <div className="row">
+            <Select value={add.evaluatorId} onChange={(v) => setAdd({ ...add, evaluatorId: v })}><option value="">Evaluator…</option>{evaluators.map((u) => <option key={u.id} value={u.id}>{u.name} ({evaluatorGroups(u).map((g) => GROUPS[g]).join(' / ')})</option>)}</Select>
+            <Select value={add.targetId} onChange={(v) => setAdd({ ...add, targetId: v })}><option value="">Evaluates…</option>{targetsOf(db).map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}</Select>
+            <button onClick={addOne}>Add</button>
+          </div>
+        </Card>
+        <Card title={`All individual evaluations (${listed.length})`}>
         <div className="row">
           <Select value={grp} onChange={setGrp}><option value="">All evaluator groups</option>{Object.keys(summary).map((g) => <option key={g} value={g}>{GROUPS[g]}</option>)}</Select>
           <Select value={st} onChange={setSt}><option value="">Any status</option><option value="pending">Pending</option><option value="completed">Completed</option><option value="overdue">Overdue</option></Select>
@@ -206,7 +213,9 @@ export function Assignments() {
         </table>
         {bar}
         </>}
-      </Card>
+        </Card>
+        </div>
+      </details>
     </>
   );
 }
@@ -242,7 +251,7 @@ export function Classes() {
   const { rows, bar } = usePages(listed, `${dept}|${kind}|${qs}`);
   return (
     <>
-      <div className="note">Class lists and teaching loads come from the Registrar / ARC. Students evaluate the teacher of each class they are enrolled in. <b>Internship, practicum and field trip subjects are kept on the list but are not evaluated</b> (recognised from the subject name).</div>
+      <div className="note"><b>Most common action: import a class list.</b> Choose the department, check the file, then import it. Students are enrolled in those classes; internship, practicum, and field trip subjects are not evaluated.</div>
       {msg && <div className="note">{msg}</div>}
       <Card title="Import a class list">
         <p className="muted">Choose the class list file from the Registrar/ARC, or paste it below. It must be a CSV file (in Excel: <b>File → Save As → CSV</b>). One student per line, in this order:</p>
@@ -390,6 +399,7 @@ export function Forms() {
 
   return (
     <>
+      <div className="note"><b>UB’s standard questions are already set up.</b> You can review them here. Only change a form when HRMC has approved a change; submitted evaluations keep the version they used.</div>
       {msg && <div className="note">{msg}</div>}
       <Card title="Evaluation forms" actions={<label className="inline muted"><input type="checkbox" checked={showOld} onChange={(e) => setShowOld(e.target.checked)} /> Show old versions</label>}>
         <div className="row">
@@ -490,7 +500,9 @@ export function Forms() {
         </div>
         <p className="muted">A department-specific form (e.g. for Nursing) is used for that department instead of the general one. A form for a type of class (e.g. laboratory) is used for the classes set to that type under Class lists.</p>
       </details>
-      <Card title="Criteria bank">
+      <details className="card advanced-panel">
+        <summary><b>Manage the question bank</b> <span className="muted">· Advanced. Questions already used in submitted evaluations are protected.</span></summary>
+        <div className="advanced-content">
         <p className="muted">The criteria come from UB's evaluation tools. Criteria already answered in submitted evaluations can't be reworded or deleted, so past reports stay exactly as they were.</p>
         <div className="row"><input className="wide" placeholder="New criterion" value={newCrit} onChange={(e) => setNewCrit(e.target.value)} />
           <button onClick={async () => { if (newCrit.trim() && await act('addCriterion', { text: newCrit })) setNewCrit(''); }}>Add criterion</button></div>
@@ -503,7 +515,8 @@ export function Forms() {
           ))}
         </tbody></table>
         {crit.bar}
-      </Card>
+        </div>
+      </details>
     </>
   );
 }
@@ -513,7 +526,8 @@ export function Weights() {
   const { db, act } = useApp();
   return (
     <Card title="Evaluator-group weights (%)">
-      <p className="muted">Starting percentages: College faculty — Students 40, Dean 40, Program Chair 20; Basic Education — Students 40, Principal 20, Assistant Principal 20, Subject Head 20; non-teaching staff and their office heads rate each other; Clinical Instructors (CIs) — Students 50, Dean 50 until UB gives the official ones. Deans have no starting percentages, so enter them. <b>A change applies to open and new periods; closed periods keep their old percentages.</b> If a group gives no rating, the other groups are used.</p>
+      <p className="note"><b>Usually, you do not need to change these numbers.</b> Change them only when HRMC has approved new percentages. A change applies to open and future terms; closed terms keep their old numbers.</p>
+      <p className="muted">Starting percentages: College faculty — Students 40, Dean 40, Program Chair 20; Basic Education — Students 40, Principal 20, Assistant Principal 20, Subject Head 20; non-teaching staff and their office heads rate each other; Clinical Instructors (CIs) — Students 50, Dean 50 until UB gives the official ones. Deans have no starting percentages, so enter them. If a group gives no rating, the other groups are used.</p>
       <p className="muted">This page is the quick way to change the percentages. To change <b>how</b> the final rating is computed (for example, every group counts the same), use <b>Rating formula</b>. Once a group of people has a formula there, its percentages are changed there.</p>
       {Object.entries(db.rules).map(([tt, rule]) => {
         const total = Object.values(rule).reduce((a, w) => a + (Number(w) || 0), 0);
