@@ -1,12 +1,12 @@
 # evalU validation test report
 
-Run: 2026-11-21T08:31:42.334Z · Node v26.13.1 · code version 0c2d0bb · fresh test database with the sample data
+Run: 2026-11-21T09:05:23.606Z · Node v24.21.0 · code version 91d9792 · fresh test database with the sample data
 
-**Result: 62 of 62 test cases passed.**
+**Result: 71 of 71 test cases passed.**
 
 Each case runs automatically (`npm run test:validation`). "Actual" is measured during this run, not written by hand.
 Part A checks the computation rules on controlled data; Part B runs the real server, database and access control;
-Part C checks the formula engine and its approval and versions; Part D the comment analysis; Part E the computation modules (plug-ins), the effective period and the reproducibility of stored results; Part F HR-configurable evaluator groups and access control.
+Part C checks the formula engine and its approval and versions; Part D the comment analysis; Part E the computation modules (plug-ins), the effective period and the reproducibility of stored results; Part F HR-configurable evaluator groups and access control; Part G the margin of error, form reliability, participation forecast, development follow-up and the fixes from the 20 Nov 2026 test.
 
 | ID | Requirement | Scenario | Expected | Actual | Result |
 |---|---|---|---|---|---|
@@ -72,5 +72,14 @@ Part C checks the formula engine and its approval and versions; Part D the comme
 | TC-60 | HR-configurable evaluator groups | HR adds a Department Head group and assigns it to a staff account; the catalog and membership persist | {"group":true,"membership":true} | {"group":true,"membership":true} | PASS |
 | TC-61 | Evaluator group access control | A student cannot add an evaluator group; HR cannot apply a group to an unknown category | {"student":403,"invalidCategory":400} | {"student":403,"invalidCategory":400} | PASS |
 | TC-62 | Versioned computation modules | A new algorithm version can be registered without changing the prior version used by saved formulas | {"old":3.5,"new":4,"oldAgain":3.5,"duplicateRejected":true} | {"old":3.5,"new":4,"oldAgain":3.5,"duplicateRejected":true} | PASS |
+| TC-63 | Margin of error (95%) | Class of 10, 6 answered (3.2, 3.4, 3.6, 3.0, 3.8, 3.6); then all 10 answered | [0.21,0] | [0.21,0] | PASS |
+| TC-64 | Form reliability (Cronbach's alpha) | 4 evaluations x 3 questions: (2,3,3) (3,3,4) (4,4,4) (1,2,2) | ["0.95","Excellent"] | ["0.95","Excellent"] | PASS |
+| TC-65 | Participation forecast | Opened 10 days ago, 5 days left, class of 10 (needs 6): 3 answered; 5 answered; then who is warned | {"three":"at-risk 4","five":"on-track 7","warned":["dean","hr","teacher"]} | {"three":"at-risk 4","five":"on-track 7","warned":["dean","hr","teacher"]} | PASS |
+| TC-66 | Development follow-up | Dean A makes a plan for Secretary A (Fair in AY 2025-26 Term 1); another dean, a teacher and a student try; Secretary A reads it; HR closes it | ["dean of the department: 200","dean of another department: 403","teacher: 403","student: 403","secretary sees it: true","other teacher sees it: false","confirmed read: true","closed as improved: true"] | ["dean of the department: 200","dean of another department: 403","teacher: 403","student: 403","secretary sees it: true","other teacher sees it: false","confirmed read: true","closed as improved: true"] | PASS |
+| TC-67 | Development follow-up | The plan's follow-up compares the next period with a rating (AY 2025-26 Term 2) with the plan's period | next period found, change = after - before | next period found, change = after - before | PASS |
+| TC-68 | Fix DEF-01: comment limit | Submit with a 2,001-character comment, then 2,000 | ["HTTP 400 with the limit in the message","HTTP 200"] | ["HTTP 400 with the limit in the message","HTTP 200"] | PASS |
+| TC-69 | Fix DEF-02: empty form | HR creates a Program-Chair form for Dentistry with no questions; which form do Dentistry teachers get? | UB's general form until the new form has a question | UB's general form until the new form has a question | PASS |
+| TC-70 | Fix DEF-06: large class list | Check a 3,000-row class list (about 330 KB); then a 5 MB one | ["HTTP 200, 3000 rows read","HTTP 413 with a message"] | ["HTTP 200, 3000 rows read","HTTP 413 with a message"] | PASS |
+| TC-71 | Fix DEF-03: Clinical Instructors | CI weights; the Program Chair has a form for CIs and is assigned to evaluate the Nursing CI | {"weights":{"ST":40,"DEAN":40,"CHAIR":20},"chairForm":true,"chairTask":true} | {"weights":{"ST":40,"DEAN":40,"CHAIR":20},"chairForm":true,"chairTask":true} | PASS |
 
 Limits of this report: these are developer-run functional, security and integration tests on simulated data. They do not replace the stakeholder evaluation (ISO/IEC 25010 questionnaire) or confirmation of the rules by HRMC.

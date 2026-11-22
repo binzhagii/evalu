@@ -5,8 +5,8 @@ import { randomInt } from 'node:crypto';
 import {
   GROUPS, TARGET_TYPES, STAGES, ROLES, POSITIONS, needsDept, uid, userById, periodById, targetType, evaluatorGroups, defaultEvaluatorGroups, groupName,
   instrumentFor, formForTask, formUsed, effectiveWeights, generateTasks, runThresholdCheck, participationAlerts, sendReminders,
-  isInstitutionalEmail, INSTITUTION_DOMAIN, notify, directors, pendingApprovals, resultHeads, hrUsers, isEvaluatee, isTeacher, isNursingDept, stageAtLeast, UB_DEPARTMENTS, missingUbDepartments, MAX_RATING, CLASS_TYPES,
-  currentPolicy, formulaKey, activeFormula, formulaSnapshot, formGroups, validateFormula, computeAll, storeResults, methodOf, METHODS, AGGREGATIONS, MISSING_RULES, ROUNDING_METHODS,
+  isInstitutionalEmail, INSTITUTION_DOMAIN, notify, directors, pendingApprovals, resultHeads, hrUsers, isEvaluatee, isTeacher, isNursingDept, stageAtLeast, isResultHead, PLAN_OUTCOMES, UB_DEPARTMENTS, missingUbDepartments, MAX_RATING, CLASS_TYPES,
+  currentPolicy, formulaKey, activeFormula, formulaSnapshot, formGroups, validateFormula, computeAll, storeResults, methodOf, commentParts, METHODS, AGGREGATIONS, MISSING_RULES, ROUNDING_METHODS,
 } from '../src/lib/logic.js';
 import { HttpError } from './http.js';
 import { encryptText, decryptText, hashPassword, verifyPassword } from './secrets.js';
@@ -55,10 +55,14 @@ function cleanAnswers(answers, ins) {
   return out;
 }
 /** FR14: every evaluator may add an optional comment; it is stored encrypted and shown without their name. */
+const MAX_COMMENT = 2000; // characters per comment box (the screen shows a counter)
 function cleanComment(comment) {
   if (comment == null || comment === '') return '';
   if (typeof comment !== 'string') fail('Invalid comment.');
-  if (comment.length > 4000) fail('Comment is too long (max 2000 characters per box).');
+  const parts = commentParts(comment); // one box, or the two boxes of the Dean/Principal forms
+  const boxes = parts.text != null ? [parts.text] : [parts.plan, parts.improve];
+  const long = boxes.find((b) => b.length > MAX_COMMENT);
+  if (long) fail(`A comment can have up to ${MAX_COMMENT.toLocaleString('en-US')} characters; this one has ${long.length.toLocaleString('en-US')}. Please shorten it.`);
   return comment.trim();
 }
 
@@ -76,7 +80,7 @@ function accountFields(db, { name, username, email, role, position, dept, evalua
   if (!Object.hasOwn(POSITIONS[role], position)) fail('Choose a position for this role.');
   u.role = role; u.position = position;
   u.dept = needsDept(role) ? find(db.departments, dept, 'Department').id : null;
-  if (position === 'ci' && !isNursingDept(db.departments.find((d) => d.id === u.dept))) fail('Clinical Instructors belong to the School of Nursing. Choose the School of Nursing as the department.');
+  if (position === 'ci' && !isNursingDept(db.departments.find((d) => d.id === u.dept))) fail("The Clinical Instructor position is for the School of Nursing (UB's Nursing CI tools). For clinical instructors in Dentistry, Medical Technology or Physical Therapy, choose Faculty, then set their classes' type to the clinical type of their program under Class lists: they get UB's clinical tools and the 40/40/20 weights.");
   if (role === 'TP' || role === 'NTP') {
     const assigned = Array.isArray(evaluatorGroupIds) ? evaluatorGroupIds : defaultEvaluatorGroups(role, position);
     const active = new Set((db.evaluatorGroups || []).filter((g) => g.active !== false).map((g) => g.id));
@@ -143,6 +147,21 @@ function sectionFields(db, { code, subject, facultyId }, editingId = null) {
   if (!isTeacher(f)) fail('Choose the faculty member or Clinical Instructor who teaches this class.');
   if (db.sections.some((x) => x.id !== editingId && x.code.toLowerCase() === s.code.toLowerCase())) fail('A class section with this code already exists.', 409);
   return { ...s, facultyId: f.id, dept: f.dept };
+}
+
+// ---------- development plans ----------
+const planRec = (db, id) => (db.plans || []).find((p) => p.id === id) || fail('Development plan not found.', 404);
+/** HR, or the dean/principal of the person's department (not for themselves). */
+function mayPlanFor(user, t) {
+  if (user.role === 'HR') return;
+  if (isResultHead(user) && user.dept === t.dept && user.id !== t.id) return;
+  fail("Only HR or the dean or principal of the person's department can make or change a development plan.", 403);
+}
+function planFields({ areas, actions, reviewBy }) {
+  const list = Array.isArray(areas) ? [...new Set(areas.map((a) => text(a, 'Area', 120)))].slice(0, 12) : [];
+  const todo = text(actions, 'What will be done', 2000);
+  if (todo.length < 10) fail('Write what will be done, for example "Attend the INSET on assessment; classroom observation by the Program Chair in February".');
+  return { areas: list, actions: todo, reviewBy: date(reviewBy) };
 }
 
 // ---------- notifications for the release steps ----------
@@ -220,7 +239,7 @@ export const actions = {
       const { t, ins } = myOpenTask(db, taskId, user);
       const clean = cleanAnswers(answers, ins);
       const missing = ins.items.filter((it) => clean[it.criterionId] == null).map((it) => it.criterionId);
-      if (missing.length) fail(`${missing.length} item(s) are not answered yet.`);
+      if (missing.length) fail(missing.length === 1 ? '1 question is not answered yet.' : `${missing.length} questions are not answered yet.`);
       const c = cleanComment(comment);
       t.response = {
         answers: clean,
@@ -488,6 +507,7 @@ export const actions = {
       }
       const p = {
         id: uid('p'), name: text(name, 'Period name', 120), startDate, deadline: endDate, status: 'open', releaseStage: 'hr', thresholdChecked: false,
+        openedAt: new Date().toISOString(), // the participation forecast counts the pace from the start date, or from here
         rules: clone(db.rules),   // NFR8: the weights in force for this period
         policy: currentPolicy(db), // the policy version in force for this period (threshold, bands, approvals…)
         formulas: Object.fromEntries((db.formulas || []).filter((f) => f.status === 'active' && formulaEffectiveOn(f, startDate)).map((f) => [f.key, formulaSnapshot(f)])), // the formula versions this period is computed with
@@ -598,6 +618,57 @@ export const actions = {
     },
   },
   /** FR18: another office asks for a person's results; they are released to that person's dean only. */
+  /* ---------- development follow-up: a plan for someone rated Fair or Poor (by their dean/principal or HR) ---------- */
+  createPlan: {
+    roles: ['HR', 'TP'],
+    run(db, { targetId, periodId, areas, actions, reviewBy }, user) {
+      const t = account(db, targetId), p = period(db, periodId);
+      if (!isEvaluatee(t)) fail(`${t.name} has no evaluation results.`);
+      mayPlanFor(user, t);
+      if (!stageAtLeast(p, 'faculty')) fail('Make a plan after the results of this period are released to faculty.', 409);
+      db.plans ||= [];
+      if (db.plans.some((x) => x.targetId === t.id && x.periodId === p.id && x.status === 'open')) fail(`${t.name} already has an open plan for ${p.name}. Change that one instead.`, 409);
+      const plan = { id: uid('dp'), targetId: t.id, periodId: p.id, status: 'open', ...planFields({ areas, actions, reviewBy }),
+        createdBy: user.name, createdById: user.id, createdAt: new Date().toISOString(), acknowledgedAt: null, teacherNote: '', closedAt: null, outcome: null, closeNote: '' };
+      db.plans.push(plan);
+      notify(db, { key: `dp|${plan.id}`, userId: t.id, kind: 'release', text: `${user.name} made a development plan with you after your result in ${p.name}. Read it under My results and click "I have read this plan".` });
+      return { id: plan.id };
+    },
+  },
+  updatePlan: {
+    roles: ['HR', 'TP'],
+    run(db, { id, areas, actions, reviewBy }, user) {
+      const plan = planRec(db, id), t = account(db, plan.targetId);
+      mayPlanFor(user, t);
+      if (plan.status !== 'open') fail('This plan is closed.', 409);
+      Object.assign(plan, planFields({ areas, actions, reviewBy }));
+      if (plan.acknowledgedAt) { plan.acknowledgedAt = null; notify(db, { key: `dpu|${plan.id}|${Date.now()}`, userId: t.id, kind: 'release', text: `${user.name} changed your development plan. Please read it again under My results.` }); }
+      return { id: plan.id };
+    },
+  },
+  acknowledgePlan: {
+    roles: ANYONE,
+    run(db, { id, note }, user) {
+      const plan = planRec(db, id);
+      if (plan.targetId !== user.id) fail('Only the person the plan is for can confirm reading it.', 403);
+      if (plan.status !== 'open') fail('This plan is closed.', 409);
+      plan.acknowledgedAt = new Date().toISOString();
+      plan.teacherNote = typeof note === 'string' && note.trim() ? text(note, 'Your note', 1000) : '';
+      notify(db, { key: `dpa|${plan.id}|${plan.acknowledgedAt}`, userId: plan.createdById, kind: 'release', text: `${user.name} read the development plan you made${plan.teacherNote ? ` and wrote: "${plan.teacherNote}"` : ''}.` });
+    },
+  },
+  closePlan: {
+    roles: ['HR', 'TP'],
+    run(db, { id, outcome, note }, user) {
+      const plan = planRec(db, id), t = account(db, plan.targetId);
+      mayPlanFor(user, t);
+      if (plan.status !== 'open') fail('This plan is already closed.', 409);
+      if (!Object.hasOwn(PLAN_OUTCOMES, outcome)) fail('Choose how the plan ended.');
+      Object.assign(plan, { status: 'closed', outcome, closeNote: typeof note === 'string' ? note.trim().slice(0, 1000) : '', closedAt: new Date().toISOString(), closedBy: user.name });
+      notify(db, { key: `dpc|${plan.id}`, userId: t.id, kind: 'release', text: `${user.name} closed your development plan: ${PLAN_OUTCOMES[outcome].toLowerCase()}.` });
+    },
+  },
+
   recordResultRequest: {
     roles: HR,
     run(db, { periodId, targetId, office }, user) {
@@ -1016,6 +1087,7 @@ export function describeAction(name, args, db, result) {
   if (name === 'setPolicy' && result?.changed) return `policy version ${result.version}: ${result.changed.map((c) => `${c.field} ${JSON.stringify(c.from)} → ${JSON.stringify(c.to)}`).join('; ')} · reason: ${args.reason}`;
   if (/Formula/.test(name)) { const f = (db.formulas || []).find((x) => x.id === (args.id || result?.id)); const tag = f ? `formula: ${f.config.name} v${f.version} (${TARGET_TYPES[f.targetType]}${f.dept ? ', ' + f.dept : ''}) · algorithm: ${methodOf(f.config.method, f.config.methodVersion ?? 1)?.label || f.config.method} v${f.config.methodVersion ?? 1} · status: ${f.status}` : (result?.deleted ? `formula: ${result.deleted}` : 'formula'); return [tag, args.basis && `basis: ${args.basis}`, args.reason && `reason: ${args.reason}`, result?.applied != null && `applied to ${result.applied} open period(s), ${result.kept} kept the previous version`, result?.scheduled && 'starts with the next evaluation period'].filter(Boolean).join(' · '); }
   if (name === 'createPeriod' && result?.started?.length) return `name: ${args.name} · formula(s) started with this period: ${result.started.join(', ')}`;
+  if (/Plan$/.test(name)) { const pl = (db.plans || []).find((x) => x.id === (args.id || result?.id)); const per = pl && periodById(db, pl.periodId); return pl ? [`development plan for ${userById(db, pl.targetId)?.name} (${per?.name})`, `status: ${pl.status}${pl.outcome ? ` (${pl.outcome})` : ''}`, name !== 'acknowledgePlan' && pl.areas.length && `areas: ${pl.areas.join(', ')}`, name !== 'acknowledgePlan' && `review by ${pl.reviewBy}`].filter(Boolean).join(' · ') : 'development plan'; }
   if (name === 'returnToHR') { const per = periodById(db, args.periodId); return `period: ${per?.name} · returned to HR · reason: ${args.reason}`; }
   const parts = [];
   const a = args || {};

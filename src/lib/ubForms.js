@@ -4238,3 +4238,7 @@ export const UB_FORMS = [
   ]
  }
 ];
+
+// UB's Nursing Clinical Instructor tools are "by the Dean / Program Chair": the Program Chair rates
+// Clinical Instructors with the same tool (Scoring Rule Confirmation Form B2: Students 40, Dean 40, Program Chair 20).
+for (const f of UB_FORMS.filter((x) => x.targetType === 'CI' && x.group === 'DEAN')) UB_FORMS.push({ ...f, group: 'CHAIR' });

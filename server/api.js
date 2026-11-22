@@ -43,7 +43,7 @@ async function runAction(name, args, user, req) {
 function dailyAutomation() {
   return oneAtATime(() => {
     const draft = structuredClone(getDb());
-    if (runDailyAutomation(draft)) { save(draft); addAudit(null, 'automaticReminders', 'Daily reminders and participation alerts sent'); }
+    if (runDailyAutomation(draft)) { save(draft); addAudit(null, 'automaticReminders', 'Daily reminders, participation alerts and early warnings checked'); }
   });
 }
 
@@ -104,7 +104,12 @@ export async function handleApi(req, res) {
     const m = url.pathname.match(/^\/api\/actions\/([A-Za-z]+)$/);
     if (req.method === 'POST' && m) {
       let args;
-      try { args = await readJson(req); } catch { throw new HttpError(400, 'Invalid request.'); }
+      // files (class lists, earlier records) may be large; every other change is small
+      const limit = ['importClassList', 'importPastResults'].includes(m[1]) ? 4 * 1024 * 1024 : undefined;
+      try { args = await readJson(req, limit); } catch (e) {
+        if (e.code === 'TOO_LARGE') throw new HttpError(413, `This is too large to send at once (more than ${Math.round(e.limit / 1024 / 1024) || 1} MB). Import the file in parts, for example one department at a time.`);
+        throw new HttpError(400, 'Invalid request.');
+      }
       const result = await runAction(m[1], args, user, req);
       send(res, 200, { result, data: viewFor(getDb(), user) });
       return true;

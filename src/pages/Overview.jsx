@@ -1,8 +1,8 @@
 import { useMemo, useState } from 'react';
 import { useApp } from '../lib/store';
-import { STAGES, taskStatus, sectionStats, userById, computeAll, canSeeAll, THRESHOLD, hasFinal, pendingApprovals, groupName } from '../lib/logic';
+import { STAGES, taskStatus, sectionStats, userById, computeAll, canSeeAll, THRESHOLD, hasFinal, pendingApprovals, groupName, participationForecast } from '../lib/logic';
 import { ApprovalPanel } from './Reports';
-import { Card, Stat, Stats, Meter, Badge, Empty, PeriodPicker, Icon, useNav, fmt, pct, dueText, daysUntil } from '../ui';
+import { Card, Stat, Stats, Meter, Badge, Empty, PeriodPicker, Icon, useNav, fmt, pct, dueText, daysUntil, ForecastBadge } from '../ui';
 
 const STAGE_SHORT = { hr: 'HR only', dir: 'VPs', faculty: 'Faculty' };
 
@@ -99,6 +99,7 @@ export function HROverview() {
                 <li key={p.id + st.section.id}>
                   <div><b>{st.section.code}</b> <span className="muted">· {userById(db, st.section.facultyId)?.name}{open.length > 1 ? ` · ${p.name}` : ''}</span></div>
                   <div className="meter-row"><Meter value={st.rate} mark={THRESHOLD} /><span>{st.responded}/{st.required} <span className="muted">needs {st.needed}</span></span></div>
+                  <ForecastBadge fc={participationForecast(db, p.id, st.section.id)} deadline={p.deadline} />
                 </li>
               ))}
               {low.length > 6 && <li className="muted">and {low.length - 6} more…</li>}

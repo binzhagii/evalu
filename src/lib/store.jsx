@@ -7,6 +7,28 @@ import { createContext, useContext, useEffect, useState, useCallback } from 'rea
 const Ctx = createContext(null);
 export const useApp = () => useContext(Ctx);
 
+// The short confirmation shown after a change is saved. Actions not listed here stay quiet
+// (opening a page, reading notifications, drafts saved in the background, or pages with their own message).
+const DONE = {
+  createPeriod: 'Evaluation period created', closePeriod: 'Period closed', reopenPeriod: 'Period reopened',
+  releaseNext: 'Results released', withdrawRelease: 'Release step withdrawn', checkThreshold: 'Participation alerts sent',
+  setPeriodDeadline: 'Deadline changed', generateTasks: 'Evaluation tasks created', sendReminders: 'Reminders sent',
+  addAssignment: 'Evaluation added', removeTask: 'Evaluation removed',
+  importClassList: 'Class list imported', createSection: 'Class added', deleteSection: 'Class deleted', setClassType: 'Class type changed',
+  importPastResults: 'Earlier records imported', deletePastResult: 'Record deleted',
+  createUser: 'Account created', updateUser: 'Changes saved', resetPassword: 'Password reset', setUserActive: 'Account updated',
+  addDepartment: 'Department added', updateDepartment: 'Department saved', deleteDepartment: 'Department deleted',
+  addUbDepartments: 'UB departments added', addEvaluatorGroup: 'Evaluator group added',
+  createForm: 'Form created', reviseForm: 'New form version created', addFormItem: 'Question added', removeFormItem: 'Question removed',
+  addCriterion: 'Question added', renameCriterion: 'Question saved', deleteCriterion: 'Question deleted',
+  setFormItemWeight: 'Weight saved', setFormItemCategory: 'Question moved', setFormCategoryWeight: 'Weight saved',
+  submitFormula: 'Sent to the VP for approval', approveFormula: 'Formula approved', rejectFormula: 'Formula returned to HR',
+  activateFormula: 'Formula put in use', deleteFormulaDraft: 'Draft deleted', setPolicy: 'Rules saved',
+  approveRelease: 'Results approved', returnToHR: 'Results returned to HR', recordResultRequest: 'Request recorded',
+  createPlan: 'Development plan saved', updatePlan: 'Plan updated', acknowledgePlan: 'Marked as read', closePlan: 'Plan closed',
+  saveDraft: 'Saved. You can finish it later.',
+};
+
 async function api(path, body) {
   const res = await fetch(path, {
     method: body ? 'POST' : 'GET',
@@ -24,6 +46,7 @@ export function AppProvider({ children }) {
   const [checking, setChecking] = useState(true); // asking the server "am I still signed in?"
   const [error, setError] = useState('');
   const [notice, setNotice] = useState(''); // good news shown on the sign-in screen, e.g. "You have logged out"
+  const [done, setDone] = useState(null); // { id, text }: the short confirmation after a change is saved
 
   const signedOut = useCallback((msg = '', ok = '') => { setUser(null); setDb(null); setError(msg); setNotice(ok); }, []);
 
@@ -44,15 +67,16 @@ export function AppProvider({ children }) {
     })();
   }, [loadData]);
 
-  // Returns { ok: true } or { ok: false, error: 'message to show' }
+  // Returns { ok: true, user, enter } or { ok: false, error: 'message to show' }.
+  // The data is loaded first; enter() then opens the app (the sign-in screen shows "Welcome" in between).
   const login = async (username, password) => {
     try {
       const r = await api('/api/auth/login', { username, password });
       if (!r.ok) return { ok: false, error: r.data.error || 'Sign-in failed. Please try again.' };
       setError(''); setNotice('');
-      setUser(r.data.user);
-      if (!r.data.user.mustChangePassword) await loadData(); // otherwise: choose a new password first
-      return { ok: true };
+      const u = r.data.user;
+      if (!u.mustChangePassword) await loadData(); // otherwise: choose a new password first
+      return { ok: true, user: u, enter: () => setUser(u) };
     } catch {
       return { ok: false, error: "Can't reach the server. Check that it is running." };
     }
@@ -85,7 +109,11 @@ export function AppProvider({ children }) {
   const act = useCallback(async (name, args = {}) => {
     try {
       const r = await api(`/api/actions/${name}`, args);
-      if (r.ok) { setError(''); setDb(r.data.data); return r.data.result; }
+      if (r.ok) {
+        setError(''); setDb(r.data.data);
+        if (DONE[name]) setDone({ id: Date.now(), text: DONE[name] }); // a short "done" message slides in
+        return r.data.result;
+      }
       if (r.status === 401) signedOut('Your session has ended. Please sign in again.');
       else setError(r.data.error || 'Something went wrong. Please try again.');
     } catch {
@@ -95,7 +123,7 @@ export function AppProvider({ children }) {
   }, [signedOut]);
 
   return (
-    <Ctx.Provider value={{ db, user, checking, error, clearError: () => setError(''), notice, clearNotice: () => setNotice(''), act, login, logout, changePassword, reload: loadData }}>
+    <Ctx.Provider value={{ db, user, checking, error, clearError: () => setError(''), notice, clearNotice: () => setNotice(''), done, clearDone: () => setDone(null), act, login, logout, changePassword, reload: loadData }}>
       {children}
     </Ctx.Provider>
   );

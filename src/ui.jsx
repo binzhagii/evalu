@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState } from 'react';
-import { LOW_ITEM } from './lib/logic';
+import { LOW_ITEM, forecastText } from './lib/logic';
 
 /** go('reports') switches the page (provided by the app shell). */
 export const NavContext = createContext(() => {});
@@ -28,6 +28,7 @@ const PATHS = {
   logout: <><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3" /><path d="M10 17l5-5-5-5M15 12H3" /></>,
   arrow: <path d="M5 12h14M13 6l6 6-6 6" />,
   back: <path d="M19 12H5M11 6l-6 6 6 6" />,
+  chev: <path d="M9 6l6 6-6 6" />,
   lock: <><rect x="4" y="10" width="16" height="11" rx="2.5" /><path d="M8 10V7a4 4 0 0 1 8 0v3" /></>,
   menu: <path d="M4 6h16M4 12h16M4 18h16" />,
   close: <path d="M6 6l12 12M18 6L6 18" />,
@@ -35,7 +36,7 @@ const PATHS = {
   eyeOff: <><path d="M3 3l18 18" /><path d="M10.6 5.1A10 10 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-3.2 4.1M6.6 6.6C3.7 8.4 2 12 2 12s3.5 7 10 7a9.6 9.6 0 0 0 5.4-1.6" /><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2" /></>,
 };
 export const Icon = ({ name, size = 18 }) => (
-  <svg className="icon" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{PATHS[name]}</svg>
+  <svg className={`icon icon-${name}`} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{PATHS[name]}</svg>
 );
 
 /* ---------- small building blocks ---------- */
@@ -248,9 +249,9 @@ let openAsk = null;
  * Ask before something important happens:  if (await ask('Delete section?', 'SEC-A1 will be removed.', { ok: 'Delete', danger: true })) …
  * Resolves true only when the person clicks the action button (Cancel, Esc or clicking outside = false).
  */
-export function ask(title, text = '', { ok = 'Yes, continue', danger = false, input = null } = {}) {
+export function ask(title, text = '', { ok = 'Yes, continue', danger = false, input = null, optional = false } = {}) {
   return new Promise((resolve) => {
-    if (openAsk) openAsk({ title, text, ok, danger, input, resolve });
+    if (openAsk) openAsk({ title, text, ok, danger, input, optional, resolve });
     else resolve(window.confirm(text ? `${title}\n\n${text}` : title)); // fallback if the dialog is not on the page
   });
 }
@@ -266,7 +267,7 @@ export function AskHost() {
     return () => window.removeEventListener('keydown', key);
   }, [d]);
   if (!d) return null;
-  // with a text box (input), the answer is the text typed, or false when cancelled
+  // with a text box (input), the answer is the text typed (may be empty when optional), or false when cancelled
   const done = (v) => { d.resolve(v && d.input != null ? val.trim() : v); setD(null); };
   return (
     <div className="ask-backdrop" onClick={() => done(false)}>
@@ -277,9 +278,17 @@ export function AskHost() {
         {d.input != null && <textarea className="ask-input" rows={3} autoFocus value={val} onChange={(e) => setVal(e.target.value)} placeholder={d.input} aria-label={d.input} />}
         <div className="ask-actions">
           <button className="ghost" autoFocus={d.input == null} onClick={() => done(false)}>Cancel</button>
-          <button className={d.danger ? 'ask-danger' : ''} disabled={d.input != null && val.trim().length < 5} onClick={() => done(true)}>{d.ok}</button>
+          <button className={d.danger ? 'ask-danger' : ''} disabled={d.input != null && !d.optional && val.trim().length < 5} onClick={() => done(true)}>{d.ok}</button>
         </div>
       </div>
     </div>
   );
+}
+
+/** Participation forecast of a class: a badge, and the sentence that explains it (unless compact). */
+const FORECAST = { 'at-risk': ['overdue', 'At risk'], 'on-track': ['info', 'On track'], reached: ['completed', 'Enough answers'], 'too-early': ['muted', 'Too early to tell'] };
+export function ForecastBadge({ fc, deadline, compact = false }) {
+  if (!fc) return <span className="muted">—</span>;
+  const [kind, label] = FORECAST[fc.status];
+  return <span className="forecast"><Badge kind={kind}>{label}</Badge>{!compact && fc.status !== 'reached' && <span className="muted small">{forecastText(fc, deadline, false)}</span>}</span>;
 }

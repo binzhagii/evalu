@@ -8,6 +8,7 @@ import {
 import { Card, Badge, RuleNote, PeriodPicker, Select, Meter, Stat, Stats, Empty, Avatar, ItemTable, PrintButton, fmt, pct, newestFirst, usePages, ask } from '../ui';
 import { ReleaseSteps } from './Overview';
 import { UbPrints, CommentText, SummarySheet as Sheet, ratingWord as rw, twoDp, UbPacket } from './CompReport';
+import { FollowUp } from './Plans';
 
 export const STATUS_TEXT = { complete: 'Complete', reweighted: 'Complete (a group had no rating)', incomplete: 'No valid result yet', 'weights-missing': 'Weights not set' };
 
@@ -109,6 +110,7 @@ export function Computation({ res, db }) {
         </table>
       )}
       <p className="small muted">{howInWords(res)}{res.missing?.length > 0 && res.final != null ? ` · ${missingSentence(res, db)}` : ''} · {f.name}{f.version ? `, version ${f.version}` : ''}</p>
+      {res.margin && <p className="small muted">{res.margin.moe < 0.005 ? 'How sure: everyone who could answer did, so there is no margin of error.' : `How sure: the students who answered are a sample of their classes, so the rating has a 95% margin of error of ± ${res.margin.moe.toFixed(2)} (it would very likely be between ${res.margin.low.toFixed(2)} and ${res.margin.high.toFixed(2)} if everyone had answered). The margin gets smaller when more students answer.`}</p>}
     </details>
   );
 }
@@ -128,16 +130,18 @@ export function ResultCard({ res, db, periodId, own = false }) {
         </div>
         <div className={`score-box ${shown ? '' : 'none'}`}>
           <span className="score-num">{shown ? fmt(res.final) : '—'}</span>
-          <span className="muted">{res.status === 'complete' ? 'final score / 4' : res.status === 'reweighted' ? `final score / 4 · over ${res.basis}%` : STATUS_TEXT[res.status]}</span>
+          <span className="muted">{res.status === 'complete' ? 'final score / 4' : res.status === 'reweighted' ? 'final score / 4 · one group had no rating' : STATUS_TEXT[res.status]}</span>
+          {shown && res.margin && <span className="score-margin" title="95% margin of error: the rating would very likely stay in this range if other students of the same classes had answered">{res.margin.moe < 0.005 ? 'exact: everyone answered' : `± ${res.margin.moe.toFixed(2)} · ${res.margin.confidence.toLowerCase()} confidence`}</span>}
         </div>
       </div>
+      {shown && res.margin?.nearBand && <div className="note small">Close to a band limit: with its margin of error ({res.margin.low.toFixed(2)} to {res.margin.high.toFixed(2)}) this rating could be <b>{res.margin.nearBand[0]}</b> or <b>{res.margin.nearBand[1]}</b>. Read it with care before deciding on rewards or support.</div>}
       {res.status === 'reweighted' && <div className="note">{missingSentence(res, db)}</div>}
       {res.status === 'incomplete' && <div className="note warn">No final score yet: {res.steps?.[0] || 'none of the evaluator groups has a valid result yet.'}</div>}
       {res.status === 'weights-missing' && <div className="note warn">No final score yet. HR has not set the weight for: {res.missingW.map((g) => groupName(db, g)).join(', ')}.</div>}
       <div className="group-rows">
         {Object.entries(res.groups).map(([g, v]) => (
           <div key={g} className="meter-row big">
-            <span><b>{groupName(db, g)}</b> <span className="muted">{v.weight == null ? (res.formula?.method === 'CUSTOM' ? 'in the custom formula' : 'weight not set') : `counts ${v.weight}%`} · {v.responded}/{v.required} responses</span></span>
+            <span><b>{groupName(db, g)}</b> <span className="muted">{v.weight == null ? (res.formula?.method === 'CUSTOM' ? 'in the custom formula' : 'weight not set') : `counts ${v.weight}%`} · {v.responded}/{v.required} responses{v.score != null && v.moe != null ? (v.moe === 0 ? ' · everyone answered' : ` · ± ${v.moe.toFixed(2)}`) : ''}</span></span>
             <Meter value={v.score == null ? 0 : v.score / 4} tone="brand" />
             <b>{fmt(v.score)}</b>
           </div>
@@ -223,7 +227,7 @@ export function ApprovalPanel({ period }) {
   const mine = approvals.some((a) => a.userId === user.id);
   const returned = period.rejections || [];
   return (
-    <div className={`note ${waiting.length ? 'warn' : 'ok'} approval`}>
+    <div className={`note ${waiting.length ? 'warn' : 'ok'} approval no-print`}>
       <div>
         <b>Vice President approval</b> <span className="muted">(needs {approvalRuleText(db, period)})</span>.{' '}
         {approvals.length ? `Approved by ${approvals.map((a) => userById(db, a.userId)?.name || 'a former account').join(', ')}.` : 'Not approved yet.'}{' '}
@@ -435,6 +439,7 @@ export default function Reports() {
   const tabs = [['overall', 'Overall'], ['subject', 'Per subject'], ['section', 'Per section'], ['individual', 'Individual report'], ['department', 'Department summary']];
   if (canSeeComments(user, period)) tabs.push(['comments', 'All comments']);
   if (user.role === 'HR') { tabs.unshift(['ubprint', 'Print UB reports']); tabs.push(['requests', 'Requests from offices']); }
+  if (user.role === 'HR' || user.role === 'DIR') tabs.push(['plans', 'Development plans']);
   tabs.push(['records', 'Earlier records']);
   const withFinal = all.filter(hasFinal);
   const avg = withFinal.length ? withFinal.reduce((x, y) => x + y.final, 0) / withFinal.length : null;
@@ -502,6 +507,7 @@ export default function Reports() {
       </div>
       {tab === 'ubprint' && <UbPrints periodId={pid} />}
       {tab === 'requests' && <ResultRequests periodId={pid} />}
+      {tab === 'plans' && <FollowUp periodId={pid} />}
       {tab === 'records' && <PastRecords />}
     </Card>
     <details className="note no-print"><summary>How results are calculated</summary><RuleNote /></details>
@@ -535,6 +541,7 @@ export function DeptResults() {
       <Card title={`Department summary · ${deptName(db, user.dept)}`} actions={<><PeriodPicker periods={periods} value={pid} onChange={(v) => { setPid(v); setTid(''); }} /><PrintButton /></>}>
         <DeptSummary db={db} periodId={pid} dept={user.dept} />
       </Card>
+      <FollowUp periodId={pid} dept={user.dept} />
       <Card title="Individual results in your department">
         <table>
           <thead><tr><th>Name</th><th>Type</th><th>Final score</th><th>Status</th></tr></thead>

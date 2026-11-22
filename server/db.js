@@ -123,6 +123,9 @@ CREATE TABLE IF NOT EXISTS results (                                      -- fin
   period_id TEXT NOT NULL REFERENCES periods(id) ON DELETE CASCADE, target_id TEXT NOT NULL, data TEXT NOT NULL,
   PRIMARY KEY (period_id, target_id)
 );
+CREATE TABLE IF NOT EXISTS plans (                                        -- development follow-up: a plan for someone rated Fair or Poor
+  id TEXT PRIMARY KEY, target_id TEXT NOT NULL, period_id TEXT NOT NULL, data TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS sessions (
   token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, expires INTEGER NOT NULL
 );
@@ -140,7 +143,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   addCols('criteria', { levels: 'TEXT' });        // JSON: own words for ratings 1..4 (e.g. "One program outreach" ... "More than three")
   addCols('sections', { class_type: 'TEXT' });    // lecture (NULL), lab, skills, clin-dent, clin-pt, clin-mt
   addCols('instruments', { variant: 'TEXT' });    // the type of class this form is for; NULL = standard
-  addCols('periods', { start_date: 'TEXT', rules: 'TEXT', depts: 'TEXT', approvals: 'TEXT', last_auto: 'TEXT', policy: 'TEXT', rejections: 'TEXT', formulas: 'TEXT' }); // policy: the version in force for the period; rejections: VP returns with reasons
+  addCols('periods', { start_date: 'TEXT', rules: 'TEXT', depts: 'TEXT', approvals: 'TEXT', last_auto: 'TEXT', policy: 'TEXT', rejections: 'TEXT', formulas: 'TEXT', opened_at: 'TEXT', last_forecast: 'TEXT' }); // policy: the version in force for the period; rejections: VP returns with reasons
   addCols('responses', { instrument_id: 'TEXT' });
   addCols('audit_log', { prev_hash: 'TEXT', hash: 'TEXT' }); // tamper-evident chain (see addAudit)
   // Forms used to allow only one per pairing (UNIQUE). Versions need several, so rebuild that table once.
@@ -170,10 +173,11 @@ const TABLES = [
   { name: 'instruments', key: ['id'], rows: (db) => db.instruments.map((i) => ({ id: i.id, name: i.name, target_type: i.targetType, evaluator_group: i.group, dept: i.dept ?? null, version: i.version ?? 1, active: i.active === false ? 0 : 1, categories: i.categories && Object.keys(i.categories).length ? JSON.stringify(i.categories) : null, variant: i.variant || null })) },
   { name: 'instrument_items', key: ['instrument_id', 'criterion_id'], rows: (db) => db.instruments.flatMap((i) => i.items.map((it) => ({ instrument_id: i.id, criterion_id: it.criterionId, weight: it.weight, category: it.category || null }))) },
   { name: 'group_weights', key: ['target_type', 'evaluator_group'], rows: (db) => Object.entries(db.rules).flatMap(([tt, r]) => Object.entries(r).map(([g, w]) => ({ target_type: tt, evaluator_group: g, weight: w }))) },
-  { name: 'periods', key: ['id'], rows: (db) => db.periods.map((p) => ({ id: p.id, name: p.name, start_date: p.startDate ?? null, deadline: p.deadline, status: p.status, release_stage: p.releaseStage, threshold_checked: p.thresholdChecked ? 1 : 0, rules: p.rules ? JSON.stringify(p.rules) : null, depts: p.depts?.length ? JSON.stringify(p.depts) : null, approvals: p.approvals?.length ? JSON.stringify(p.approvals) : null, last_auto: p.lastAuto ?? null, policy: p.policy ? JSON.stringify(p.policy) : null, rejections: p.rejections?.length ? JSON.stringify(p.rejections) : null, formulas: p.formulas && Object.keys(p.formulas).length ? JSON.stringify(p.formulas) : null })) },
+  { name: 'periods', key: ['id'], rows: (db) => db.periods.map((p) => ({ id: p.id, name: p.name, start_date: p.startDate ?? null, deadline: p.deadline, status: p.status, release_stage: p.releaseStage, threshold_checked: p.thresholdChecked ? 1 : 0, rules: p.rules ? JSON.stringify(p.rules) : null, depts: p.depts?.length ? JSON.stringify(p.depts) : null, approvals: p.approvals?.length ? JSON.stringify(p.approvals) : null, last_auto: p.lastAuto ?? null, policy: p.policy ? JSON.stringify(p.policy) : null, rejections: p.rejections?.length ? JSON.stringify(p.rejections) : null, formulas: p.formulas && Object.keys(p.formulas).length ? JSON.stringify(p.formulas) : null, opened_at: p.openedAt ?? null, last_forecast: p.lastForecast ?? null })) },
   { name: 'formulas', key: ['id'], rows: (db) => (db.formulas || []).map((f) => ({ id: f.id, key: f.key, target_type: f.targetType, dept: f.dept ?? null, version: f.version, status: f.status, config: JSON.stringify(f.config), meta: JSON.stringify(f.meta || {}) })) },
   { name: 'tasks', key: ['id'], rows: (db) => db.tasks.map((t) => ({ id: t.id, period_id: t.periodId, evaluator_id: t.evaluatorId, target_id: t.targetId, evaluator_group: t.group, section_id: t.sectionId, draft: t.draft ? JSON.stringify(t.draft) : null })) },
   { name: 'results', key: ['period_id', 'target_id'], rows: (db) => (db.results || []).map((r) => ({ period_id: r.periodId, target_id: r.targetId, data: JSON.stringify(r.data) })) },
+  { name: 'plans', key: ['id'], rows: (db) => (db.plans || []).map((p) => ({ id: p.id, target_id: p.targetId, period_id: p.periodId, data: JSON.stringify(p) })) },
   { name: 'responses', key: ['task_id'], rows: (db) => db.tasks.filter((t) => t.response).map((t) => ({ task_id: t.id, submitted_at: t.response.submittedAt, instrument_id: t.response.instrumentId ?? null, comment: t.response.comment ? JSON.stringify(t.response.comment) : null })) },
   { name: 'answers', key: ['task_id', 'criterion_id'], rows: (db) => db.tasks.filter((t) => t.response).flatMap((t) => Object.entries(t.response.answers).map(([c, v]) => ({ task_id: t.id, criterion_id: c, value: v, weight: t.response.weights[c] ?? 1 }))) },
   { name: 'result_requests', key: ['id'], rows: (db) => db.requests.map((r) => ({ id: r.id, period_id: r.periodId, target_id: r.targetId, office: r.office, head_id: r.headId, by_id: r.byId, at: r.at })) },
@@ -209,6 +213,7 @@ function readFromTables() {
   db.periods = all('SELECT * FROM periods ORDER BY rowid').map((p) => ({ id: p.id, name: p.name, startDate: p.start_date, deadline: p.deadline, status: p.status, releaseStage: p.release_stage, thresholdChecked: !!p.threshold_checked,
     rules: p.rules ? JSON.parse(p.rules) : null, depts: p.depts ? JSON.parse(p.depts) : null, approvals: p.approvals ? JSON.parse(p.approvals) : [], lastAuto: p.last_auto,
     policy: p.policy ? JSON.parse(p.policy) : null, rejections: p.rejections ? JSON.parse(p.rejections) : [], formulas: p.formulas ? JSON.parse(p.formulas) : null,
+    openedAt: p.opened_at ?? null, lastForecast: p.last_forecast ?? null,
   }));
   const answers = {};
   for (const a of all('SELECT * FROM answers ORDER BY rowid')) {
@@ -225,6 +230,7 @@ function readFromTables() {
   db.pastResults = all('SELECT * FROM past_results ORDER BY rowid').map((r) => ({ id: r.id, userId: r.user_id, periodLabel: r.period_label, final: r.final, note: r.note, importedAt: r.imported_at }));
   db.formulas = all('SELECT * FROM formulas ORDER BY rowid').map((f) => ({ id: f.id, key: f.key, targetType: f.target_type, dept: f.dept, version: f.version, status: f.status, config: JSON.parse(f.config), meta: f.meta ? JSON.parse(f.meta) : {} }));
   db.results = all('SELECT * FROM results ORDER BY rowid').map((r) => ({ periodId: r.period_id, targetId: r.target_id, data: JSON.parse(r.data) }));
+  db.plans = all('SELECT * FROM plans ORDER BY rowid').map((r) => JSON.parse(r.data));
   db.policies = all('SELECT * FROM policies ORDER BY version').map((x) => ({ version: x.version, policy: JSON.parse(x.data), at: x.at, byId: x.by_id, byName: x.by_name, reason: x.reason }));
   db.notifications = all('SELECT * FROM notifications ORDER BY rowid').map((n) => ({ id: n.id, key: n.key, userId: n.user_id, kind: n.kind, at: n.at, read: !!n.read, text: n.text }));
   return db;
@@ -285,7 +291,7 @@ export function save(next) {
 export function replaceAll(db) {
   const users = db.users;
   inTransaction(() => {
-    for (const t of ['results', 'answers', 'responses', 'result_requests', 'past_results', 'tasks', 'notifications', 'policies', 'periods', 'group_weights', 'instrument_items', 'instruments', 'criteria', 'section_students', 'sections', 'evaluator_groups']) sql.exec(`DELETE FROM ${t}`);
+    for (const t of ['plans', 'results', 'answers', 'responses', 'result_requests', 'past_results', 'tasks', 'notifications', 'policies', 'periods', 'group_weights', 'instrument_items', 'instruments', 'criteria', 'section_students', 'sections', 'evaluator_groups']) sql.exec(`DELETE FROM ${t}`);
     // keep sessions of users that still exist; replace user rows in place
     // free every username first, so a seed username can't clash with an account HR created
     sql.exec("UPDATE users SET username = '~' || id, email = NULL");

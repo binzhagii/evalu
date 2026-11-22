@@ -6,14 +6,20 @@ export function send(res, status, body, headers = {}) {
   res.end(JSON.stringify(body));
 }
 
-export function readJson(req) {
+/**
+ * Reads a JSON body of at most `limit` bytes. A body that is too large is read to the end (up to 4x the
+ * limit) so the caller can still answer with a clear message, then rejected with err.code = 'TOO_LARGE'.
+ */
+export function readJson(req, limit = MAX_BODY) {
   return new Promise((resolve, reject) => {
     let size = 0; const chunks = [];
+    const tooLarge = () => Object.assign(new Error('too large'), { code: 'TOO_LARGE', limit });
     req.on('data', (c) => {
       size += c.length;
-      if (size > MAX_BODY) { reject(new Error('too large')); req.destroy(); } else chunks.push(c);
+      if (size > limit * 4) { reject(tooLarge()); req.destroy(); } else if (size <= limit) chunks.push(c);
     });
     req.on('end', () => {
+      if (size > limit) { reject(tooLarge()); return; }
       try {
         const v = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
         if (typeof v !== 'object' || v === null || Array.isArray(v)) throw new Error('not an object');

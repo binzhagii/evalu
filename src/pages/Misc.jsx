@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { useApp } from '../lib/store';
-import { computeTarget, canSeeOwn, sectionStats, STAGE_LABEL, THRESHOLD, isExemptSection } from '../lib/logic';
+import { computeTarget, canSeeOwn, sectionStats, STAGE_LABEL, THRESHOLD, isExemptSection, participationForecast, forecastText } from '../lib/logic';
 import { Card, Badge, Meter, Empty, Icon, RuleNote } from '../ui';
 import { ResultCard, PastRecords } from './Reports';
 import { QrButton } from './ClassQr';
+import { MyPlans } from './Plans';
 import { CompSheet, EvalSheet, VerbatimSheet, evalSheetsOf } from './CompReport';
 
 const KIND = {
@@ -101,18 +102,23 @@ export function MyResults() {
           <p className="muted">At least half of the class plus one must answer, or that class is left out of your result. Tip: show the class QR code in class so students can answer on their phones right away.</p>
           {open.flatMap((p) => myClasses.map((s) => {
             const st = sectionStats(db, p.id, s.id);
+            const fc = participationForecast(db, p.id, s.id);
             return (
-              <div key={p.id + s.id} className="meter-row big">
+              <div key={p.id + s.id}>
+              <div className="meter-row big">
                 <span><b>{s.code}</b> <span className="muted">{s.subject}{open.length > 1 ? ` · ${p.name}` : ''}</span></span>
                 <Meter value={st.rate} mark={THRESHOLD} />
                 <b>{st.responded}/{st.required}</b>
                 {!st.required ? <span className="muted">no tasks yet</span> : st.belowHalf ? <Badge kind="overdue">needs {st.needed - st.responded} more</Badge> : <Badge kind="completed">enough responses</Badge>}
                 <QrButton sections={[s]} label="Show QR code" />
               </div>
+              {fc && fc.status !== 'reached' && <p className={`small ${fc.status === 'at-risk' ? 'warn-text' : 'muted'} forecast-line`}>{forecastText(fc, p.deadline)}</p>}
+              </div>
             );
           }))}
         </Card></div>
       )}
+      <MyPlans />
       {released.length === 0 && (
         <Card><Empty icon="clock" title="Your results have not been released yet">HR releases results to you after the Vice Presidents have reviewed and approved them.</Empty></Card>
       )}

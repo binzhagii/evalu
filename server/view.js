@@ -77,6 +77,8 @@ export function viewFor(db, user) {
     results: isHR ? db.results || [] : [], // results stored at closing (HR checks them against a fresh computation)
     tasks,
     requests: db.requests.filter((r) => isHR || r.headId === user.id),
+    // development plans: HR and the VPs see all; a dean or principal those of their department; a person their own
+    plans: (db.plans || []).filter((p) => isHR || user.role === 'DIR' || p.targetId === user.id || (isResultHead(user) && people.get(p.targetId)?.dept === user.dept && p.targetId !== user.id)),
     pastResults: db.pastResults.filter(pastVisible),
     notifications: db.notifications.filter((n) => n.userId === user.id),
   };

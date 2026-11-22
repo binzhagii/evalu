@@ -124,10 +124,11 @@ assert.equal(L.sendReminders(d5, 'p4'), 0, 'not twice on the same day');
 assert.ok(d5.notifications.some((n) => n.key?.startsWith('remdept|p4|A|dean_a')), 'department alerted');
 assert.ok(d5.notifications.some((n) => n.key?.startsWith('remhr|p4|hr')), 'HR alerted');
 const d6 = structuredClone(db);
-assert.equal(L.runDailyAutomation(d6), 1, 'p4 is due within 7 days');
+assert.equal(L.runDailyAutomation(d6), 2, 'p4 is due within 7 days: the early-warning check and the reminders');
 assert.equal(L.runDailyAutomation(d6), 0, 'only once a day');
 const d7 = structuredClone(db); d7.periods.find((p) => p.id === 'p4').deadline = '2999-01-01';
-assert.equal(L.runDailyAutomation(d7), 0, 'not too early');
+assert.equal(L.runDailyAutomation(d7), 1, 'far from the deadline: only the early-warning check, no reminders yet');
+assert.ok(!d7.notifications.some((n) => n.key?.startsWith('rem|')), 'no reminders too early');
 
 // FR17 / NFR6: release order, faculty only after release (which needs VP approval)
 const P = { releaseStage: 'hr' }, u = (id) => db.users.find((x) => x.id === id);
@@ -158,10 +159,10 @@ assert.ok(db.tasks.filter((x) => x.response).every((x) => x.response.instrumentI
 assert.ok(L.isInstitutionalEmail('fac_a1@ubaguio.edu') && L.isInstitutionalEmail('20226699@s.ubaguio.edu'));
 assert.ok(!L.isInstitutionalEmail('someone@gmail.com') && !L.isInstitutionalEmail('x@ubaguio.edu.evil.com'));
 
-// Clinical Instructors: evaluated by the students of their clinical class and by the dean (50 / 50 to start)
+// Clinical Instructors: evaluated by the students of their clinical class, the dean and the program chair (40/40/20, form B2)
 const ciU = db.users.find((x) => x.id === 'ci_c1');
 assert.equal(L.targetType(db, ciU), 'CI'); assert.ok(L.isTeacher(ciU) && L.isEvaluatee(ciU));
-assert.deepEqual(db.rules.CI, { ST: 50, DEAN: 50 });
+assert.deepEqual(db.rules.CI, { ST: 40, DEAN: 40, CHAIR: 20 });
 assert.ok(db.tasks.some((x) => x.periodId === 'p4' && x.targetId === 'ci_c1' && x.group === 'ST' && x.sectionId === 'sec10'));
 assert.ok(db.tasks.some((x) => x.periodId === 'p4' && x.targetId === 'ci_c1' && x.evaluatorId === 'dean_c' && x.group === 'DEAN'));
 assert.ok(L.computeTarget(db, 'p1', 'ci_c1').final != null, 'CI gets a final score');

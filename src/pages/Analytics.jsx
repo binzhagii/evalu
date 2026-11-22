@@ -5,7 +5,7 @@ import { LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContai
 import { useApp } from '../lib/store';
 import {
   computeAll, canSeeAll, hasFinal, itemStats, sectionStats, targetsOf, policyFor, TARGET_TYPES, deptName, groupName,
-  formOfTask, itemCategory, interpretation, commentParts,
+  formOfTask, itemCategory, interpretation, commentParts, cronbachAlpha, alphaLabel,
 } from '../lib/logic';
 import { Card, PeriodPicker, Select, Badge, fmt, pct } from '../ui';
 import { summarizeComments } from '../lib/comments';
@@ -220,6 +220,8 @@ export default function Analytics() {
   if (consistent.length) findings.push({ text: `${consistent.length} question(s) were low in this period and the one before, e.g. "${text(consistent[0].criterionId)}".`, action: 'Low twice in a row suggests a lasting need rather than a one-time result.', from: 'Item-level results' });
   const worstTopic = [...csum.topics].filter((x) => x.negative).sort((a, b) => b.negative - a.negative)[0];
   if (worstTopic) findings.push({ text: `In the written comments, "${worstTopic.label}" has the most negative or mixed remarks (${worstTopic.negative} of ${worstTopic.count}).`, action: 'Read those comments (Reports → All comments) and consider it for coaching or training.', from: 'What the comments are about' });
+  const near = now.filter((r) => r.margin?.nearBand);
+  if (near.length) findings.push({ text: `${near.length} of ${now.length} final ratings are close to a band limit (their margin of error crosses it), e.g. ${near[0].target.name} ${fmt(near[0].final)} ± ${near[0].margin.moe.toFixed(2)}.`, action: 'Use these with care for rewards or support; more student answers make them surer.', from: 'How sure are the results?' });
   if (gaps.length) findings.push({ text: `${bigGaps.length} of ${gaps.length} people have a gap of 0.50 or more between evaluator groups.`, action: bigGaps.length ? 'Review these with the dean: the groups see the person differently (e.g. classroom vs. compliance).' : 'Evaluator groups broadly agree.', from: 'Evaluator agreement' });
 
   const filters = (
@@ -340,6 +342,8 @@ export default function Analytics() {
 
       <PeriodCompare db={db} periods={periods} data={data} dept={dept} />
 
+      <Sureness db={db} pid={pid} now={now} dept={dept} />
+
       <Card title="Results per question">
         <p className="muted">Each question, lowest first. Questions averaging below <b>{pol.lowItem.toFixed(2)}</b> (the low question line in Policy &amp; rules) are flagged; <b>consistently low</b> means it was also low in the previous period.</p>
         {items.length === 0 ? <p className="muted">No item results for this selection.</p> : (
@@ -360,5 +364,64 @@ export default function Analytics() {
         </Source>
       </Card>
     </>
+  );
+}
+
+/**
+ * How sure are the results: the 95% margin of error of each final rating, the ones whose range crosses a band
+ * limit, and the reliability (Cronbach's alpha) of each form used in the period.
+ */
+function Sureness({ db, pid, now, dept }) {
+  const withMargin = now.filter((r) => r.margin);
+  const count = (c) => withMargin.filter((r) => r.margin.confidence === c).length;
+  const watch = withMargin.filter((r) => r.margin.nearBand || r.margin.confidence === 'Low').sort((a, b) => b.margin.moe - a.margin.moe).slice(0, 10);
+  // reliability of each form: the answers of every counted response on that form version
+  const byForm = new Map();
+  for (const t of db.tasks) {
+    if (t.periodId !== pid || !t.response || t.response.redacted || !t.response.instrumentId) continue;
+    if (dept !== 'ALL' && db.users.find((u) => u.id === t.targetId)?.dept !== dept) continue;
+    (byForm.get(t.response.instrumentId) || byForm.set(t.response.instrumentId, []).get(t.response.instrumentId)).push(t.response.answers);
+  }
+  const forms = [...byForm.entries()].map(([id, answers]) => {
+    const ins = db.instruments.find((i) => i.id === id);
+    if (!ins) return null;
+    const rows = answers.map((a) => ins.items.map((it) => a[it.criterionId])).filter((row) => row.every((v) => Number.isFinite(v)));
+    const alpha = cronbachAlpha(rows);
+    return { id, name: ins.name.replace(' (UB tool)', ''), group: ins.group, n: rows.length, k: ins.items.length, alpha };
+  }).filter((x) => x && x.n >= 5).sort((a, b) => (a.alpha ?? 2) - (b.alpha ?? 2));
+  const tone = { Excellent: 'completed', Good: 'completed', Acceptable: 'info', Questionable: 'pending', Poor: 'overdue' };
+  return (
+    <Card title="How sure are the results?">
+      <p className="muted">A rating comes from the people who answered, not from everyone. The margin of error says how much it could change if others had answered; the form reliability says whether a form's questions measure consistently.</p>
+      {withMargin.length > 0 && (
+        <p>Final ratings: <b>{count('High')}</b> high confidence (± 0.10 or less), <b>{count('Moderate')}</b> moderate (up to ± 0.25), <b>{count('Low')}</b> low (more than ± 0.25).</p>
+      )}
+      {watch.length > 0 && (
+        <table>
+          <thead><tr><th>Name</th><th>Final rating</th><th>Margin (95%)</th><th>Could be</th></tr></thead>
+          <tbody>{watch.map((r) => (
+            <tr key={r.targetId}><td>{r.target.name}</td><td><b>{fmt(r.final)}</b></td><td>± {r.margin.moe.toFixed(2)} <span className="muted small">({r.margin.low.toFixed(2)} to {r.margin.high.toFixed(2)})</span></td>
+              <td>{r.margin.nearBand ? <Badge kind="pending">{r.margin.nearBand.join(' or ')}</Badge> : <Badge kind="overdue">low confidence</Badge>}</td></tr>
+          ))}</tbody>
+        </table>
+      )}
+      {!watch.length && withMargin.length > 0 && <p className="muted">No final rating is close to a band limit or has low confidence.</p>}
+      <h4>Reliability of the forms (Cronbach's alpha)</h4>
+      {forms.length === 0 ? <p className="muted">Needs at least 5 answered evaluations on a form.</p> : (
+        <table>
+          <thead><tr><th>Form</th><th>Rated by</th><th>Answers</th><th>Questions</th><th>Alpha</th></tr></thead>
+          <tbody>{forms.map((x) => (
+            <tr key={x.id}><td>{x.name}</td><td>{groupName(db, x.group)}</td><td>{x.n}</td><td>{x.k}</td>
+              <td>{x.alpha == null ? <span className="muted">—</span> : <><b>{x.alpha.toFixed(2)}</b> <Badge kind={tone[alphaLabel(x.alpha)]}>{alphaLabel(x.alpha)}</Badge></>}</td></tr>
+          ))}</tbody>
+        </table>
+      )}
+      <Source>
+        <li>Margin of error: 95% confidence, from the spread of the answers (Student's t), with the finite population correction for the class size; it is 0 when everyone answered. The final rating's margin combines the groups' margins with their percentages.</li>
+        <li>"Could be": the rating's range crosses a band limit of the period's policy, so it could fall in either band.</li>
+        <li>Cronbach's alpha: k / (k - 1) x (1 - sum of the question variances / variance of the totals), over every answered evaluation on that form version. 0.90 and up excellent, 0.80 good, 0.70 acceptable, 0.60 questionable, below poor (George &amp; Mallery, 2003). A value below 0 means the answers to the questions disagree with each other, as with random or careless answering.</li>
+        <li>These measure how precise the numbers are, not how good the person is.</li>
+      </Source>
+    </Card>
   );
 }

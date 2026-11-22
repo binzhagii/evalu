@@ -227,6 +227,18 @@ the system is not restructured. A **new type of evaluator** that does not exist 
 developer. No configuration screen can promise every formula the school might invent; the plug-in modules are the
 extension point for those cases.
 
+## Advanced features added on 21 November 2026
+
+These answer "it is easy to make": each is something a form and a spreadsheet cannot do, taken from established evaluation systems.
+
+| Feature | Taken from | What evalU does | Evidence |
+|---|---|---|---|
+| **Margin of error and form reliability** | IDEA, Explorance Blue | Each final rating shows a 95% margin of error (Student's t, finite population correction; 0 when everyone answered) and whether its range crosses a band limit. Analytics shows Cronbach's alpha for every form used. | TC-56, TC-57 |
+| **Participation forecast** | Early-warning analytics | Pace since the period opened predicts, per class, whether half + 1 will be reached by the deadline; at-risk classes are shown on Progress and warned to the teacher, department heads and HR once a day. | TC-58 |
+| **Development follow-up** | Watermark Faculty Success, Interfolio | A plan for each Fair/Poor rating (areas, actions, review date), confirmed by the person and compared with the next term's rating, area by area. | TC-59, TC-60 |
+
+The developer test of 20 November 2026 found six defects; they are fixed and re-tested: the 2,000-character comment limit (TC-61), an empty form going live (TC-62), class lists over 64 KB (TC-63), Clinical Instructor weights 40/40/20 with the Program Chair (TC-64), and the VP approval box printing on the UB printouts. The missing HRMC tools for FR24 (PC/AP and SH by faculty, AP/PC/SH by Dean/Principal) are still to be encoded.
+
 ## Ideas taken from similar systems
 
 | Idea | Taken from | What evalU does | Which UB problem it targets |

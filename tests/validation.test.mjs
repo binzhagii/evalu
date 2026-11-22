@@ -366,6 +366,87 @@ try {
       duplicateRejected,
     };
   });
+  /* ---------------- Part G: how sure the results are, early warning, development follow-up, fixes ---------------- */
+  const ST = await import('../src/lib/stats.js');
+  // 10 enrolled, 6 answered 3.2, 3.4, 3.6, 3.0, 3.8, 3.6: mean 3.433, sd 0.2944, se = sd/sqrt(6) x sqrt(4/9) = 0.0801, t(5) = 2.571 -> 0.21
+  await tc('TC-63', 'Margin of error (95%)', 'Class of 10, 6 answered (3.2, 3.4, 3.6, 3.0, 3.8, 3.6); then all 10 answered', [0.21, 0], () => [
+    +ST.sampleStats([3.2, 3.4, 3.6, 3.0, 3.8, 3.6], 10).moe.toFixed(2), ST.sampleStats([3, 3, 4, 4, 3, 3, 4, 4, 3, 3], 10).moe]);
+  // hand-worked: question variances 1.667 + 0.667 + 0.917 = 3.25, total variance 8.917 -> 3/2 x (1 - 3.25/8.917) = 0.95
+  await tc('TC-64', "Form reliability (Cronbach's alpha)", '4 evaluations x 3 questions: (2,3,3) (3,3,4) (4,4,4) (1,2,2)', ['0.95', 'Excellent'], () => {
+    const a = ST.cronbachAlpha([[2, 3, 3], [3, 3, 4], [4, 4, 4], [1, 2, 2]]); return [a.toFixed(2), ST.alphaLabel(a)];
+  });
+  await tc('TC-65', 'Participation forecast', 'Opened 10 days ago, 5 days left, class of 10 (needs 6): 3 answered; 5 answered; then who is warned', { three: 'at-risk 4', five: 'on-track 7', warned: ['dean', 'hr', 'teacher'] }, () => {
+    const now = Date.now(), day = 86400000, iso = (t) => new Date(t).toISOString().slice(0, 10);
+    const make = (answered) => {
+      const db = { departments: [{ id: 'D', name: 'D', kind: 'college' }], users: [{ id: 'T', name: 'Teacher', role: 'TP', position: 'faculty', dept: 'D', active: true }, { id: 'DN', name: 'Dean', role: 'TP', position: 'dean', dept: 'D', active: true }, { id: 'H', name: 'HR', role: 'HR', position: 'hr', active: true }],
+        sections: [{ id: 'S', code: 'S-1', subject: 'Subject', facultyId: 'T', dept: 'D', studentIds: [] }], tasks: [], notifications: [], rules: {}, policies: [],
+        periods: [{ id: 'P', name: 'Term', status: 'open', deadline: iso(now + 5 * day), openedAt: new Date(now - 10 * day).toISOString(), releaseStage: 'hr', approvals: [] }] };
+      for (let i = 0; i < 10; i++) { db.users.push({ id: `s${i}`, name: `s${i}`, role: 'ST', position: 'student', dept: 'D', active: true }); db.sections[0].studentIds.push(`s${i}`); db.tasks.push({ id: `t${i}`, periodId: 'P', evaluatorId: `s${i}`, targetId: 'T', group: 'ST', sectionId: 'S', response: i < answered ? { answers: { q: 3 }, weights: { q: 1 } } : null }); }
+      return db;
+    };
+    const f3 = L.participationForecast(make(3), 'P', 'S', now), f5 = L.participationForecast(make(5), 'P', 'S', now);
+    const db = make(3); L.forecastWarnings(db, 'P', now);
+    const who = { T: 'teacher', DN: 'dean', H: 'hr' };
+    return { three: `${f3.status} ${f3.projected}`, five: `${f5.status} ${f5.projected}`, warned: [...new Set(db.notifications.map((n) => who[n.userId]))].sort() };
+  });
+  let planId;
+  await tc('TC-66', 'Development follow-up', 'Dean A makes a plan for Secretary A (Fair in AY 2025-26 Term 1); another dean, a teacher and a student try; Secretary A reads it; HR closes it',
+    ['dean of the department: 200', 'dean of another department: 403', 'teacher: 403', 'student: 403', 'secretary sees it: true', 'other teacher sees it: false', 'confirmed read: true', 'closed as improved: true'], async () => {
+      const deanA = await login('dean_a'), deanB = await login('dean_b'), secA = await login('sec_a'), facA2 = await login('fac_a2');
+      const d0 = (await call('/api/data', { cookie: hr })).data;
+      const target = d0.users.find((u) => u.username === 'sec_a').id;
+      const body = { targetId: target, periodId: 'p2', areas: ['Work behavior and attitude'], actions: 'Coaching on work attitude with the office head; seminar in January.', reviewBy: '2027-04-30' };
+      const r = await act(deanA, 'createPlan', body);
+      planId = r.data.result?.id;
+      const b = await act(deanB, 'createPlan', body), t = await act(fac, 'createPlan', body), s = await act(student, 'createPlan', body);
+      const sees = (c) => call('/api/data', { cookie: c }).then((x) => x.data.plans.some((p) => p.id === planId));
+      const own = await sees(secA), other = await sees(facA2);
+      await act(secA, 'acknowledgePlan', { id: planId, note: 'I will attend the January seminar.' });
+      const read = !!(await call('/api/data', { cookie: hr })).data.plans.find((p) => p.id === planId).acknowledgedAt;
+      await act(hr, 'closePlan', { id: planId, outcome: 'improved', note: 'Validation test' });
+      const closed = (await call('/api/data', { cookie: hr })).data.plans.find((p) => p.id === planId);
+      return [`dean of the department: ${r.status}`, `dean of another department: ${b.status}`, `teacher: ${t.status}`, `student: ${s.status}`, `secretary sees it: ${own}`, `other teacher sees it: ${other}`, `confirmed read: ${read}`, `closed as improved: ${closed.status === 'closed' && closed.outcome === 'improved'}`];
+    });
+  await tc('TC-67', 'Development follow-up', "The plan's follow-up compares the next period with a rating (AY 2025-26 Term 2) with the plan's period", 'next period found, change = after - before', async () => {
+    const d = (await call('/api/data', { cookie: hr })).data;
+    const plan = d.plans.find((p) => p.id === planId);
+    const pr = L.planProgress(d, plan);
+    const before = L.computeTarget(d, 'p2', plan.targetId).final, after = L.computeTarget(d, 'p3', plan.targetId).final;
+    return pr.next?.id === 'p3' && pr.before === before && pr.after === after && Math.abs(pr.change - (after - before)) < 1e-9 ? 'next period found, change = after - before' : JSON.stringify(pr);
+  });
+  await tc('TC-68', 'Fix DEF-01: comment limit', 'Submit with a 2,001-character comment, then 2,000', ['HTTP 400 with the limit in the message', 'HTTP 200'], async () => {
+    // an open test period that has already started (a new one may be refused by the formula effective dates)
+    const today = new Date().toISOString().slice(0, 10);
+    const per = (await call('/api/data', { cookie: hr })).data.periods.find((p) => p.status === 'open' && /(validation)/.test(p.name) && (!p.startDate || p.startDate <= today) && p.deadline >= today);
+    if (!per) return ['no open test period'];
+    await act(hr, 'generateTasks', { periodId: per.id });
+    const c = await login('st_a07');
+    const d = (await call('/api/data', { cookie: c })).data;
+    const t = d.tasks.find((x) => x.periodId === per.id && !x.response && x.group === 'ST');
+    if (!t) return ['no open evaluation for this student'];
+    const ans = Object.fromEntries(L.formForTask(d, t).items.map((it) => [it.criterionId, 3]));
+    const a = await act(c, 'submitEvaluation', { taskId: t.id, answers: ans, comment: 'x'.repeat(2001) });
+    const b = await act(c, 'submitEvaluation', { taskId: t.id, answers: ans, comment: 'x'.repeat(2000) });
+    return [a.status === 400 && /2,000/.test(a.data.error) ? 'HTTP 400 with the limit in the message' : `HTTP ${a.status} ${a.data.error}`, `HTTP ${b.status}`];
+  });
+  await tc('TC-69', 'Fix DEF-02: empty form', 'HR creates a Program-Chair form for Dentistry with no questions; which form do Dentistry teachers get?', "UB's general form until the new form has a question", async () => {
+    const r = await act(hr, 'createForm', { targetType: 'COLLEGE_FACULTY', group: 'CHAIR', dept: 'SOD' });
+    const d = (await call('/api/data', { cookie: hr })).data;
+    const used = L.instrumentFor(d, 'COLLEGE_FACULTY', 'CHAIR', 'SOD');
+    return used && used.id !== r.data.result.id && used.items.length > 0 ? "UB's general form until the new form has a question" : `form in use: ${used?.id} (${used?.items.length} items)`;
+  });
+  await tc('TC-70', 'Fix DEF-06: large class list', 'Check a 3,000-row class list (about 330 KB); then a 5 MB one', ['HTTP 200, 3000 rows read', 'HTTP 413 with a message'], async () => {
+    const rows = ['section code,subject,teacher name,teacher email,student ID,student name,student UB email'];
+    for (let i = 0; i < 600; i++) for (let k = 1; k <= 5; k++) rows.push(`BIG-${k},Big Subject ${k},Big Teacher ${k},big.teacher${k}@ubaguio.edu,bg${String(i).padStart(5, '0')},Big Student ${i},bg${String(i).padStart(5, '0')}@s.ubaguio.edu`);
+    const a = await act(hr, 'importClassList', { csv: rows.join('\n'), dept: 'SOL', preview: true });
+    const b = await act(hr, 'importClassList', { csv: 'x'.repeat(5 * 1024 * 1024), dept: 'SOL', preview: true });
+    return [`HTTP ${a.status}, ${a.data.result?.rows} rows read`, b.status === 413 && /too large/i.test(b.data.error) ? 'HTTP 413 with a message' : `HTTP ${b.status} ${b.data.error}`];
+  });
+  await tc('TC-71', 'Fix DEF-03: Clinical Instructors', 'CI weights; the Program Chair has a form for CIs and is assigned to evaluate the Nursing CI', { weights: { ST: 40, DEAN: 40, CHAIR: 20 }, chairForm: true, chairTask: true }, async () => {
+    const d = (await call('/api/data', { cookie: hr })).data;
+    const ci = d.users.find((u) => u.username === 'ci_c1').id, chair = d.users.find((u) => u.username === 'chair_c').id;
+    return { weights: d.rules.CI, chairForm: !!L.instrumentFor(d, 'CI', 'CHAIR', 'C'), chairTask: d.tasks.some((t) => t.targetId === ci && t.evaluatorId === chair && t.group === 'CHAIR') };
+  });
 } finally {
   server.close();
 }
@@ -382,7 +463,7 @@ const md = [
   '',
   'Each case runs automatically (`npm run test:validation`). "Actual" is measured during this run, not written by hand.',
   'Part A checks the computation rules on controlled data; Part B runs the real server, database and access control;',
-  'Part C checks the formula engine and its approval and versions; Part D the comment analysis; Part E the computation modules (plug-ins), the effective period and the reproducibility of stored results; Part F HR-configurable evaluator groups and access control.',
+  'Part C checks the formula engine and its approval and versions; Part D the comment analysis; Part E the computation modules (plug-ins), the effective period and the reproducibility of stored results; Part F HR-configurable evaluator groups and access control; Part G the margin of error, form reliability, participation forecast, development follow-up and the fixes from the 20 Nov 2026 test.',
   '',
   '| ID | Requirement | Scenario | Expected | Actual | Result |',
   '|---|---|---|---|---|---|',

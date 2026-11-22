@@ -4,6 +4,13 @@ import { useApp } from '../lib/store';
 import { taskStatus, userById, formForTask, periodById, itemCategory, ratingWords, MAX_RATING, targetType, hasPlanBoxes, commentParts, packComment, groupName } from '../lib/logic';
 import { Card, Badge, Avatar, Stat, Stats, Meter, Empty, Icon, dueText, pct } from '../ui';
 
+const MAX_COMMENT = 2000; // the server refuses longer comments
+/** "120 / 2,000 characters"; at the limit it says so, instead of silently stopping the typing. */
+function CharCount({ text }) {
+  const n = text.length, full = n >= MAX_COMMENT;
+  return <span className={`small ${full ? 'warn-text' : 'muted'}`}>{n.toLocaleString('en-US')} / {MAX_COMMENT.toLocaleString('en-US')} characters{full ? ' · limit reached' : ''}</span>;
+}
+
 export default function Tasks() {
   const { db, user } = useApp();
   // came from a class QR code: open that class's evaluation right away
@@ -190,10 +197,10 @@ function EvalForm({ taskId, onClose, onDone }) {
         </p>
         {twoBoxes ? <>
           <label className="field-block"><b>Employee's personal and professional development plan</b>
-            <textarea rows={3} value={plan} maxLength={1500} onChange={(e) => setPlan(e.target.value)} placeholder="e.g. Will attend trainings and seminars in the discipline…" /></label>
+            <textarea rows={3} value={plan} maxLength={MAX_COMMENT} onChange={(e) => setPlan(e.target.value)} placeholder="e.g. Will attend trainings and seminars in the discipline…" /><CharCount text={plan} /></label>
           <label className="field-block"><b>Areas to be improved by the employee</b>
-            <textarea rows={3} value={improve} maxLength={1500} onChange={(e) => setImprove(e.target.value)} placeholder="e.g. Submit requirements on time…" /></label>
-        </> : <textarea rows={4} value={comment} maxLength={2000} onChange={(e) => setComment(e.target.value)} placeholder="Write any comments about this person's performance…" />}
+            <textarea rows={3} value={improve} maxLength={MAX_COMMENT} onChange={(e) => setImprove(e.target.value)} placeholder="e.g. Submit requirements on time…" /><CharCount text={improve} /></label>
+        </> : <><textarea rows={4} value={comment} maxLength={MAX_COMMENT} onChange={(e) => setComment(e.target.value)} placeholder="Write any comments about this person's performance…" /><CharCount text={comment} /></>}
       </Card>
 
       <div className="action-bar">

@@ -14,17 +14,46 @@ import { Accounts, MyAccount, ForcedPasswordChange } from './pages/Accounts';
 import { QR_KEY } from './pages/ClassQr';
 import './index.css';
 
+const reduceMotion = () => { try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { return false; } };
+
+/** Shown while evalU opens: the logo, the school, and a loading line. */
+function Splash() {
+  return (
+    <div className="splash" role="status" aria-label="Opening evalU">
+      <div className="splash-logo">eval<span>U</span></div>
+      <div className="splash-sub">University of Baguio · Human Resource Management Center</div>
+      <div className="splash-bar" aria-hidden="true"><span /></div>
+    </div>
+  );
+}
+
+/** The short "done" message after a change is saved: slides in at the bottom right and leaves by itself. */
+function DoneToast({ text, onClose }) {
+  useEffect(() => { const t = setTimeout(onClose, 3200); return () => clearTimeout(t); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  return (
+    <div className="done-toast" role="status">
+      <span className="done-check"><Icon name="check" size={16} /></span>
+      <span>{text}</span>
+      <i className="done-time" aria-hidden="true" />
+    </div>
+  );
+}
+
 function Login() {
   const { login, error, notice, clearNotice } = useApp();
   const [u, setU] = useState(''); const [p, setP] = useState(''); const [err, setErr] = useState(error);
   const [show, setShow] = useState(false); const [busy, setBusy] = useState(false); const [caps, setCaps] = useState(false);
+  const [welcome, setWelcome] = useState(''); // signed in: "Welcome, <name>" shows for a moment, then evalU opens
   const go = async (e) => {
     e.preventDefault();
+    if (busy || welcome) return;
     if (!u.trim() || !p) { setErr('Enter your UB email and password.'); return; }
     setBusy(true); setErr('');
     const r = await login(u.trim(), p);
     setBusy(false);
-    if (!r.ok) setErr(r.error);
+    if (!r.ok) { setErr(r.error); return; }
+    setWelcome(r.user.name.replace(/ \(Sample\)/, ''));
+    setTimeout(r.enter, reduceMotion() ? 0 : 900);
   };
   // the "logged out" banner closes by itself after a few seconds
   useEffect(() => { if (!notice) return; const t = setTimeout(clearNotice, 4000); return () => clearTimeout(t); }, [notice]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -38,12 +67,12 @@ function Login() {
           <p>Role-Based Performance Evaluation and Analytics System</p>
           <small>UB Human Resource Management Center</small>
         </header>
-        <form className="login-card" onSubmit={go} noValidate>
-          <div className="lc-head">
-            <div className="lc-badge"><Icon name="lock" size={22} /></div>
+        <form className={'login-card' + (welcome ? ' ok' : '')} onSubmit={go} noValidate>
+          <div className="lc-head" aria-live="polite">
+            <div className="lc-badge"><Icon name={welcome ? 'check' : 'lock'} size={22} /></div>
             <div>
-              <h1>Welcome back</h1>
-              <p className="muted">Sign in to your evalU account</p>
+              <h1>{welcome ? `Welcome, ${welcome}!` : 'Welcome back'}</h1>
+              <p className="muted">{welcome ? 'Opening evalU…' : 'Sign in to your evalU account'}</p>
             </div>
           </div>
           <label className="field">
@@ -63,8 +92,8 @@ function Login() {
             {caps && <small className="caps">Caps Lock is on</small>}
           </label>
           {err && <div className="login-err" role="alert"><Icon name="alert" size={16} />{err}</div>}
-          <button type="submit" className="login-submit" disabled={busy}>
-            {busy ? 'Signing in…' : <>Log in <Icon name="arrow" size={18} /></>}
+          <button type="submit" className="login-submit" disabled={busy || !!welcome}>
+            {welcome ? <><Icon name="check" size={18} /> Signed in</> : busy ? <><span className="btn-spin" aria-hidden="true" />Signing in…</> : <>Log in <Icon name="arrow" size={18} /></>}
           </button>
           <p className="lc-foot">Trouble signing in? Contact the HRMC office.</p>
         </form>
@@ -112,12 +141,14 @@ function navFor(user) {
   return n;
 }
 
+// A short menu: only the group of the page you are on is open (click a group's name to open another).
+// Notifications and My account stay at the bottom.
 const HR_NAV_SECTIONS = [
-  { label: 'Home', keys: ['home'] },
+  { label: '', keys: ['home'] },
   { label: 'Run an evaluation', keys: ['periods', 'classes', 'assign', 'monitor'] },
   { label: 'Results', keys: ['reports', 'analytics'] },
-  { label: 'System setup', keys: ['accounts', 'forms', 'formulas', 'policy'] },
-  { label: 'Other', keys: ['audit', 'notifs', 'account'] },
+  { label: 'Settings', keys: ['accounts', 'forms', 'formulas', 'policy', 'audit'] },
+  { label: '', keys: ['notifs', 'account'], bottom: true },
 ];
 
 /** An error pinned to the top of the screen, so it is seen without scrolling. Closes by itself after 10 seconds. */
@@ -137,11 +168,23 @@ function greeting() {
   return h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
 }
 
+// The opening screen shows for a moment the first time evalU is opened in a browser tab.
+const INTRO_KEY = 'evalu-intro-seen';
+const firstOpen = () => { try { return !sessionStorage.getItem(INTRO_KEY) && !reduceMotion(); } catch { return false; } };
+
 function Shell() {
-  const { db, user, checking, error, clearError, logout } = useApp();
+  const { db, user, checking, error, clearError, done, clearDone, logout } = useApp();
   const [tab, setTab] = useState(null);
   const [menu, setMenu] = useState(false); // phone menu open?
-  if (checking) return <div className="login-loading">Loading…</div>;
+  const [openGroup, setOpenGroup] = useState(null); // null: the group of the page you are on; '' none
+  const [intro, setIntro] = useState(firstOpen);
+  useEffect(() => {
+    if (!intro) return undefined;
+    // about 1.2 seconds from opening the page (a slow load doesn't add to it)
+    const t = setTimeout(() => { setIntro(false); try { sessionStorage.setItem(INTRO_KEY, '1'); } catch { /* shown again next time */ } }, Math.max(300, 1200 - performance.now()));
+    return () => clearTimeout(t);
+  }, [intro]);
+  if (checking || intro) return <Splash />;
   if (!user) return <Login />;
   if (user.mustChangePassword) return <ForcedPasswordChange />;
   if (!db) return <div className="login-loading">{error || 'Loading…'}</div>;
@@ -154,8 +197,10 @@ function Shell() {
   const isHome = key === nav[0][0];
   const unread = db.notifications.filter((n) => n.userId === user.id && !n.read).length;
   const position = POSITIONS[user.role]?.[user.position];
+  const go = (k) => { setTab(k); setOpenGroup(null); };
+  const shown = openGroup ?? navSections.find((s) => s.label && s.items.some(([k]) => k === key))?.label;
   return (
-    <NavContext.Provider value={setTab}>
+    <NavContext.Provider value={go}>
       <div className="app">
         {/* phones and small tablets: a top bar with a menu button instead of the sidebar */}
         <header className="mobile-bar">
@@ -170,19 +215,25 @@ function Shell() {
             <button className="icon-btn aside-close" onClick={() => setMenu(false)} aria-label="Close menu"><Icon name="close" size={22} /></button>
           </div>
           <nav>
-            {navSections.map((section) => (
-              <details key={section.label || 'all'} className="nav-section" open={section.items.some(([k]) => k === key) || undefined}>
-                {section.label && <summary>{section.label}</summary>}
-                <div role="group" aria-label={section.label || 'Navigation'}>
-                  {section.items.map(([k, l, icon]) => (
-                    <button key={k} className={key === k ? 'on' : ''} onClick={() => { setTab(k); setMenu(false); window.scrollTo(0, 0); }} aria-current={key === k ? 'page' : undefined}>
+            {navSections.map((section, i) => {
+              const open = !section.label || shown === section.label;
+              const here = section.items.some(([k]) => k === key);
+              return (
+                <div key={section.label || i} className={'nav-section' + (section.bottom ? ' bottom' : '')}>
+                  {section.label && (
+                    <button className={'nav-label' + (here ? ' here' : '')} onClick={() => setOpenGroup(open ? '' : section.label)} aria-expanded={open}>
+                      <span>{section.label}</span><Icon name="chev" size={15} />
+                    </button>
+                  )}
+                  {open && section.items.map(([k, l, icon]) => (
+                    <button key={k} className={key === k ? 'on' : ''} onClick={() => { go(k); setMenu(false); window.scrollTo(0, 0); }} aria-current={key === k ? 'page' : undefined}>
                       <Icon name={icon} /><span>{l}</span>
                       {k === 'notifs' && unread > 0 && <span className="pill">{unread}</span>}
                     </button>
                   ))}
                 </div>
-              </details>
-            ))}
+              );
+            })}
           </nav>
           <div className="who">
             <Avatar name={user.name} />
@@ -198,6 +249,7 @@ function Shell() {
           {error && <ErrorAlert text={error} onClose={clearError} />}
           {page}
         </main>
+        {done && <DoneToast key={done.id} text={done.text} onClose={clearDone} />}
       </div>
     </NavContext.Provider>
   );

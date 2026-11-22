@@ -6,7 +6,7 @@
 //         valid result is removed from the denominator (no dean -> computed over 60%); 2 decimals
 // - Table 6  College faculty 40/40/20, Basic Education 40/20/20/20, Non-teaching: head <-> staff
 // - Clinical Instructors (CIs, allied medical programs): evaluated by their students and the dean;
-//            the interview gives no weights yet (shown as "??"), so they start at 50 / 50 for HR to change
+//            HR confirmed the same weights as college faculty: Students 40, Dean 40, Program Chair 20 (form B2)
 // - FR17  release order: HR -> VPs (review and approve) -> individual faculty
 // Anything the manuscript does not give (e.g. weights for evaluating Deans) stays blank (null)
 // until HR enters it; no score is invented.
@@ -14,8 +14,10 @@
 export const THRESHOLD = 0.5;           // the line drawn on progress bars (the rule itself is half PLUS ONE)
 export const LOW_ITEM = 3.0;            // FR19: items averaging below "Satisfactory" (UB's 4-point scale) are flagged
 export { MAX_RATING, SCALES, CLASS_TYPES } from './ubForms.js';
+export { cronbachAlpha, alphaLabel, confidenceLabel } from './stats.js';
 import { MAX_RATING, SCALES } from './ubForms.js';
 import { defaultFormula, computeFinal, methodOf } from './formula.js';
+import { sampleStats, averageOfAverages, combinedMargin, confidenceLabel } from './stats.js';
 export { METHODS, AGGREGATIONS, MISSING_RULES, ROUNDING_METHODS, roundBy, parseExpression, validateFormula, computeFinal, defaultFormula, formulaText, formulaWords, howInWords, methodOf, methodList } from './formula.js';
 
 /* ---------- evaluation policy (HR changes it without a programmer; each period keeps the version it used) ---------- */
@@ -218,7 +220,8 @@ export const directors = (db) => db.users.filter((u) => active(u) && u.role === 
  * clinical...) is set per class; lecture is the standard form.
  */
 export function instrumentFor(db, tt, group, dept = null, variant = null) {
-  const list = db.instruments.filter((i) => i.targetType === tt && i.group === group && i.active !== false);
+  // a form with no questions yet is still being built: it is not used, so the next form in line applies
+  const list = db.instruments.filter((i) => i.targetType === tt && i.group === group && i.active !== false && i.items?.length > 0);
   const v = (i) => i.variant || null;
   return (variant && dept && list.find((i) => v(i) === variant && i.dept === dept))
     || (variant && list.find((i) => v(i) === variant && !i.dept))
@@ -356,21 +359,38 @@ export function computeTarget(db, periodId, targetId, opts = {}) {
       sections.push(...st);
       const valid = st.filter((x) => x.valid);
       // aggregation: average of each class's average (UB practice), or all counted students together
+      const counted = (x) => tasks.filter((t) => t.sectionId === x.section?.id && t.response).map((t) => responseScore(t.response)).filter((v) => v != null);
       const score = c.aggregation === 'POOLED'
-        ? mean(tasks.filter((t) => t.response && valid.some((x) => x.section?.id === t.sectionId)).map((t) => responseScore(t.response)))
+        ? mean(valid.flatMap(counted))
         : mean(valid.map((x) => x.score));
-      groups[g] = { weight: shown(c), score, required: tasks.length, responded: tasks.filter((t) => t.response).length, invalidSections: st.filter((x) => !x.valid).length, aggregation: c.aggregation };
+      // how sure: the answers are a sample of each class (finite population correction with the class size)
+      const ms = c.aggregation === 'POOLED'
+        ? sampleStats(valid.flatMap(counted), valid.reduce((a, x) => a + x.required, 0))
+        : averageOfAverages(valid.map((x) => ({ xs: counted(x), N: x.required })));
+      groups[g] = { weight: shown(c), score, required: tasks.length, responded: tasks.filter((t) => t.response).length, invalidSections: st.filter((x) => !x.valid).length, aggregation: c.aggregation, n: ms.n, moe: score == null ? null : ms.moe };
     } else {
       const done = tasks.filter((t) => t.response);
-      const scores = done.map((t) => responseScore(t.response));
-      groups[g] = { weight: shown(c), score: c.aggregation === 'MEDIAN' ? median(scores) : mean(scores), required: tasks.length, responded: done.length, aggregation: c.aggregation };
+      const scores = done.map((t) => responseScore(t.response)).filter((v) => v != null);
+      const ms = sampleStats(scores, tasks.length);
+      groups[g] = { weight: shown(c), score: c.aggregation === 'MEDIAN' ? median(scores) : mean(scores), required: tasks.length, responded: done.length, aggregation: c.aggregation, n: ms.n, moe: !scores.length || c.aggregation === 'MEDIAN' ? null : ms.moe };
     }
   }
   const missingW = m?.usesWeights ? comps.filter((c) => c.weight == null || c.weight === '').map((c) => c.group) : [];
   const total = m?.usesWeights ? comps.reduce((a, c) => a + (Number(c.weight) || 0), 0) : 100;
   const r = computeFinal(f, Object.fromEntries(Object.entries(groups).map(([g, x]) => [g, x.score])));
+  // margin of error of the final rating (sums of group ratings only: percentages or the same for all)
+  let margin = null;
+  if (r.final != null && r.breakdown?.some((b) => b.share && b.contribution != null)) {
+    const moe = combinedMargin(r.breakdown.filter((b) => b.share).map((b) => ({ share: b.share, moe: groups[b.group]?.moe })));
+    if (moe != null) {
+      const pol = policyFor(db, periodId), ntp = String(tt).startsWith('NTP');
+      const low = Math.max(1, r.final - moe), high = Math.min(MAX_RATING, r.final + moe);
+      const lo = interpretation(round2(low), ntp, pol), hi = interpretation(round2(high), ntp, pol);
+      margin = { moe, low, high, confidence: confidenceLabel(moe), nearBand: lo !== hi ? [lo, hi] : null };
+    }
+  }
   return {
-    targetId, target, type: tt, groups, sections, final: r.final, status: r.status, missing: r.missing, missingW, basis: r.basis, total,
+    targetId, target, type: tt, groups, sections, final: r.final, status: r.status, missing: r.missing, missingW, basis: r.basis, total, margin,
     // the whole formula version is kept with the result, so it can be recomputed exactly later
     formula: { id: f.id || null, key: f.key || tt, name: f.name, version: f.version ?? 0, method: f.method, methodVersion: f.methodVersion ?? 1, components: comps.map((c) => ({ group: c.group, weight: c.weight ?? null, aggregation: c.aggregation, transform: c.transform || '' })), expression: f.expression || '', missing: f.missing, minGroups: f.minGroups ?? 1, participation: f.participation || null, effectiveFrom: f.effectiveFrom || '', effectiveUntil: f.effectiveUntil || '', rounding: f.rounding },
     breakdown: r.breakdown, steps: r.steps, how: r.how,
@@ -398,7 +418,7 @@ export function storeResults(db, p) {
   for (const r of computeAll(db, p.id)) {
     const rec = r.formula.id && (db.formulas || []).find((f) => f.id === r.formula.id);
     db.results.push({ periodId: p.id, targetId: r.targetId, data: {
-      final: r.final, status: r.status, basis: r.basis, steps: r.steps, how: r.how,
+      final: r.final, status: r.status, basis: r.basis, steps: r.steps, how: r.how, margin: r.margin,
       // the formula version with its parameters, and its approval (the starting formula has none)
       formula: { ...r.formula, approvedBy: rec?.meta.approvedBy || null, approvedAt: rec?.meta.approvedAt || null, basis: rec?.meta.basis || null },
       groups: Object.fromEntries(Object.entries(r.groups).map(([g, x]) => [g, { score: x.score, weight: x.weight, responded: x.responded, required: x.required }])),
@@ -473,6 +493,8 @@ export function notify(draft, { key, userId, kind, text }) {
   draft.notifications.push({ id: uid('n'), key, userId, kind, at: new Date().toISOString(), read: false, text });
   return true;
 }
+/** "1 class", "3 classes" */
+export const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 const fmtDate = (d) => new Date(d + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 
 // ---------- FR11 / FR12: participation threshold + notifying the parties concerned ----------
@@ -482,18 +504,20 @@ const fmtDate = (d) => new Date(d + 'T00:00:00').toLocaleDateString('en-US', { m
  * final = true:  the period was closed and these classes are excluded (once).
  * Returns the number of classes below the threshold.
  */
+/** The participation rule for a class: its teacher's formula's own rule if it has one, else the period's policy. */
+export function participationFor(db, periodId, section) {
+  const target = userById(db, section.facultyId);
+  const formula = formulaFor(db, periodId, targetType(db, target), target?.dept);
+  const pol = policyFor(db, periodId);
+  return {
+    participationPercent: formula.participation?.percent ?? pol.participationPercent,
+    participationPlusOne: formula.participation?.plusOne ?? pol.participationPlusOne,
+  };
+}
 function participationNotices(draft, periodId, final) {
   const p = periodById(draft, periodId);
   const day = today();
-  const low = draft.sections.map((s) => {
-    const target = userById(draft, s.facultyId);
-    const formula = formulaFor(draft, periodId, targetType(draft, target), target?.dept);
-    const participation = {
-      participationPercent: formula.participation?.percent ?? policyFor(draft, periodId).participationPercent,
-      participationPlusOne: formula.participation?.plusOne ?? policyFor(draft, periodId).participationPlusOne,
-    };
-    return sectionStats(draft, periodId, s.id, participation);
-  }).filter((st) => st.required && !st.valid);
+  const low = draft.sections.map((s) => sectionStats(draft, periodId, s.id, participationFor(draft, periodId, s))).filter((st) => st.required && !st.valid);
   const kind = final ? 'invalidated' : 'participation';
   const tag = final ? `thr|${periodId}` : `part|${periodId}|${day}`;
   const line = (st) => `${st.section.code} (${st.section.subject}) – ${userById(draft, st.section.facultyId)?.name}: ${st.responded} of ${st.required} answered, ${st.needed} needed`;
@@ -512,7 +536,7 @@ function participationNotices(draft, periodId, final) {
     for (const h of deptHeads(draft, dept)) {
       notify(draft, {
         key: `${tag}|dept|${dept}|${h.id}`, userId: h.id, kind,
-        text: `${final ? `${p.name} was closed. These classes in your department are excluded` : `${list.length} class(es) in your department do not have enough answers yet for ${p.name} (half of the class plus one)`}: ${list.map(line).join('; ')}.`,
+        text: `${final ? `${p.name} was closed. These classes in your department are excluded` : `${plural(list.length, 'class', 'classes')} in your department ${list.length === 1 ? 'does' : 'do'} not have enough answers yet for ${p.name} (half of the class plus one)`}: ${list.map(line).join('; ')}.`,
       });
     }
   }
@@ -520,7 +544,7 @@ function participationNotices(draft, periodId, final) {
     for (const h of hrUsers(draft)) {
       notify(draft, {
         key: `${tag}|hr|${h.id}`, userId: h.id, kind,
-        text: `${p.name}: ${low.length} class(es) ${final ? 'were excluded because' : 'do not have enough answers yet:'} fewer than half of the class plus one answered. ${low.slice(0, 5).map(line).join('; ')}${low.length > 5 ? `; and ${low.length - 5} more` : ''}.`,
+        text: `${p.name}: ${plural(low.length, 'class', 'classes')} ${final ? (low.length === 1 ? 'was excluded because' : 'were excluded because') : (low.length === 1 ? 'does not have enough answers yet:' : 'do not have enough answers yet:')} fewer than half of the class plus one answered. ${low.slice(0, 5).map(line).join('; ')}${low.length > 5 ? `; and ${low.length - 5} more` : ''}.`,
       });
     }
   }
@@ -550,7 +574,7 @@ export function sendReminders(draft, periodId) {
     const names = [...new Set(list.map((t) => userById(draft, t.targetId)?.name))];
     if (notify(draft, {
       key: `rem|${periodId}|${evId}|${day}`, userId: evId, kind: overdue ? 'overdue' : 'reminder',
-      text: `${overdue ? 'OVERDUE' : 'Reminder'}: you have ${list.length} evaluation(s) not yet submitted for ${p.name} (${names.slice(0, 3).join(', ')}${names.length > 3 ? ', …' : ''}). ${overdue ? 'The deadline has passed' : `Deadline: ${fmtDate(p.deadline)}`}.`,
+      text: `${overdue ? 'OVERDUE' : 'Reminder'}: you have ${plural(list.length, 'evaluation')} not yet submitted for ${p.name} (${names.slice(0, 3).join(', ')}${names.length > 3 ? ', …' : ''}). ${overdue ? 'The deadline has passed' : `Deadline: ${fmtDate(p.deadline)}`}.`,
     })) sent++;
   }
   // department alert: pending evaluations by the department's people
@@ -565,7 +589,7 @@ export function sendReminders(draft, periodId) {
     for (const h of deptHeads(draft, dept)) {
       notify(draft, {
         key: `remdept|${periodId}|${dept}|${h.id}|${day}`, userId: h.id, kind: overdue ? 'overdue' : 'reminder',
-        text: `${p.name}: in your department, ${c.staff} evaluation(s) by personnel and ${c.students} by students are still not submitted. ${overdue ? 'The deadline has passed.' : `Deadline: ${fmtDate(p.deadline)}.`}`,
+        text: `${p.name}: in your department, ${plural(c.staff, 'evaluation')} by personnel and ${c.students} by students are still not submitted. ${overdue ? 'The deadline has passed.' : `Deadline: ${fmtDate(p.deadline)}.`}`,
       });
     }
   }
@@ -586,10 +610,69 @@ export function sendReminders(draft, periodId) {
  * before the deadline (and every day after it until HR closes the period).
  * Returns the number of periods processed (0 = nothing to do).
  */
+// ---------- participation forecast (early warning) ----------
+const DAY_MS = 86400000;
+/**
+ * Will this class reach half + 1 by the deadline at its current pace?
+ * pace = answers so far / days since the period opened; projected = answers so far + pace x days left.
+ * Returns null for a class with no evaluation in an open period. status: reached | on-track | at-risk | too-early
+ * (the first 2 days give too little to go on).
+ */
+export function participationForecast(db, periodId, sectionId, now = Date.now()) {
+  const p = periodById(db, periodId);
+  // the pace counts from the period's start date (or, for older periods, from when it was opened)
+  const start = p?.startDate ? Date.parse(p.startDate + 'T00:00:00') : p?.openedAt ? Date.parse(p.openedAt) : null;
+  if (!p || p.status !== 'open' || start == null) return null;
+  const sec = db.sections.find((x) => x.id === sectionId);
+  const st = sectionStats(db, periodId, sectionId, sec && participationFor(db, periodId, sec));
+  if (!st.required || isExemptSection(st.section)) return null;
+  const elapsed = (now - start) / DAY_MS;
+  const left = Math.max(0, (new Date(p.deadline + 'T23:59:59').getTime() - now) / DAY_MS);
+  const perDay = st.responded / Math.max(1, elapsed);
+  const projected = Math.min(st.required, Math.floor(st.responded + perDay * left));
+  const status = st.responded >= st.needed ? 'reached' : elapsed < 2 ? 'too-early' : projected >= st.needed ? 'on-track' : 'at-risk';
+  return { section: st.section, responded: st.responded, needed: st.needed, required: st.required, perDay, projected, daysLeft: Math.ceil(left), status, morePerDay: left >= 1 ? (st.needed - st.responded) / left : st.needed - st.responded };
+}
+/** The forecast in one plain sentence. */
+export function forecastText(fc, deadline, withLabel = true) {
+  if (!fc) return '';
+  const by = fmtDate(deadline);
+  if (fc.status === 'reached') return 'Enough answers already.';
+  if (fc.status === 'too-early') return `Too early to tell (${fc.responded} of ${fc.needed} needed so far).`;
+  const pace = `${fc.perDay < 1 ? fc.perDay.toFixed(1) : Math.round(fc.perDay)} answer${fc.perDay === 1 ? '' : 's'} a day`;
+  const lead = (label, rest) => (withLabel ? `${label}: ${rest}` : rest.charAt(0).toUpperCase() + rest.slice(1));
+  if (fc.status === 'on-track') return lead('On track', `at the current pace (${pace}) about ${fc.projected} of ${fc.required} by ${by}; it needs ${fc.needed}.`);
+  return lead('At risk', `at the current pace (${pace}) only about ${fc.projected} of ${fc.required} by ${by}; it needs ${fc.needed}. ${((n) => `About ${n} more answer${n > 1 ? 's a day are' : ' a day is'} needed.`)(Math.max(1, Math.ceil(fc.morePerDay)))}`);
+}
+/** Once a day: warn the teacher (once per class), the department heads and HR (when the list changes) about classes at risk. */
+export function forecastWarnings(draft, periodId, now = Date.now()) {
+  const p = periodById(draft, periodId);
+  const risky = draft.sections.map((s) => participationForecast(draft, periodId, s.id, now)).filter((f) => f?.status === 'at-risk');
+  let sent = 0;
+  for (const f of risky) {
+    if (notify(draft, { key: `fc|${periodId}|${f.section.id}`, userId: f.section.facultyId, kind: 'participation',
+      text: `Early warning for ${p.name}: ${f.section.code} (${f.section.subject}). ${forecastText(f, p.deadline)} Show the class QR code in class or remind your students.` })) sent++;
+  }
+  const line = (f) => `${f.section.code} (${userById(draft, f.section.facultyId)?.name}): about ${f.projected} of ${f.needed} needed`;
+  const byDept = {};
+  for (const f of risky) (byDept[f.section.dept] ||= []).push(f);
+  for (const [dept, list] of Object.entries(byDept)) {
+    const ids = list.map((f) => f.section.id).sort().join(',');
+    for (const h of deptHeads(draft, dept)) if (notify(draft, { key: `fcd|${periodId}|${dept}|${h.id}|${ids}`, userId: h.id, kind: 'participation', text: `Early warning for ${p.name}: at their current pace, ${plural(list.length, 'class', 'classes')} in your department may not reach half + 1 by ${fmtDate(p.deadline)}: ${list.map(line).join('; ')}.` })) sent++;
+  }
+  if (risky.length) {
+    const ids = risky.map((f) => f.section.id).sort().join(',');
+    for (const h of hrUsers(draft)) if (notify(draft, { key: `fch|${periodId}|${h.id}|${ids}`, userId: h.id, kind: 'participation', text: `Early warning for ${p.name}: at their current pace, ${plural(risky.length, 'class', 'classes')} may not reach half + 1 by ${fmtDate(p.deadline)}: ${risky.slice(0, 5).map(line).join('; ')}${risky.length > 5 ? `; and ${risky.length - 5} more` : ''}. See Progress.` })) sent++;
+  }
+  return sent;
+}
+
 export function runDailyAutomation(draft) {
   const day = today();
   let ran = 0;
   for (const p of draft.periods.filter((x) => x.status === 'open')) {
+    // early warning from the participation forecast, once a day, from the start of the period
+    if (p.lastForecast !== day) { p.lastForecast = day; forecastWarnings(draft, p.id); ran++; }
     if (p.lastAuto === day) continue;
     const daysLeft = Math.round((new Date(p.deadline + 'T00:00:00') - new Date(day + 'T00:00:00')) / 86400000);
     if (daysLeft > REMIND_DAYS) continue;
@@ -651,4 +734,44 @@ export function commentParts(c) {
     try { const o = JSON.parse(c); return { plan: o.plan || '', improve: o.improve || '' }; } catch { /* plain text */ }
   }
   return { text: String(c) };
+}
+
+// ---------- development follow-up (plans for people rated Fair or Poor) ----------
+export const PLAN_OUTCOMES = { improved: 'Improved', 'not-yet': 'Not improved yet', cancelled: 'Cancelled' };
+/** Average answer per form category for one person in a period (only the evaluations that count). */
+export function categoryAverages(db, periodId, targetId) {
+  const valid = new Set(db.sections.filter((s) => s.facultyId === targetId).map((s) => sectionStats(db, periodId, s.id, participationFor(db, periodId, s))).filter((s) => s.valid).map((s) => s.section.id));
+  const out = {};
+  for (const t of db.tasks) {
+    if (t.periodId !== periodId || t.targetId !== targetId || !t.response || t.response.redacted) continue;
+    if (t.group === 'ST' && !valid.has(t.sectionId)) continue;
+    const ins = formOfTask(db, t);
+    for (const it of ins?.items || []) { const v = t.response.answers[it.criterionId]; if (v != null) (out[itemCategory(it)] ||= []).push(v); }
+  }
+  return Object.fromEntries(Object.entries(out).map(([c, xs]) => [c, xs.reduce((a, b) => a + b, 0) / xs.length]));
+}
+/** Whether a rating needs a development plan: Fair or Poor in the period's bands. */
+export const needsPlan = (r, policy) => r?.final != null && ['Fair', 'Poor'].includes(interpretation(r.final, String(r.type).startsWith('NTP'), policy));
+/**
+ * Follow-up of a plan: the person's next period with a final rating (that this viewer can see), compared with
+ * the plan's period: final rating and the average of each area of the plan.
+ */
+export function planProgress(db, plan) {
+  const i = db.periods.findIndex((p) => p.id === plan.periodId);
+  const before = computeTarget(db, plan.periodId, plan.targetId);
+  for (const p of db.periods.slice(i + 1)) {
+    const after = computeTarget(db, p.id, plan.targetId);
+    if (after.final == null) continue;
+    const ca = categoryAverages(db, plan.periodId, plan.targetId), cb = categoryAverages(db, p.id, plan.targetId);
+    return { before: before.final, after: after.final, next: p, change: after.final - (before.final ?? after.final),
+      areas: plan.areas.map((a) => ({ area: a, before: ca[a] ?? null, after: cb[a] ?? null })) };
+  }
+  return { before: before.final, after: null, next: null, areas: [] };
+}
+/** Where a plan stands, for a badge: [badge kind, words]. */
+export function planStatus(plan, today = new Date().toISOString().slice(0, 10)) {
+  if (plan.status === 'closed') return plan.outcome === 'improved' ? ['completed', 'Improved'] : plan.outcome === 'not-yet' ? ['overdue', 'Not improved yet'] : ['muted', 'Cancelled'];
+  if (!plan.acknowledgedAt) return ['pending', 'Waiting to be read'];
+  if (plan.reviewBy < today) return ['overdue', 'Due for review'];
+  return ['info', 'In progress'];
 }

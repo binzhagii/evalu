@@ -179,6 +179,9 @@ This is the single HR page for both evaluator percentages and the final-score me
 - **Comment analysis**: comments are tagged positive / negative / mixed / neutral, marked as suggestions, and sorted by topic, with summaries in Reports and Analytics. Built-in English and Filipino word lists; nothing leaves evalU.
 - **Policy & rules**: the participation rule, rating bands, rounding, low-item cutoff, missing-group rule, minimum students before comments are shown, and how many VPs must approve. Every change needs a reason and is kept as a version; closed periods keep the version they were computed with.
 - **Audit log**: before → after values for rule changes, a SHA-256 hash chain with **Check for tampering**, and **Download for Excel** (CSV).
+- **How sure the results are**: every final rating shows its 95% margin of error (Student's t, with the finite population correction for the class size; 0 when everyone answered), a confidence level, and a warning when the range crosses a band limit (e.g. "could be Satisfactory or Outstanding"). Analytics shows the reliability of each form (Cronbach's alpha).
+- **Participation forecast (early warning)**: from each class's answering pace since the period opened, evalU predicts whether it will reach half + 1 by the deadline (reached / on track / at risk) on Progress, the Overview and the teacher's My results, and warns the teacher, the department heads and HR once a day while a class is at risk.
+- **Development follow-up**: for everyone rated Fair or Poor, the dean/principal or HR makes a plan (weak areas pre-ticked, actions, review date); the person reads and confirms it; when the next term is released evalU shows the rating and each area before and after. Plans are visible to HR, the VPs, the department head and the person only.
 - **Class lists → Check file** before importing: duplicates and invalid rows are listed with row numbers and nothing is saved until **Import**.
 
 #### Audit log

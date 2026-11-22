@@ -16,12 +16,13 @@ aside { width:240px; flex:none; background:var(--side); color:#fff; padding:20px
 .brand { font-size:28px; font-weight:800; letter-spacing:-.5px; padding:0 10px; }
 .brand span { color:#ff4d63; }
 aside nav { display:flex; flex-direction:column; gap:2px; flex:1; overflow-y:auto; }
-aside nav .nav-section { margin:2px 0; }
-aside nav .nav-section > summary { cursor:pointer; list-style:none; padding:8px 10px 5px; color:#a9adb5; font-size:11px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; }
-aside nav .nav-section > summary::-webkit-details-marker { display:none; }
-aside nav .nav-section > summary::after { content:'+'; float:right; font-size:14px; line-height:1; }
-aside nav .nav-section[open] > summary::after { content:'−'; }
-aside nav .nav-section > div[role=group] { display:flex; flex-direction:column; gap:2px; }
+aside nav .nav-section { display:flex; flex-direction:column; gap:2px; }
+aside nav .nav-section + .nav-section { margin-top:4px; }
+aside nav .nav-section.bottom { margin-top:auto; padding-top:12px; }
+aside nav button.nav-label { justify-content:space-between; color:#a9adb5; font-size:12px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; user-select:none; }
+aside nav button.nav-label.here { color:#fff; }
+aside nav button.nav-label[aria-expanded=true] svg { transform:rotate(90deg); }
+aside nav { scrollbar-width:thin; scrollbar-color:#4a4f57 transparent; }
 aside nav button { display:flex; align-items:center; gap:11px; text-align:left; background:transparent; color:#c9ccd2; border:0; padding:9px 10px; border-radius:8px; font-size:14px; }
 aside nav button:hover { background:rgba(255,255,255,.07); color:#fff; }
 aside nav button.on { background:var(--pri); color:#fff; font-weight:600; }
@@ -390,7 +391,7 @@ button.danger:hover { background:var(--bad-l); }
 .ghost-link { display:inline-flex; align-items:center; border:1px solid var(--bd); border-radius:10px; padding:8px 14px; color:var(--fg); text-decoration:none; font-weight:600; background:#fff; }
 .ghost-link:hover { border-color:var(--pri); color:var(--pri); }
 
-/* errors pinned to the top of the screen (no animation) */
+/* errors pinned to the top of the screen (they slide in: see "motion" at the end) */
 .alert-toast { position:fixed; top:20px; right:20px; z-index:60; display:flex; align-items:flex-start; gap:10px; max-width:min(480px, calc(100% - 32px));
   background:#fff; color:var(--bad); border:1px solid #f3b8b2; border-left:5px solid var(--bad); border-radius:12px; padding:12px 12px 12px 16px; font-size:15px; font-weight:600;
   box-shadow:0 10px 30px rgba(0,0,0,.18); }
@@ -525,7 +526,7 @@ details.add-form { padding:14px 18px; }
 details.add-form > summary { cursor:pointer; list-style:none; }
 details.add-form > summary::-webkit-details-marker { display:none; }
 details.add-form[open] > summary { margin-bottom:12px; }
-/* confirmation dialog (no animation, on purpose) */
+/* confirmation dialog (it pops in: see "motion" at the end) */
 .ask-backdrop { position:fixed; inset:0; z-index:100; background:rgba(15,17,20,.55); display:flex; align-items:center; justify-content:center; padding:16px; }
 .ask-box { background:var(--card); color:var(--fg); width:100%; max-width:440px; border-radius:14px; border-top:5px solid var(--pri); box-shadow:0 20px 50px rgba(0,0,0,.28); padding:24px 24px 20px; text-align:center; }
 .ask-box.is-danger { border-top-color:var(--bad); }
@@ -605,3 +606,139 @@ details.source li { margin:2px 0; }
 .term-n { width:24px; height:24px; border-radius:50%; display:grid; place-items:center; font-size:12px; font-weight:700; background:var(--bd); color:var(--fg); }
 .term-steps li.done .term-n { background:var(--pri); color:#fff; }
 @media (max-width:640px) { .term-steps li { grid-template-columns:28px 1fr; } .term-steps li button { grid-column:2; justify-self:start; } }
+/* comment boxes: character counter */
+.warn-text { color:var(--warn, #9a5b00); font-weight:600; }
+.field-block .small, textarea + .small { display:block; text-align:right; margin-top:2px; }
+.score-margin { font-size:12px; color:var(--mut); margin-top:2px; white-space:nowrap; }
+/* participation forecast: badge with its sentence underneath */
+.forecast { display:grid; gap:2px; justify-items:start; min-width:180px; }
+.forecast .small { line-height:1.35; }
+.forecast-line { margin:-4px 0 10px; }
+/* development follow-up */
+.plan-card { border:1px solid var(--bd); border-radius:10px; padding:12px 14px; margin:10px 0; display:grid; gap:6px; }
+.plan-card p { margin:0; }
+.plan-head { display:flex; flex-wrap:wrap; gap:6px 10px; align-items:center; }
+.plan-text { white-space:pre-wrap; }
+.plan-card .note ul { margin:4px 0 0; padding-left:18px; }
+.plan-form { border:1px solid var(--bd); border-radius:10px; padding:12px 14px; margin:10px 0; }
+.plan-form h4 { margin:10px 0 4px; }
+.plan-areas { display:grid; gap:4px; }
+.plan-form textarea { width:100%; }
+
+/* ---------- motion: short and quiet (under a third of a second), all in one place ----------
+   Pages ease in, controls answer to hover and press, bars grow, dialogs and alerts slide in.
+   People who ask their device to reduce motion get none of it (see the end of this block). */
+:root { --ease:cubic-bezier(.2,.7,.2,1); --t-fast:.14s; --t:.22s; }
+@keyframes ev-rise { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+@keyframes ev-fade { from { opacity:0; } to { opacity:1; } }
+@keyframes ev-pop { from { opacity:0; transform:scale(.96); } to { opacity:1; transform:none; } }
+@keyframes ev-drop { from { opacity:0; transform:translateY(-10px); } to { opacity:1; transform:none; } }
+@keyframes ev-slide { from { transform:translateX(-100%); } to { transform:none; } }
+@keyframes ev-grow { from { width:0; } }
+@keyframes ev-tap { 50% { transform:scale(1.05); } }
+@keyframes ev-spin { to { transform:rotate(360deg); } }
+
+/* a page eases in from the top, one block after another */
+main > * { animation:ev-rise .32s var(--ease) backwards; }
+main > :nth-child(2) { animation-delay:.04s; }
+main > :nth-child(3) { animation-delay:.08s; }
+main > :nth-child(4) { animation-delay:.12s; }
+main > :nth-child(5) { animation-delay:.16s; }
+main > :nth-child(n+6) { animation-delay:.2s; }
+/* switching tabs fades the new content in */
+.tabs ~ * { animation:ev-fade .2s ease-out backwards; }
+details[open] > :not(summary) { animation:ev-fade .2s ease-out; }
+
+/* sidebar: smooth colors, the arrow turns, a group's pages slide in one by one */
+aside nav button { transition:background-color var(--t-fast) ease, color var(--t-fast) ease; }
+aside nav button.nav-label svg { transition:transform var(--t) var(--ease); }
+aside nav .nav-label ~ button { animation:ev-rise .22s var(--ease) backwards; }
+aside nav .nav-label ~ button:nth-of-type(3) { animation-delay:.03s; }
+aside nav .nav-label ~ button:nth-of-type(4) { animation-delay:.06s; }
+aside nav .nav-label ~ button:nth-of-type(5) { animation-delay:.09s; }
+aside nav .nav-label ~ button:nth-of-type(n+6) { animation-delay:.12s; }
+@media (max-width:900px) {
+  aside.open { animation:ev-slide .24s var(--ease); }
+  .backdrop { animation:ev-fade .2s ease-out; }
+}
+
+/* buttons and fields answer to hover, focus and press */
+button { transition:background-color var(--t-fast) ease, border-color var(--t-fast) ease, color var(--t-fast) ease, box-shadow var(--t-fast) ease, transform .1s ease; }
+button:not([class]):hover:not(:disabled) { box-shadow:0 4px 14px rgba(179,0,27,.22); transform:translateY(-1px); }
+button:active:not(:disabled) { transform:scale(.97); }
+input, select, textarea { transition:border-color var(--t-fast) ease, box-shadow var(--t-fast) ease; }
+input:hover:not(:focus):not(:disabled), select:hover:not(:focus):not(:disabled), textarea:hover:not(:focus):not(:disabled) { border-color:#c4c8ce; }
+table:not([class]) tbody tr { transition:background-color var(--t-fast) ease; }
+table:not([class]) tbody tr:hover { background:#fafbfc; }
+
+/* progress bars grow from the left; numbers settle in */
+.meter-fill { animation:ev-grow .7s var(--ease) backwards; transition:width .4s var(--ease); }
+.page-h h1 { letter-spacing:-.01em; }
+.stat-value { letter-spacing:-.01em; }
+
+/* cards a student can open lift a little */
+.task-card { transition:box-shadow var(--t) ease, transform var(--t) var(--ease); }
+.task-card:not(.completed):hover { transform:translateY(-2px); box-shadow:0 8px 24px rgba(16,24,40,.08); }
+
+/* rating buttons: smooth colors and a small tap when picked */
+.rating label { transition:background-color .12s ease, border-color .12s ease, color .12s ease, transform .1s ease; }
+.rating label:active { transform:scale(.97); }
+.rating label.on { animation:ev-tap .22s var(--ease); }
+
+/* dialogs, alerts and full-screen sheets */
+.ask-backdrop { animation:ev-fade .16s ease-out; }
+.ask-box { animation:ev-pop .2s var(--ease); }
+.qr-overlay { animation:ev-fade .2s ease-out; }
+.alert-toast, main > .alert-toast { animation:ev-drop .24s var(--ease); }
+.login-toast { animation:ev-drop .24s var(--ease), toast-out .4s ease 3.6s forwards; }
+
+/* loading: a small spinner above the text */
+.login-loading { align-content:center; gap:14px; }
+.login-loading::before { content:''; width:28px; height:28px; border-radius:50%; border:3px solid var(--bd); border-top-color:var(--pri); animation:ev-spin .8s linear infinite; }
+
+/* opening evalU: the logo grows in over a soft red glow, then a loading line runs underneath */
+@keyframes ev-load { from { transform:translateX(-100%); } to { transform:translateX(260%); } }
+.splash { position:fixed; inset:0; z-index:200; display:grid; place-content:center; justify-items:center; gap:10px; padding:24px; text-align:center; color:#fff;
+  background:radial-gradient(circle at 50% 44%, rgba(179,0,27,.38), transparent 52%), #1d2024; }
+.splash-logo { font-size:clamp(48px, 12vw, 72px); font-weight:800; letter-spacing:-1.5px; line-height:1; text-shadow:0 8px 40px rgba(255,77,99,.35); animation:ev-pop .6s var(--ease) backwards; }
+.splash-logo span { color:#ff4d63; }
+.splash-sub { color:#a9adb5; font-size:13px; animation:ev-fade .6s ease-out .25s backwards; }
+.splash-bar { width:160px; height:3px; margin-top:18px; border-radius:99px; background:rgba(255,255,255,.12); overflow:hidden; animation:ev-fade .4s ease-out .35s backwards; }
+.splash-bar span { display:block; width:40%; height:100%; border-radius:99px; background:#ff4d63; animation:ev-load 1.1s cubic-bezier(.4,0,.2,1) infinite; }
+.login-bg { animation:ev-fade .7s ease-out backwards; }
+
+/* signing in: a spinner while checking, then a green check and "Welcome, <name>" before evalU opens */
+.btn-spin { width:16px; height:16px; border-radius:50%; border:2px solid rgba(255,255,255,.35); border-top-color:#fff; animation:ev-spin .7s linear infinite; }
+.login-submit:disabled { opacity:.9; }
+.login-card .lc-badge { transition:background-color var(--t) ease, color var(--t) ease, border-color var(--t) ease; }
+.login-card.ok .lc-badge { background:var(--ok-l); color:var(--ok); border-color:#b3e2c2; animation:ev-tap .4s var(--ease); }
+.login-card.ok .lc-head h1, .login-card.ok .lc-head p { animation:ev-fade .3s ease-out; }
+.login-card.ok .login-submit { background:var(--ok); box-shadow:0 8px 18px rgba(21,128,61,.28); opacity:1; }
+
+/* checks draw themselves (login, the "done" message, "submitted" notes, "all done") */
+@keyframes ev-draw { from { stroke-dashoffset:24; } }
+.login-card.ok .icon-check path, .done-check .icon-check path, .note.ok .icon-check path, .empty-icon .icon-check path { stroke-dasharray:24; animation:ev-draw .45s var(--ease) .12s backwards; }
+.note.ok { animation:ev-pop .3s var(--ease) backwards; }
+.empty-icon { animation:ev-pop .4s var(--ease) .05s backwards; }
+
+/* the "done" message after saving: slides up at the bottom right, a line shows the time left, then it leaves */
+@keyframes ev-toast-in { from { opacity:0; transform:translateY(14px) scale(.98); } }
+@keyframes ev-toast-out { to { opacity:0; transform:translateY(8px); } }
+@keyframes ev-shrink { to { transform:scaleX(0); } }
+.done-toast { position:fixed; right:20px; bottom:20px; z-index:70; display:flex; align-items:center; gap:10px; min-width:220px; max-width:min(420px, calc(100% - 32px));
+  padding:12px 18px 14px 12px; background:#1f2329; color:#fff; border-radius:12px; box-shadow:0 12px 32px rgba(16,24,40,.28); font-size:14px; font-weight:500; overflow:hidden;
+  animation:ev-toast-in .28s var(--ease), ev-toast-out .3s ease 2.85s forwards; }
+.done-check { width:26px; height:26px; flex:none; border-radius:50%; display:grid; place-items:center; background:var(--ok); color:#fff; }
+.done-time { position:absolute; left:0; right:0; bottom:0; height:3px; background:#4ade80; transform-origin:left; animation:ev-shrink 3s linear forwards; }
+@media (max-width:600px) { .done-toast { left:16px; right:16px; bottom:max(16px, env(safe-area-inset-bottom)); max-width:none; } }
+
+@media (prefers-reduced-motion:reduce) {
+  *, *::before, *::after { animation-duration:.01ms !important; animation-delay:0s !important; animation-iteration-count:1 !important; transition-duration:.01ms !important; scroll-behavior:auto !important; }
+  /* messages that leave by themselves just stay until they are removed */
+  .done-toast, .login-toast { animation:none !important; }
+  .done-time { display:none; }
+}
+@media print {
+  *, *::before, *::after { animation:none !important; transition:none !important; }
+  .done-toast, .splash { display:none !important; }
+}

@@ -1,7 +1,7 @@
 // Brings a database made by an earlier version of evalU up to date, without losing data.
 // Runs once at start-up (see seed.js). Safe to run many times: it only fills in what is missing.
 import { formForTask, uid, UB_DEPARTMENTS, DEFAULT_POLICY, DEFAULT_EVALUATOR_GROUPS, storeResults } from '../src/lib/logic.js';
-import { installUbForms, UB_FORM_MARK } from '../src/lib/ubInstall.js';
+import { installUbForms } from '../src/lib/ubInstall.js';
 
 const clone = (x) => JSON.parse(JSON.stringify(x));
 
@@ -36,8 +36,11 @@ export function upgradeData(db) {
   // Table 6: non-teaching personnel, head and staff evaluate each other
   if (!db.rules.NTP_STAFF) set(db.rules, 'NTP_STAFF', { NTPHEAD: 100 });
   if (!db.rules.NTP_HEAD) set(db.rules, 'NTP_HEAD', { NTPSTAFF: 100 });
-  // Clinical Instructors: their students and the dean evaluate them (weights to be confirmed; start at 50 / 50)
-  if (!db.rules.CI) set(db.rules, 'CI', { ST: 50, DEAN: 50 });
+  // Clinical Instructors: students, dean and program chair, 40/40/20 like college faculty (Scoring Rule Confirmation Form B2).
+  // Earlier versions started at a 50/50 placeholder: replace it unless HR already set CI weights or a CI formula.
+  const ciOld = (r) => r && Object.keys(r).length === 2 && r.ST === 50 && r.DEAN === 50;
+  if (!db.rules.CI || (ciOld(db.rules.CI) && !hrDecided('CI'))) set(db.rules, 'CI', { ST: 40, DEAN: 40, CHAIR: 20 });
+  for (const p of db.periods) if (p.status === 'open' && ciOld(p.rules?.CI) && !hrDecided('CI')) { p.rules.CI = { ST: 40, DEAN: 40, CHAIR: 20 }; changed = true; }
   const addForm = (tt, group, texts) => {
     if (db.instruments.some((i) => i.targetType === tt && i.group === group)) return;
     const items = texts.map((text) => {
@@ -74,7 +77,8 @@ export function upgradeData(db) {
 
   // UB's own evaluation tools (4-point scale), added once. They replace the sample forms;
   // forms HR made and every submitted evaluation stay as they are.
-  if (!db.instruments.some((i) => i.name.includes(UB_FORM_MARK)) && installUbForms(db)) changed = true;
+  // UB's tools, added once; tools added in later versions (e.g. the Program Chair's CI tools) are filled in too
+  if (installUbForms(db)) changed = true;
 
   // NFR8: each period keeps its own weights; FR17: approvals list
   for (const p of db.periods) {
@@ -90,6 +94,12 @@ export function upgradeData(db) {
     // policy versions: a period evaluated before policies existed keeps UB's default rules
     if (!p.policy && p.status !== 'open') set(p, 'policy', { ...DEFAULT_POLICY });
     if (!Array.isArray(p.rejections)) set(p, 'rejections', []);
+  }
+
+  // participation forecast: an open period made before it existed counts its pace from its first answer
+  for (const p of db.periods.filter((x) => x.status === 'open' && !x.openedAt)) {
+    const first = db.tasks.filter((t) => t.periodId === p.id && t.response?.submittedAt).map((t) => t.response.submittedAt).sort()[0];
+    set(p, 'openedAt', first || new Date().toISOString());
   }
 
   // FR17: only the Vice Presidents approve results; Director accounts are switched off (kept for the records)

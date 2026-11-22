@@ -109,7 +109,7 @@ export function buildSeed() {
     DEAN: { CHAIR: null, SEC: null, FAC: null },
     NTP_STAFF: { NTPHEAD: 100 },
     NTP_HEAD: { NTPSTAFF: 100 },
-    CI: { ST: 50, DEAN: 50 }, // Clinical Instructors: weights not given yet ("??" in the interview); HR can change them
+    CI: { ST: 40, DEAN: 40, CHAIR: 20 }, // Clinical Instructors: same as college faculty (Scoring Rule Confirmation Form B2); HR can change them
   };
 
   const day = 86400000;
@@ -121,7 +121,7 @@ export function buildSeed() {
     { id: 'p1', name: 'AY 2024-25 Term 2 (sample)', deadline: iso(now - 420 * day), status: 'closed', releaseStage: 'faculty', thresholdChecked: true, rules: rules(), depts: null, approvals: approved(now - 400 * day) },
     { id: 'p2', name: 'AY 2025-26 Term 1 (sample)', deadline: iso(now - 240 * day), status: 'closed', releaseStage: 'faculty', thresholdChecked: true, rules: rules(), depts: null, approvals: approved(now - 220 * day) },
     { id: 'p3', name: 'AY 2025-26 Term 2 (sample)', deadline: iso(now - 90 * day), status: 'closed', releaseStage: 'dir', thresholdChecked: true, rules: rules(), depts: null, approvals: [] },
-    { id: 'p4', name: 'AY 2026-27 Term 1 (current, sample)', deadline: iso(now + 5 * day), status: 'open', releaseStage: 'hr', thresholdChecked: false, rules: rules(), depts: null, approvals: [] },
+    { id: 'p4', name: 'AY 2026-27 Term 1 (current, sample)', deadline: iso(now + 5 * day), status: 'open', releaseStage: 'hr', thresholdChecked: false, rules: rules(), depts: null, approvals: [], openedAt: new Date(now - 16 * day).toISOString() },
   ];
 
   const baseline = {}; // per-target quality

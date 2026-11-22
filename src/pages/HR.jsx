@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useApp } from '../lib/store';
 import {
   TARGET_TYPES, STAGES, STAGE_LABEL, taskStatus, userById, sectionStats, targetsOf, evaluatorGroups, deptName, groupName,
-  formUsed, itemCategory, effectiveWeights, isExemptSection, isTeacher, pendingApprovals, periodCovers, CLASS_TYPES, approvalRuleText, policyFor,
+  formUsed, itemCategory, effectiveWeights, isExemptSection, isTeacher, pendingApprovals, periodCovers, CLASS_TYPES, approvalRuleText, policyFor, participationForecast,
 } from '../lib/logic';
 
 /** Types of class HR can pick for a section. A Clinical Instructor (Nursing) works in the clinical area or the skills lab. */
@@ -10,7 +10,7 @@ const classTypesFor = (teacher) => (teacher?.position === 'ci'
   ? [['', 'Clinical area (hospital, community clinic)'], ['skills', CLASS_TYPES.skills]]
   : Object.entries(CLASS_TYPES).filter(([k]) => k !== 'skills'));
 import { QrButton } from './ClassQr';
-import { Card, StatusBadge, RuleNote, PeriodPicker, Select, Badge, SaveInput, Meter, Empty, pct, newestFirst, usePages, ask } from '../ui';
+import { Card, StatusBadge, RuleNote, PeriodPicker, Select, Badge, SaveInput, Meter, Empty, pct, newestFirst, usePages, ask, ForecastBadge } from '../ui';
 
 const scopeText = (db, p) => (p.depts?.length ? p.depts.map((d) => deptName(db, d)).join(', ') : 'All departments');
 
@@ -422,7 +422,7 @@ export function Forms() {
               <span><b>{TARGET_TYPES[ins.targetType]}</b>, rated by <b>{ins.group === 'ST' ? 'the students' : `the ${groupName(db, ins.group)}`}</b></span>
               <span>Used for: {whenUsed(ins) || 'everyone of this kind'}</span>
               <span>{isUb(ins) ? <>UB tool: {ins.name.replace(' (UB tool)', '')}</> : <>Custom form made in evalU (not one of UB's tools){!ins.items.length && <> · <b>no questions yet</b></>}</>}</span>
-              <span>{(ins.version || 1) === 1 ? 'Original version' : `Version ${ins.version} (changed ${ins.version - 1} time${ins.version > 2 ? 's' : ''})`}{ins.active === false ? ' · old, kept for past results' : ' · in use'}</span>
+              <span>{(ins.version || 1) === 1 ? 'Original version' : `Version ${ins.version} (changed ${ins.version - 1} time${ins.version > 2 ? 's' : ''})`}{ins.active === false ? ' · old, kept for past results' : !ins.items.length ? ' · not used yet: add at least one question (until then, the general form is used)' : ' · in use'}</span>
             </div>
             {locked
               ? <div className="note warn">{ins.active === false ? 'This is an old version, kept with the results that used it. It can\'t be changed.' : 'This form already has submitted evaluations, so it is locked to keep past results unchanged. Click "Create new version" to make changes.'}</div>
@@ -551,11 +551,28 @@ export function Monitor({ deptOnly }) {
                 })}</tbody>
               </table>
             </Card>
+            <EarlyWarning period={p} secs={secs.filter((s) => periodCovers(p, s.dept))} />
             <ClassProgress title={deptOnly ? `Class progress – ${deptName(db, user.dept)}` : 'Class progress'} period={p} secs={secs.filter((s) => periodCovers(p, s.dept))} />
           </div>
         );
       })}
     </>
+  );
+}
+
+/** Participation forecast summary: how many classes may not reach half + 1 by the deadline at their current pace. */
+function EarlyWarning({ period: p, secs }) {
+  const { db } = useApp();
+  const fcs = secs.map((s) => participationForecast(db, p.id, s.id)).filter(Boolean);
+  if (!fcs.length) return null;
+  const risk = fcs.filter((f) => f.status === 'at-risk').length, track = fcs.filter((f) => f.status === 'on-track').length;
+  const by = new Date(p.deadline + 'T00:00:00').toLocaleDateString(undefined, { month: 'long', day: 'numeric' });
+  return (
+    <div className={`note ${risk ? 'warn' : 'ok'}`}>
+      <b>Forecast for {by}:</b> {risk ? `${risk} class${risk > 1 ? 'es' : ''} may not reach half + 1 at the current pace` : 'every class is on track or already has enough answers'}{track ? ` · ${track} on track` : ''} · {fcs.filter((f) => f.status === 'reached').length} already have enough.
+      {risk > 0 && ' Teachers and department heads of the classes at risk were warned. Choose "Only classes at risk" below to see them.'}
+      <details className="source"><summary>How the forecast works</summary><p>Pace = answers so far ÷ days since the period opened. Expected by the deadline = answers so far + pace × days left. A class is "at risk" when that is below half of the class plus one. The first 2 days are too early to tell. It assumes students keep answering at the same pace; reminders and class time with the QR code usually raise it.</p></details>
+    </div>
   );
 }
 
@@ -568,6 +585,7 @@ function ClassProgress({ title, period: p, secs }) {
     if (dept && s.dept !== dept) return false;
     if (!only) return true;
     if (isExemptSection(s)) return false;
+    if (only === 'risk') return participationForecast(db, p.id, s.id)?.status === 'at-risk';
     const st = sectionStats(db, p.id, s.id);
     return only === 'low' ? st.required && st.belowHalf : st.required && !st.belowHalf;
   });
@@ -576,16 +594,17 @@ function ClassProgress({ title, period: p, secs }) {
   return (
             <Card title={`${title} (${shown.length})`}>
               <div className="row">
-                <Select value={only} onChange={setOnly}><option value="">All classes</option><option value="low">Only classes below half + 1</option><option value="ok">Only classes with enough responses</option></Select>
+                <Select value={only} onChange={setOnly}><option value="">All classes</option><option value="low">Only classes below half + 1</option><option value="ok">Only classes with enough responses</option><option value="risk">Only classes at risk (forecast)</option></Select>
                 {depts.length > 1 && <Select value={dept} onChange={setDept}><option value="">All departments</option>{depts.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</Select>}
               </div>
               <table>
-                <thead><tr><th>Class</th><th>Faculty</th><th>Responded</th><th>Rate</th><th>Standing</th></tr></thead>
+                <thead><tr><th>Class</th><th>Faculty</th><th>Responded</th><th>Rate</th><th>Standing</th><th>Forecast by {new Date(p.deadline + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</th></tr></thead>
                 <tbody>{rows.map((s) => {
-                  if (isExemptSection(s)) return <tr key={s.id}><td>{s.code} – {s.subject}</td><td>{userById(db, s.facultyId)?.name}</td><td colSpan={2} className="muted">—</td><td><Badge kind="muted">not evaluated (practicum/internship/field trip)</Badge></td></tr>;
+                  if (isExemptSection(s)) return <tr key={s.id}><td>{s.code} – {s.subject}</td><td>{userById(db, s.facultyId)?.name}</td><td colSpan={2} className="muted">—</td><td><Badge kind="muted">not evaluated (practicum/internship/field trip)</Badge></td><td /></tr>;
                   const st = sectionStats(db, p.id, s.id);
                   return <tr key={s.id}><td>{s.code} – {s.subject}</td><td>{userById(db, s.facultyId)?.name}</td><td><div className="meter-row"><Meter value={st.rate} mark={0.5} /><span>{st.responded}/{st.required} <span className="muted">needs {st.needed}</span></span></div></td><td>{pct(st.rate)}</td>
-                    <td>{!st.required ? <span className="muted">no tasks yet</span> : st.belowHalf ? <Badge kind="overdue">below half + 1 – would be excluded</Badge> : <Badge kind="completed">enough responses</Badge>}</td></tr>;
+                    <td>{!st.required ? <span className="muted">no tasks yet</span> : st.belowHalf ? <Badge kind="overdue">below half + 1 – would be excluded</Badge> : <Badge kind="completed">enough responses</Badge>}</td>
+                    <td><ForecastBadge fc={participationForecast(db, p.id, s.id)} deadline={p.deadline} /></td></tr>;
                 })}</tbody>
               </table>
               {shown.length === 0 && <Empty icon="list" title="No classes match" />}
@@ -600,7 +619,7 @@ const AUDIT_LABEL = {
   setGroupWeight: 'Changed a weight', closePeriod: 'Closed a period', reopenPeriod: 'Reopened a period', createPeriod: 'Created a period',
   submitEvaluation: 'Submitted an evaluation', recordResultRequest: 'Released results through a dean', signIn: 'Signed in', signOut: 'Signed out',
   automaticReminders: 'Automatic reminders', resetData: 'Reset all data', showTempPassword: 'Viewed a temporary password',
-  setPolicy: 'Changed the evaluation policy', saveFormulaDraft: 'Saved a formula draft', submitFormula: 'Submitted a formula for approval', approveFormula: 'Approved a formula (VP)', rejectFormula: 'Returned a formula (VP)', activateFormula: 'Activated a formula', deleteFormulaDraft: 'Deleted a formula draft', returnToHR: 'Returned results to HR (VP)', verifyAudit: 'Checked the audit log', importClassList: 'Imported a class list',
+  setPolicy: 'Changed the evaluation policy', saveFormulaDraft: 'Saved a formula draft', submitFormula: 'Submitted a formula for approval', approveFormula: 'Approved a formula (VP)', rejectFormula: 'Returned a formula (VP)', activateFormula: 'Activated a formula', createPlan: 'Made a development plan', updatePlan: 'Changed a development plan', acknowledgePlan: 'Read a development plan', closePlan: 'Closed a development plan', deleteFormulaDraft: 'Deleted a formula draft', returnToHR: 'Returned results to HR (VP)', verifyAudit: 'Checked the audit log', importClassList: 'Imported a class list',
 };
 export function AuditLog() {
   const { user } = useApp();
