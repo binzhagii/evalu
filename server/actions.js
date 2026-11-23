@@ -4,16 +4,17 @@
 import { randomInt } from 'node:crypto';
 import {
   GROUPS, TARGET_TYPES, STAGES, ROLES, POSITIONS, needsDept, uid, userById, periodById, targetType, defaultEvaluatorGroups, groupName,
-  instrumentFor, formForTask, effectiveWeights, generateTasks, runThresholdCheck, participationAlerts, sendReminders,
+  instrumentFor, formForTask, effectiveWeights, generateTasks, participationAlerts, sendReminders,
   isInstitutionalEmail, INSTITUTION_DOMAIN, notify, directors, pendingApprovals, resultHeads, hrUsers, isEvaluatee, isTeacher, isNursingDept, stageAtLeast, isResultHead, PLAN_OUTCOMES, UB_DEPARTMENTS, missingUbDepartments, MAX_RATING, CLASS_TYPES,
-  evaluatorGroups, groupsOf, ratingGroups, toolStatus, sameTool, toolParts, toolProblems, toolSwitchMixes, toolName, defaultFormula, asPercentages, personIn, groupUse, groupUsedBefore, DEPT_KINDS, deptKeep, today, samePeriod, deptName,
-  currentPolicy, formulaKey, activeFormula, formulaSnapshot, formGroups, validateFormula, storeResults, methodOf, commentParts, METHODS, AGGREGATIONS, MISSING_RULES, ROUNDING_METHODS,
+  evaluatorGroups, groupsOf, ratingGroups, toolStatus, sameTool, toolParts, toolProblems, toolSwitchMixes, toolName, defaultFormula, asPercentages, personIn, groupUse, groupUsedBefore, DEPT_KINDS, deptKeep, workingTerm, termLabel, isPastClass, suggestClassType, notStarted, deadlinePassed, closeNow, taskKey, policyFor, today, samePeriod, deptName,
+  currentPolicy, formulaKey, activeFormula, formulaSnapshot, formGroups, validateFormula, methodOf, commentParts, METHODS, AGGREGATIONS, MISSING_RULES, ROUNDING_METHODS,
 } from '../src/lib/logic.js';
 import { HttpError } from './http.js';
 import { encryptText, decryptText, hashPassword, verifyPassword } from './secrets.js';
 import { deleteUserSessions, addAudit } from './db.js';
 import { seedDatabase } from './seed.js';
 import { installUbForms, UB_FORM_MARK } from '../src/lib/ubInstall.js';
+import { importClasses, importStaffList } from './imports.js';
 
 const HR = ['HR'];
 const DIR = ['DIR'];
@@ -38,6 +39,7 @@ function number(v, label, min, max) {
   return n;
 }
 const find = (list, id, label) => list.find((x) => x.id === id) || fail(`${label} not found.`, 404);
+const longDay = (d) => new Date(`${d}T00:00:00`).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
 const period = (db, id) => find(db.periods, id, 'Evaluation period');
 const instrument = (db, id) => find(db.instruments, id, 'Form');
 const clone = (x) => JSON.parse(JSON.stringify(x));
@@ -98,10 +100,10 @@ function evaluatedNow(db, ids) {
   const who = new Set(ids), open = new Set(db.periods.filter((p) => p.status === 'open').map((p) => p.id));
   return db.tasks.some((t) => t.response && open.has(t.periodId) && who.has(t.targetId));
 }
-/** Put a student in exactly these class sections (only sections of their department). */
+/** Put a student in exactly these class sections (of any department: general education subjects are taught by other schools). */
 function enroll(db, user, sectionIds) {
   const want = new Set(user.role === 'ST' && Array.isArray(sectionIds) ? sectionIds : []);
-  for (const id of want) if (find(db.sections, id, 'Class section').dept !== user.dept) fail('A student can only join classes in their own department.');
+  for (const id of want) find(db.sections, id, 'Class section');
   for (const s of db.sections) {
     const has = s.studentIds.includes(user.id);
     if (want.has(s.id) && !has) s.studentIds.push(user.id);
@@ -133,6 +135,7 @@ function myOpenTask(db, taskId, user) {
   if (t.evaluatorId !== user.id) fail('This evaluation is not assigned to you.', 403);
   if (t.response) fail('This evaluation was already submitted.', 409);
   if (periodById(db, t.periodId)?.status !== 'open') fail('This evaluation period is closed.', 409);
+  if (notStarted(periodById(db, t.periodId))) fail('This evaluation has not started yet. It opens on its start date.', 409);
   // Strict cut-off: once the deadline (end of that day) has passed, no more answers are accepted, even if HR has not closed the period yet. HR can extend the deadline in Periods & release.
   const per = periodById(db, t.periodId);
   if (per?.deadline && new Date(per.deadline + 'T23:59:59') < new Date()) fail('The deadline for this evaluation has passed, so it can no longer be submitted. Contact HR if you need more time.', 409);
@@ -188,12 +191,19 @@ function ratingPair(db, tt, group) {
 const usedCriteria = (db) => new Set(db.tasks.filter((t) => t.response).flatMap((t) => Object.keys(t.response.answers)));
 
 // ---------- class lists (FR6) ----------
-function sectionFields(db, { code, subject, facultyId }, editingId = null) {
+/** The semester of a class: "2026-1" (1st) or "2026-2" (2nd). */
+function classTerm(db, term) {
+  if (!term) return workingTerm(db);
+  if (typeof term !== 'string' || !/^\d{4}-[12]$/.test(term)) fail('Choose the school year and semester.');
+  return term;
+}
+function sectionFields(db, { code, subject, facultyId, term }, editingId = null) {
   const s = { code: text(code, 'Section code', 40), subject: text(subject, 'Subject', 120) };
   const f = userById(db, facultyId);
   if (!isTeacher(f)) fail('Choose the faculty member or Clinical Instructor who teaches this class.');
-  if (db.sections.some((x) => x.id !== editingId && x.code.toLowerCase() === s.code.toLowerCase())) fail('A class section with this code already exists.', 409);
-  return { ...s, facultyId: f.id, dept: f.dept };
+  const t = term === undefined && editingId ? db.sections.find((x) => x.id === editingId)?.term : classTerm(db, term);
+  if (db.sections.some((x) => x.id !== editingId && (x.term || null) === (t || null) && x.facultyId === f.id && x.code.toLowerCase() === s.code.toLowerCase() && x.subject.toLowerCase() === s.subject.toLowerCase())) fail('This class (section, subject and teacher) already exists in that semester.', 409);
+  return { ...s, facultyId: f.id, dept: f.dept, ...(t && { term: t }) };
 }
 
 // ---------- development plans ----------
@@ -352,13 +362,14 @@ export const actions = {
       const u = account(db, userId);
       const next = accountFields(db, fields, u.id);
       if (u.id === user.id && next.role !== 'HR') fail('You cannot remove your own HR role.');
-      if (db.sections.some((s) => s.facultyId === u.id) && !isTeacher(next)) {
-        fail('This person still teaches a class section, so they must stay Faculty or Clinical Instructor.', 409);
+      // (classes of semesters that are over don't hold anything up)
+      if (db.sections.some((s) => s.facultyId === u.id && !isPastClass(db, s)) && !isTeacher(next)) {
+        fail(`${u.name} still teaches a class this semester, so they must stay Faculty or Clinical Instructor.`, 409);
       }
       // someone already evaluated in an open period keeps their department and position until it is closed
       if ((next.dept !== u.dept || next.role !== u.role || next.position !== u.position) && evaluatedNow(db, [u.id])) fail(`${u.name} was already evaluated in an open period, so their department and position can't change until it is closed.`, 409);
       Object.assign(u, next);
-      for (const s of db.sections) if (s.facultyId === u.id) s.dept = u.dept;
+      for (const s of db.sections) if (s.facultyId === u.id && !isPastClass(db, s)) s.dept = u.dept;
       enroll(db, u, sectionIds ?? db.sections.filter((s) => s.studentIds.includes(u.id)).map((s) => s.id));
     },
   },
@@ -547,7 +558,6 @@ export const actions = {
       const s = find(db.sections, sectionId, 'Class section');
       const next = sectionFields(db, args, s.id);
       if (next.facultyId !== s.facultyId && db.tasks.some((t) => t.sectionId === s.id)) fail('This class already has evaluation tasks, so its teacher can\'t be changed. Create a new section instead.', 409);
-      if (next.dept !== s.dept) s.studentIds = s.studentIds.filter((id) => userById(db, id)?.dept === next.dept);
       Object.assign(s, next);
     },
   },
@@ -570,7 +580,8 @@ export const actions = {
     },
   },
   /**
-   * Import a class list exported from the Registrar/ARC, for one department. One row per student, either
+   * Import a class list exported from the Registrar/ARC, for one department and semester. The first row can name the
+   * columns in any order (see server/imports.js); without it, one row per student, either
    *   section code, subject, teacher name, teacher email, student ID, student name, student UB email  (creates missing teachers and students)
    *   section code, subject, teacher email, student ID, student name, student UB email   (creates missing students)
    *   section code, subject, teacher email, student email or username                     (students must already exist)
@@ -579,84 +590,51 @@ export const actions = {
    */
   importClassList: {
     roles: HR,
-    async run(db0, { csv, dept, preview }) {
+    async run(db0, { csv, dept, term, preview, drop }) {
       // preview: check the whole file on a copy and report what would happen; nothing is saved
       const db = preview ? structuredClone(db0) : db0;
       if (typeof csv !== 'string' || !csv.trim()) fail('Paste or choose the class list first.');
-      const seenRows = new Map(); // section + student -> first row number, to find duplicate rows
-      let duplicates = 0, existingStudents = 0, rowsRead = 0;
-      const warnings = [];
+      if (csv.length > 2000000) fail('The class list is too long. Import it in parts (for example one department at a time).');
       const listDept = dept ? find(db.departments, dept, 'Department') : null; // where new teachers (and so their classes) go
       if (listDept && (listDept.kind === 'office' || listDept.active === false)) fail(`${listDept.name} has no classes.`);
-      if (csv.length > 2000000) fail('The class list is too long. Import it in parts (for example one department at a time).');
-      const errors = [];
-      const fresh = []; // new student accounts, password hashed at the end
-      const freshTeachers = []; // new teacher accounts
-      let created = 0, enrolled = 0;
-      const lines = csv.split(/\r?\n/);
-      for (const [i, line] of lines.entries()) {
-        let cells = line.split(/[,\t;]/).map((c) => c.trim().replace(/^"|"$/g, '').trim());
-        if (!line.trim() || (i === 0 && /section/i.test(cells[0]))) continue; // blank or header row
-        const n = i + 1;
-        rowsRead++;
-        // 7 columns: the teacher's name comes before the teacher's email
-        let tname = '';
-        if (cells.length >= 7) { tname = cells[2]; cells = [cells[0], cells[1], ...cells.slice(3)]; }
-        const full = cells.length >= 6;
-        const [code, subject, fac] = cells;
-        if (!code || !subject || !fac) { errors.push(`Row ${n}: needs section code, subject and teacher email.`); continue; }
-        let f = byLogin(db, fac);
-        if (!f && tname) {
-          // a new teacher: a Faculty account in the department of this list
-          const temail = fac.toLowerCase(), uname = temail.split('@')[0];
-          if (!listDept) { errors.push(`Row ${n}: choose the department of this list so the teacher ${tname} can be created.`); continue; }
-          if (!isInstitutionalEmail(temail)) { errors.push(`Row ${n}: "${fac}" is not an official UB email.`); continue; }
-          if (!USERNAME.test(uname) || byLogin(db, uname)) { errors.push(`Row ${n}: can't make a username from "${fac}". Create this teacher under Accounts.`); continue; }
-          f = { id: uid('u'), username: uname, email: temail, name: tname, role: 'TP', position: 'faculty', dept: listDept.id, passwordHash: null, active: true, mustChangePassword: true };
-          db.users.push(f); freshTeachers.push(f);
-        }
-        if (!isTeacher(f)) { errors.push(`Row ${n}: "${fac}" is not a faculty or Clinical Instructor account. Add the teacher's name to the row (7 columns) or create the teacher under Accounts.`); continue; }
-        let s = db.sections.find((x) => x.code.toLowerCase() === code.toLowerCase());
-        if (!s) { s = { id: uid('sec'), code, subject, facultyId: f.id, dept: f.dept, studentIds: [] }; db.sections.push(s); created++; }
-        else if (s.facultyId !== f.id) { errors.push(`Row ${n}: section ${code} belongs to another teacher.`); continue; }
-
-        let st;
-        if (full) {
-          const [, , , sid, sname, semail] = cells;
-          const id = String(sid || '').toLowerCase(), email = String(semail || '').toLowerCase();
-          st = byLogin(db, email) || byLogin(db, id);
-          if (!st) {
-            // a new student: create the account from the row
-            if (!USERNAME.test(id)) { errors.push(`Row ${n}: student ID "${sid}" must be 3–32 letters or numbers.`); continue; }
-            if (!sname || sname.length > 100) { errors.push(`Row ${n}: needs the student's name.`); continue; }
-            if (!isInstitutionalEmail(email)) { errors.push(`Row ${n}: "${semail}" is not an official UB email.`); continue; }
-            st = { id: uid('u'), username: id, email, name: sname, role: 'ST', position: 'student', dept: s.dept, passwordHash: null, active: true, mustChangePassword: true };
-            db.users.push(st); fresh.push(st);
-          }
-        } else {
-          if (!cells[3]) continue; // a row that only lists the section
-          st = byLogin(db, cells[3]);
-          if (!st) { errors.push(`Row ${n}: "${cells[3]}" has no account. Add the student ID, name and UB email to the row so the account is created.`); continue; }
-        }
-        if (st.role !== 'ST') { errors.push(`Row ${n}: ${st.name} is not a student account.`); continue; }
-        if (st.dept !== s.dept) { errors.push(`Row ${n}: ${st.name} is not in the same department as ${code}.`); continue; }
-        const rowKey = s.id + '|' + st.id;
-        if (seenRows.has(rowKey)) { duplicates++; warnings.push(`Row ${n}: duplicate of row ${seenRows.get(rowKey)} (${st.name} in ${code}); counted once.`); continue; }
-        seenRows.set(rowKey, n);
-        if (!fresh.includes(st)) existingStudents++;
-        if (!s.studentIds.includes(st.id)) { s.studentIds.push(st.id); enrolled++; }
-      }
-      if (preview) {
-        return { preview: true, rows: rowsRead, created, enrolled, accounts: fresh.length, teachers: freshTeachers.length, existingStudents, duplicates,
-          warnings: warnings.slice(0, 50), errors: errors.slice(0, 50), errorCount: errors.length,
-          newClasses: db.sections.filter((x) => !db0.sections.some((y) => y.id === x.id)).map((x) => `${x.code} · ${x.subject} (${x.studentIds.length} students)`).slice(0, 50) };
-      }
+      const t = classTerm(db, term);
+      const r = importClasses(db, { csv, listDept, term: t, drop: drop === true });
+      const suggested = db.sections.filter((s) => (s.term || null) === t && suggestClassType(db, s)).length;
+      const out = { term: t, rows: r.rows, created: r.created, enrolled: r.enrolled, accounts: r.fresh.length, teachers: r.freshTeachers.length, existingStudents: r.existingStudents, duplicates: r.duplicates,
+        dropped: r.dropped.slice(0, 100).map((x) => `${x.name} · ${x.code} ${x.subject}`), droppedCount: r.dropped.length, notInFile: r.notInFile.slice(0, 50).map((s) => `${s.code} · ${s.subject}`), suggested,
+        warnings: r.warnings.slice(0, 50), errors: r.errors.slice(0, 50), errorCount: r.errors.length };
+      if (preview) return { ...out, preview: true, newClasses: db.sections.filter((x) => !db0.sections.some((y) => y.id === x.id)).map((x) => `${x.code} · ${x.subject} (${x.studentIds.length} students)`).slice(0, 50) };
       // first password = the student ID / the teacher's username (they must change it at the first sign-in)
-      const all = [...freshTeachers, ...fresh];
+      const all = [...r.freshTeachers, ...r.fresh];
       for (let i = 0; i < all.length; i += 16) {
         await Promise.all(all.slice(i, i + 16).map(async (u) => { u.passwordHash = await hashPassword(u.username); u.tempPassword = encryptText(u.username); }));
       }
-      return { created, enrolled, accounts: fresh.length, teachers: freshTeachers.length, existingStudents, duplicates, warnings: warnings.slice(0, 50), errors: errors.slice(0, 50), errorCount: errors.length };
+      return out;
+    },
+  },
+  /** Deans, program chairs, office heads, staff…: one row per person (name, UB email, position, department or office). */
+  importStaff: {
+    roles: HR,
+    async run(db0, { csv, preview }) {
+      const db = preview ? structuredClone(db0) : db0;
+      if (typeof csv !== 'string' || !csv.trim()) fail('Paste or choose the staff list first.');
+      if (csv.length > 500000) fail('The list is too long. Import it in parts.');
+      const r = importStaffList(db, { csv });
+      const out = { rows: r.rows, created: r.made.length, existing: r.existing, summary: r.summary.slice(0, 100), errors: r.errors.slice(0, 50), errorCount: r.errors.length };
+      if (preview) return { ...out, preview: true };
+      const passwords = [];
+      for (const u of r.made) { const pw = tempPassword(); u.passwordHash = await hashPassword(pw); u.tempPassword = encryptText(pw); passwords.push({ name: u.name, username: u.username, email: u.email, tempPassword: pw }); }
+      return { ...out, passwords }; // shown once; HR can look one up again under People & sign-in
+    },
+  },
+  /** The types of class the subjects suggest (laboratory, clinical…), all at once. */
+  applyClassTypes: {
+    roles: HR,
+    run(db, { sectionIds }) {
+      const ids = new Set(Array.isArray(sectionIds) ? sectionIds : []);
+      let changed = 0;
+      for (const s of db.sections) { const k = ids.has(s.id) && suggestClassType(db, s); if (k) { s.classType = k; changed++; } }
+      return { changed };
     },
   },
 
@@ -708,19 +686,24 @@ export const actions = {
   },
   setPeriodDeadline: {
     roles: HR,
-    run(db, { periodId, deadline }) { const p = period(db, periodId); p.deadline = date(deadline); p.lastAuto = null; },
+    run(db, { periodId, deadline }) {
+      const p = period(db, periodId), was = p.deadline;
+      if (p.status !== 'open') fail('This period is closed. Reopen it with a new deadline.', 409);
+      const next = date(deadline);
+      if (p.startDate && next < p.startDate) fail('The deadline must be on or after the start date.');
+      p.deadline = next; p.lastAuto = null;
+      if (p.auto) delete p.auto.closeNotice; // it closes by itself after the new deadline
+      // people who have not answered are told when they get more time
+      if (next > was && !notStarted(p)) for (const id of new Set(db.tasks.filter((t) => t.periodId === p.id && !t.response).map((t) => t.evaluatorId))) notify(db, { key: `ext|${p.id}|${id}|${next}`, userId: id, kind: 'reminder', text: `The deadline of ${p.name} was moved to ${longDay(next)}. You still have evaluations to answer.` });
+      return { from: was, to: next };
+    },
   },
   closePeriod: {
     roles: HR,
     run(db, { periodId }) {
       const p = period(db, periodId);
       if (p.status !== 'open') fail('This period is already closed.', 409);
-      const flagged = runThresholdCheck(db, p.id); // FR11/FR12: leave out classes without enough answers, notify everyone concerned
-      p.status = 'closed';
-      p.rules ||= clone(db.rules);
-      p.policy ||= currentPolicy(db); // the policy this period is computed with from now on
-      storeResults(db, p);
-      return { flagged };
+      return { flagged: closeNow(db, p) }; // FR11/FR12: leaves out classes without enough answers and notifies everyone concerned
     },
   },
   checkThreshold: {
@@ -733,10 +716,14 @@ export const actions = {
   },
   reopenPeriod: {
     roles: HR,
-    run(db, { periodId }) {
+    run(db, { periodId, deadline }) {
       const p = period(db, periodId);
       if (p.status !== 'closed') fail('This period is already open.', 409);
       if (p.releaseStage !== 'hr') fail('Withdraw the released results first.', 409);
+      const next = deadline ? date(deadline) : p.deadline;
+      if (next < today()) fail('Choose a new deadline: the old one has passed, so the period would close again by itself.');
+      p.deadline = next; p.lastAuto = null;
+      if (p.auto) delete p.auto.closeNotice;
       p.status = 'open';
       p.thresholdChecked = false;
       db.results = (db.results || []).filter((r) => r.periodId !== p.id); // computed again when it is closed
@@ -754,6 +741,7 @@ export const actions = {
         if (waiting.length) fail(`Waiting for approval from: ${waiting.map((u) => u.name).join(', ')}.`, 409);
       }
       p.releaseStage = next;
+      if (next === 'dir') (p.auto ||= {}).sentAt = new Date().toISOString(); // the VPs are reminded from here
       notifyRelease(db, p, next);
       return { stage: next };
     },
@@ -794,15 +782,18 @@ export const actions = {
       if (p.approvals.some((a) => a.userId === user.id)) fail('You already approved these results.', 409);
       p.approvals.push({ userId: user.id, at: new Date().toISOString() });
       const waiting = pendingApprovals(db, p);
+      // the switch in Evaluation rules: release as soon as enough VPs approved
+      const released = !waiting.length && policyFor(db, p.id).autoRelease === true;
+      if (released) { p.releaseStage = 'faculty'; notifyRelease(db, p, 'faculty'); }
       for (const h of hrUsers(db)) {
         notify(db, {
           key: `appr|${p.id}|${user.id}|${h.id}`, userId: h.id, kind: 'release',
           text: waiting.length
             ? `${user.name} approved the results for ${p.name}. Still waiting for: ${waiting.map((u) => u.name).join(', ')}.`
-            : `${user.name} approved the results for ${p.name}. All VPs have approved: you can now release them to faculty.`,
+            : `${user.name} approved the results for ${p.name}. ${released ? 'Enough VPs approved, so they were released to faculty by themselves (Evaluation rules).' : 'Enough VPs approved: you can now release them to faculty.'}`,
         });
       }
-      return { waiting: waiting.length };
+      return { waiting: waiting.length, released };
     },
   },
   /** FR18: another office asks for a person's results; they are released to that person's dean only. */
@@ -886,7 +877,13 @@ export const actions = {
   },
   sendReminders: {
     roles: HR,
-    run(db, { periodId }) { return { sent: sendReminders(db, period(db, periodId).id) }; },
+    run(db, { periodId }) {
+      const p = period(db, periodId);
+      if (p.status !== 'open') fail('This period is closed.', 409);
+      if (notStarted(p)) fail('This period has not started yet.', 409);
+      if (deadlinePassed(p)) fail('The deadline has passed, so nobody can answer any more. Extend it first.', 409);
+      return { sent: sendReminders(db, p.id) };
+    },
   },
   addAssignment: {
     roles: HR,
@@ -903,6 +900,7 @@ export const actions = {
       const group = groups.find((g) => counted.includes(g)) || fail(`${ev.name} is not in an evaluator group for ${TARGET_TYPES[tt]}.`);
       if (!instrumentFor(db, tt, group, tg.dept)) fail('No form exists for this pairing. Create it under Forms first.');
       if (db.tasks.some((t) => t.periodId === p.id && t.evaluatorId === ev.id && t.targetId === tg.id && t.group === group && !t.sectionId)) fail('That assignment already exists.', 409);
+      if (p.auto?.skip) p.auto.skip = p.auto.skip.filter((k) => k !== taskKey({ evaluatorId: ev.id, targetId: tg.id, group, sectionId: null }));
       db.tasks.push({ id: uid('t'), periodId: p.id, evaluatorId: ev.id, targetId: tg.id, group, sectionId: null, draft: null, response: null });
     },
   },
@@ -912,6 +910,8 @@ export const actions = {
       const t = find(db.tasks, taskId, 'Evaluation task');
       if (t.response) fail('A submitted evaluation cannot be removed.', 409);
       db.tasks = db.tasks.filter((x) => x.id !== t.id);
+      const p = periodById(db, t.periodId); // evalU creates evaluations by itself: remember not to create this one again
+      if (p) (p.auto ||= {}).skip = [...new Set([...(p.auto.skip || []), taskKey(t)])];
     },
   },
 
@@ -1287,6 +1287,7 @@ export const actions = {
         decimals: number(p.decimals, 'Decimal places', 0, 4),
         missingGroup: ['reweight', 'incomplete'].includes(p.missingGroup) ? p.missingGroup : fail('Choose what happens when an evaluator group is missing.'),
         minAnonymity: number(p.minAnonymity, 'Minimum students for comments', 0, 50),
+        autoRelease: p.autoRelease === true,
         approvalMode: ['all', 'any', 'count'].includes(p.approvalMode) ? p.approvalMode : fail('Choose how many VPs must approve.'),
         approvalCount: number(p.approvalCount ?? 1, 'Number of VPs', 1, 20),
       };
@@ -1410,7 +1411,7 @@ export const actions = {
       if (people.some((u) => u.position === 'ci') && !isNursingDept(b)) fail('Clinical Instructors work only in a Nursing department.', 409);
       let classes = 0;
       for (const u of people) u.dept = b.id;
-      for (const s of db.sections) if (s.dept === a.id) { s.dept = b.id; classes++; }
+      for (const s of db.sections) if (s.dept === a.id && !isPastClass(db, s)) { s.dept = b.id; classes++; }
       return { people: people.length, classes, from: a.name, to: b.name };
     },
   },
@@ -1446,6 +1447,9 @@ export function describeAction(name, args, db, result) {
   if (name === 'changePassword') return 'Changed own password';
   // before → after values, so every rule change can be traced
   if (name === 'setPolicy' && result?.changed) return `policy version ${result.version}: ${result.changed.map((c) => `${c.field} ${JSON.stringify(c.from)} → ${JSON.stringify(c.to)}`).join('; ')} · reason: ${args.reason}${result.kept ? ' · open periods with answers keep their rules; it starts with the next period' : ''}`;
+  if (name === 'importStaff') return result?.preview ? `checked a staff list (not saved): ${result.rows} rows, ${result.errorCount} error(s)` : `imported a staff list: ${result?.created} account(s), ${result?.errorCount} row(s) skipped`;
+  if (name === 'applyClassTypes') return `${result?.changed} class(es) got the type their subject suggests`;
+  if (name === 'setPeriodDeadline') return `period: ${periodById(db, args.periodId)?.name} · deadline ${result?.from} → ${result?.to}`;
   if (name === 'moveDepartment') return `${result?.people} account(s) and ${result?.classes} class(es): ${result?.from} → ${result?.to}`;
   if (name === 'setDepartmentActive') return `${db.departments.find((d) => d.id === args.deptId)?.name}: ${args.active ? 'reactivated' : 'deactivated'}`;
   if (['updateEvaluatorGroup', 'deleteEvaluatorGroup', 'restoreEvaluatorGroup'].includes(name)) return `evaluator group: ${result?.name}${result?.archived ? ' (archived)' : ''}`;
@@ -1470,6 +1474,6 @@ export function describeAction(name, args, db, result) {
   if (a.code) parts.push(`section: ${a.code}`);
   if (result?.stage) parts.push(`now: ${result.stage}`);
   if (typeof result?.added === 'number') parts.push(`${result.added} added`);
-  if (name === 'importClassList' && result) parts.push(result.preview ? `checked a class list (not saved): ${result.rows} rows, ${result.errorCount} error(s), ${result.duplicates} duplicate(s)` : `imported a class list: ${result.created} class(es), ${result.accounts} new student(s), ${result.enrolled} enrolment(s), ${result.errorCount} row(s) skipped`);
+  if (name === 'importClassList' && result) parts.push(result.preview ? `checked a class list (not saved): ${result.rows} rows, ${result.errorCount} error(s), ${result.duplicates} duplicate(s)` : `imported a class list (${termLabel(result.term)}): ${result.created} class(es), ${result.accounts} new student(s), ${result.enrolled} enrolment(s), ${a.drop ? result.droppedCount : 0} dropped, ${result.errorCount} row(s) skipped`);
   return parts.join(' · ');
 }

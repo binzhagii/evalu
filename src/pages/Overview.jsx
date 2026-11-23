@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useApp } from '../lib/store';
 import { STAGES, taskStatus, sectionStats, userById, computeAll, canSeeAll, policyFor, hasRule, ruleMark, hasFinal, pendingApprovals, groupName, participationForecast } from '../lib/logic';
-import { cyclePeriod, cycleSteps, nextStep } from '../lib/cycle';
+import { cyclePeriod, cycleSteps, needsYou, nextStep } from '../lib/cycle';
 import { ApprovalPanel } from './Reports';
 import { Card, Stat, Stats, Meter, Badge, Empty, PeriodPicker, Icon, useNav, fmt, pct, dueText, daysUntil, ForecastBadge } from '../ui';
 
@@ -18,6 +18,20 @@ export function ReleaseSteps({ stage }) {
 }
 
 /* ---------------- HR ---------------- */
+/** Only what a person has to decide; the rest happens by itself. */
+function NeedsYou({ db, go }) {
+  const list = useMemo(() => needsYou(db), [db]);
+  const [all, setAll] = useState(false);
+  return (
+    <Card title={list.length ? `Needs you (${list.length})` : 'Nothing needs you right now'}>
+      {list.length === 0 ? <p className="muted">evalU creates the evaluations, reminds people and closes the period by itself.</p> : <>
+        <ul className="plain-list needs">{(all ? list : list.slice(0, 5)).map((x) => <li key={x.text} className="row between"><span>{x.text}</span><button className="ghost" onClick={() => go(x.page, x.args)}>{x.label}</button></li>)}</ul>
+        {list.length > 5 && <button className="link" onClick={() => setAll(!all)}>{all ? 'Show less' : `Show all (${list.length})`}</button>}
+      </>}
+    </Card>
+  );
+}
+
 /** What HR does each semester, in order. Every step is checked from the real data of the period; the next one stands out. */
 function CycleSteps({ db, go }) {
   const [pidSel, setPid] = useState('');
@@ -64,11 +78,12 @@ export function HROverview() {
 
   return (
     <>
+      <NeedsYou db={db} go={go} />
       <CycleSteps db={db} go={go} />
 
       <Stats>
         <Stat icon="check" label="Responses received" value={tasks.length ? pct(done / tasks.length) : '—'} sub={`${done} of ${tasks.length} evaluations in open periods`} tone="good" />
-        <Stat icon="clock" label="Late evaluations" value={overdue} sub={overdue ? 'Send reminders from Evaluation tasks' : 'Nothing overdue'} tone={overdue ? 'bad' : ''} />
+        <Stat icon="clock" label="Late evaluations" value={overdue} sub={overdue ? 'Extend the deadline if people need more time' : 'Nothing overdue'} tone={overdue ? 'bad' : ''} />
         <Stat icon="chart" label="Classes needing more answers" value={`${low.length} / ${classes.length}`} sub="May not count if the period closed now" tone={low.length ? 'warn' : ''} />
         <Stat icon="users" label="Active accounts" value={active.length} sub={waiting ? `${waiting} have not signed in yet` : 'Everyone has signed in'} />
       </Stats>

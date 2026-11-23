@@ -161,8 +161,9 @@ try {
   const pid = np.data.result.id;
   assert.equal(sql.prepare('SELECT name FROM periods WHERE id=?').get(pid).name, 'Test period');
   const gen = await act(hr, 'generateTasks', { periodId: pid });
-  assert.ok(gen.data.result.added > 0);
-  assert.equal(sql.prepare('SELECT count(*) n FROM tasks WHERE period_id=?').get(pid).n, gen.data.result.added);
+  assert.ok(np.data.result.evaluations.added > 0, 'the evaluations are created by themselves');
+  assert.equal(gen.data.result.added, 0, 'clicking the button adds nothing more');
+  assert.equal(sql.prepare('SELECT count(*) n FROM tasks WHERE period_id=?').get(pid).n, np.data.result.evaluations.added);
   assert.equal((await act(hr, 'releaseNext', { periodId: pid })).status, 409, 'cannot release an open period');
   assert.equal((await act(hr, 'closePeriod', { periodId: pid })).status, 200);
   assert.ok(sql.prepare("SELECT count(*) n FROM notifications WHERE kind='invalidated'").get().n > 1, 'threshold check notified faculty');
@@ -225,7 +226,7 @@ try {
   /* ---------- FR6: class lists ---------- */
   const imp = await act(hr, 'importClassList', { csv: 'section code, subject, faculty, student\nNEW-A1, New Subject, fac_a1@ubaguio.edu, st_a01@s.ubaguio.edu\nNEW-A1, New Subject, fac_a1, st_b01\nBAD, X, st_a02, st_a01' });
   assert.equal(imp.status, 200);
-  assert.equal(imp.data.result.created, 1); assert.equal(imp.data.result.enrolled, 1); assert.equal(imp.data.result.errorCount, 2);
+  assert.equal(imp.data.result.created, 1); assert.equal(imp.data.result.enrolled, 2, 'a student of another department can join'); assert.equal(imp.data.result.errorCount, 1);
   assert.equal((await act(hr, 'createSection', { code: 'OJT-A', subject: 'Internship A', facultyId: 'fac_a1' })).status, 200);
   // the full ARC list creates the student accounts that don't exist yet
   const full = await act(hr, 'importClassList', { csv: [

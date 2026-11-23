@@ -4,7 +4,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { handleApi } from './api.js';
+import { handleApi, startAutomation } from './api.js';
 
 const DIST = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'dist');
 const PORT = Number(process.env.PORT) || 3000;
@@ -24,6 +24,7 @@ if (!fs.existsSync(path.join(DIST, 'index.html'))) {
   process.exit(1);
 }
 
+startAutomation();
 http.createServer(async (req, res) => {
   if (await handleApi(req, res)) return;
   serveStatic(req, res);

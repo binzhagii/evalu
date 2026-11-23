@@ -106,7 +106,7 @@ Sign in as `hr`. HR has the most pages.
 
 #### Overview
 Your home page. It shows:
-- **What to do**: the whole process in order (prepare, run, results, follow up), checked from the real data of the period, with the next step on top.
+- **What to do**: the whole process in order (prepare, run, results, follow up), checked from the real data of the period, with the next step on top. **Needs you** lists only what a person has to decide.
 - **Responses received**: how many evaluations in open periods are done.
 - **Overdue evaluations**: how many are past the deadline.
 - **Classes needing more answers**: classes that have not reached the participation rule. They would be left out if the period closed now.
@@ -116,14 +116,14 @@ Your home page. It shows:
 #### Periods & release
 - **Create a period**: choose the school year (the current one or any later one), the semester (1st or 2nd) and the dates. The same semester can be created again only for departments it does not cover yet. Tick departments to open the evaluation for only those departments (none ticked = all). Then generate the tasks under Assignments.
 - **Send participation alerts** while a period is open: the teacher, the department heads and HR are told which classes are at or below half.
-- **Close a period** when the deadline has passed. Classes that did not reach the participation rule are left out, and the teacher, department heads and HR are notified.
+- A period **opens on its start date** (nobody can answer before) and **closes by itself 24 hours after its deadline**. HR is told when the deadline passes and can **extend** it, close it earlier, or reopen it with a new deadline. Classes that did not reach the participation rule are left out, and the teacher, department heads and HR are notified.
 - **Release results** one step at a time: **HR only → VPs → Faculty**. After you send results to the VPs, **every VP must click "Approve"** before the *Release to faculty* button works.
 - **Reset simulated data** puts all the sample data back. It erases every change, so use it only while testing.
 
 #### Assignments
-- **Generate tasks**: evaluators are assigned from the class lists and from each person's role and department. Internship, practicum and field trip subjects are skipped.
+- **Evaluations are created by themselves** when the period starts and after every change in the classes, students and staff; unanswered ones of students who dropped a class or accounts that were deactivated are removed. Evaluators are assigned from the class lists and from each person's role and department. Internship, practicum and field trip subjects are skipped.
 - See every task and whether it is pending, completed or overdue. Search for one evaluator.
-- **Send reminders now**. Reminders are also sent **automatically** once a day in the last 7 days before the deadline (and after it, until you close the period). Department heads and HR are alerted too.
+- **Send reminders now**. Reminders are also sent **automatically** once a day in the last 7 days before the deadline. Department heads and HR are alerted too.
 - **Add an evaluator assignment** by hand.
 
 #### Progress
@@ -131,13 +131,15 @@ Completion by department (students and personnel), then every class: how many an
 
 #### Class lists
 - **Type of class** (in the list of sections): Lecture (standard), Laboratory, Clinical – Dentistry / Physical Therapy / Medical Technology, or for Nursing CIs Clinical area / Skills laboratory. It decides which UB tool the students (and the dean) answer.
-The class sections from the Registrar / ARC. **Import a class list**: choose the **Department of this list**, then click **Choose CSV file…** (or paste), one student per line:
+The class sections from the Registrar / ARC. A class belongs to a **semester**; the same section code can have several subjects and teachers. **Import a class list**: choose the **semester** and the **Department of this list**, then click **Choose CSV file…** (or paste), one student per line:
 
 ```
 section code,subject,teacher name,teacher email,student ID,student name,student UB email
 ```
 
-- Classes that don't exist yet are created.
+- Classes that don't exist yet are created. If the first row names the columns, they can be in any order; `subject code`, `type of class` and `student department` are optional. Names with a comma ("Dela Cruz, Juan") are read when they are in quotes.
+- Importing a newer list adds the new students and lists the ones who **dropped**, so you can remove them. Students of other departments can be in a class.
+- evalU suggests the **type of class** (laboratory, clinical) from the subject names.
 - **Students without an account get one automatically.** Their first password is their **student ID**, and they must change it at the first sign-in. Students who already have an account are just added to the class, so the same student in two classes is created once.
 - **Teachers without an account get one too**, as Faculty in the chosen department. Their first password is the part of their email before the @ (for example `jdelacruz`).
 - Rows with a problem (for example a non-UB email, or a student from another department) are listed and skipped.
@@ -166,6 +168,7 @@ You can also add a section by hand. Practicum, internship and field trip subject
 This is the single HR page for both evaluator percentages and the final-score method. The starting rules include College faculty 40 / 40 / 20 and Basic Education 40 / 20 / 20 / 20 (Table 6). Every category has its own formula: click **Change** beside it, set its evaluator groups and percentages, and try the result. Formula changes go through VP approval; each period keeps the formula version it started with. The page lists every category at a glance and shows both levels of weights together (the percentage of each group, and the parts inside its tool). **Add evaluator group** adds a new rater (for example Peers) in one screen: who they are, their tool and the new percentages. Evaluations are created only for the groups in the formula, so a department with its own formula gets only its own groups.
 
 #### Accounts
+- **Import staff from a file**: deans, chairs, principals, office heads and staff (name, UB email, position, department or office).
 - **Add account**: enter a username, full name, role, position and department (students also choose their classes). The app shows a **temporary password once**, so write it down and give it to the person privately.
 - **Evaluator groups** are under **Scoring & calculation**: add, rename, change the members, and delete (a group used before is archived, so old results stay). The percentages must total 100%. System access roles such as HR and VP remain fixed.
 - **Departments & offices** (its own page): add, rename, deactivate, move everyone to another one, and delete. An **Office** (for example the Registrar) has a head and staff who evaluate each other. A closed period remembers the department and category each person had, so moving somebody later never changes a released rating; its results stay with the dean of that department.

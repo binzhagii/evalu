@@ -424,7 +424,8 @@ try {
     const today = L.today();
     const per = (await call('/api/data', { cookie: hr })).data.periods.find((p) => p.status === 'open' && /(validation)/.test(p.name) && (!p.startDate || p.startDate <= today) && p.deadline >= today);
     if (!per) return ['no open test period'];
-    await act(hr, 'generateTasks', { periodId: per.id });
+    // classes belong to a semester: give that semester a class with this student
+    await act(hr, 'importClassList', { dept: 'A', term: L.termOf(per.name), csv: 'TC68,Comment test,fac_a1@ubaguio.edu,st_a07@s.ubaguio.edu' });
     const c = await login('st_a07');
     const d = (await call('/api/data', { cookie: c })).data;
     const t = d.tasks.find((x) => x.periodId === per.id && !x.response && x.group === 'ST');
@@ -745,6 +746,120 @@ try {
     return { department: d.departments.find((k) => k.id === id).active !== false && sql.prepare('SELECT active FROM departments WHERE id=?').get(id).active === 1, group: sql.prepare('SELECT name FROM evaluator_groups WHERE id=?').get(gid).name, people: Object.keys(JSON.parse(row.people)).length > 0,
       refused: [(await act(fac, 'moveDepartment', { from: 'A', to: 'B' })).status, (await act(fac, 'deleteEvaluatorGroup', { id: gid })).status, (await act(student, 'setDepartmentActive', { deptId: 'A', active: false })).status] };
   });
+  /* ---------------- Part K: less manual work (classes per semester, the period by itself) ---------------- */
+  const I = await import('../server/imports.js');
+  const DAY = 86400000, HR_ = 3600000, at = (d, h = 12) => new Date(`${d}T00:00:00`).getTime() + h * HR_;
+  await tc('TC-105', 'Reading files', 'Names with a comma in quotes; semicolons; tabs; a quote inside a name; a line break in a cell; columns in another order', { quoted: 'Dela Cruz, Juan', semicolon: 3, tab: 3, inner: 'Juan "JD" Cruz', lines: 2, order: true }, async () => {
+    const x = lab(), r = await x.run('importClassList', { dept: 'A', preview: true, csv: 'Student Name,Student ID,Student UB Email,Subject Code,Subject Title,Section,Instructor Name,Instructor Email,Type of class\n"Reyes, Ana",20267001,20267001@s.ubaguio.edu,IT201,Data Science,2A,"Dela Cruz, Juan",jdc@ubaguio.edu,Laboratory' });
+    return { quoted: I.parseCsv('a,"Dela Cruz, Juan",b')[0].cells[1], semicolon: I.parseCsv('a;b;c')[0].cells.length, tab: I.parseCsv('a\tb\tc')[0].cells.length, inner: I.parseCsv('"Juan ""JD"" Cruz",x')[0].cells[0], lines: I.parseCsv('"a\nb",c\nd,e').length, order: r.ok && r.errorCount === 0 && r.newClasses[0] === '2A · IT201 – Data Science (1 students)' };
+  });
+  const LIST = (opts = {}) => { // 2A, 2B, 2C x 3 subjects x 35 students; the same section code for every subject
+    const rows = ['section,subject,teacher name,teacher email,student id,student name,student email'], subj = [['Data Science', 'prof1'], ['Web Development', 'prof2'], ['Intro to Computer Science', 'prof3']];
+    ['2A', '2B', '2C'].forEach((sec, i) => subj.forEach(([name, p]) => { for (let k = 0; k < 35; k++) { const id = 20268000 + i * 35 + k; if (opts.without?.(sec, name, k)) continue; rows.push(`${sec},${name},${p},${p}@ubaguio.edu,${id},"Student, No ${id}",${id}@s.ubaguio.edu`); } }));
+    if (opts.ben) rows.push('2A,Intro to Computer Science,prof3,prof3@ubaguio.edu,st_b01,Student B01,st_b01@s.ubaguio.edu');
+    return rows.join('\n');
+  };
+  await tc('TC-106', 'Classes', 'Three sections, three subjects, three professors, 35 students each, the same section code for every subject; Ana is not in Web Development; Ben (of another department) joins Intro to CS', { errors: 0, classes: 9, perProfessor: [105, 104, 106], regular: 3, ana: 2, ben: 1 }, async () => {
+    const x = lab(); await x.run('closePeriod', { periodId: 'p4' });
+    const r = await x.run('importClassList', { dept: 'A', term: '2031-1', csv: LIST({ ben: true, without: (s, n, k) => s === '2A' && n === 'Web Development' && k === 0 }) }); if (!r.ok) return r;
+    const p = await x.run('createPeriod', { name: L.periodName(2031, 1), deadline: '2099-01-01', depts: ['A'] }); L.syncOpenPeriods(x.db);
+    const T = x.db.tasks.filter((t) => t.periodId === p.id && t.group === 'ST'), of = (u) => x.db.users.find((k) => k.username === u).id, n = (u) => T.filter((t) => t.evaluatorId === of(u)).length;
+    return { errors: r.errorCount, classes: r.created, perProfessor: ['prof1', 'prof2', 'prof3'].map((u) => T.filter((t) => t.targetId === of(u)).length), regular: n('20268001'), ana: n('20268000'), ben: n('st_b01') };
+  });
+  await tc('TC-107', 'Classes of a semester', 'A new semester with no class list yet; the same section with another teacher in the new semester; a class of the old semester; a teacher promoted after the semester', { studentEvaluations: 0, secondSemester: 0, oldKept: true, sameCode: 2, whileTeaching: false, afterSemester: true }, async () => {
+    const x = lab(), promote = async () => { const k = x.db.users.find((u) => u.id === 'fac_a2'); return (await x.run('updateUser', { userId: k.id, name: k.name, username: k.username, email: k.email, role: 'TP', position: 'chair', dept: 'A' })).ok; };
+    for (const t of x.db.tasks) if (t.targetId === 'fac_a2' && t.periodId === 'p4') t.response = null;
+    const whileTeaching = await promote();
+    await x.run('closePeriod', { periodId: 'p4' });
+    const p = await x.run('createPeriod', { name: 'AY 2026-2027 2nd Semester', deadline: '2099-01-01' }); L.syncOpenPeriods(x.db);
+    const n = x.db.tasks.filter((t) => t.periodId === p.id && t.group === 'ST').length;
+    const r = await x.run('importClassList', { dept: 'A', term: '2026-2', csv: 'SEC-A1,Sample Subject A1,fac_a2@ubaguio.edu,st_a01@s.ubaguio.edu' });
+    return { studentEvaluations: n, secondSemester: r.errorCount, oldKept: x.db.sections.some((s) => s.id === 'sec1' && s.facultyId === 'fac_a1'), sameCode: x.db.sections.filter((s) => s.code === 'SEC-A1').length, whileTeaching, afterSemester: (x.db.sections = x.db.sections.filter((s) => s.term !== '2026-2'), await promote()) };
+  });
+  await tc('TC-108', 'Dropped students', 'A newer list without 4 of 10 students: only checked; then removed. One of the 4 had already answered', { found: 4, unchanged: 10, classSize: [10, 7], needed: [6, 4], answerKept: true }, async () => {
+    const x = lab(), sec = x.db.sections.find((s) => s.facultyId === 'fac_a2' && !L.isExemptSection(s)), st = () => L.sectionStats(x.db, 'p4', sec.id);
+    const answered = x.db.tasks.filter((t) => t.periodId === 'p4' && t.sectionId === sec.id && t.response).map((t) => t.evaluatorId), not = sec.studentIds.filter((id) => !answered.includes(id));
+    const gone = new Set([answered[0], ...not.slice(0, 3)]);
+    const csv = sec.studentIds.filter((id) => !gone.has(id)).map((id) => `${sec.code},${sec.subject},fac_a2@ubaguio.edu,${id}@s.ubaguio.edu`).join('\n');
+    const r = await x.run('importClassList', { dept: 'A', csv, preview: true }), a = st();
+    const unchanged = x.db.sections.find((s) => s.id === sec.id).studentIds.length;
+    await x.run('importClassList', { dept: 'A', csv, drop: true }); L.syncOpenPeriods(x.db); const b = st();
+    return { found: r.droppedCount, unchanged, classSize: [a.required, b.required], needed: [a.needed, b.needed], answerKept: x.db.tasks.some((t) => t.sectionId === sec.id && t.periodId === 'p4' && t.evaluatorId === answered[0] && t.response) };
+  });
+  await tc('TC-109', 'Type of class', 'From the file; suggested from the subject; a lecture; a practicum; then all suggestions at once', { file: 'lab', suggest: 'lab', lecture: null, practicum: null, applied: 1, unknown: 1 }, async () => {
+    const x = lab(); await x.run('importClassList', { dept: 'A', csv: 'section,subject,teacher email,student,type\nL1,Networks,fac_a1,st_a01,Laboratory\nL2,Physics Laboratory,fac_a1,st_a01,\nL3,Collaboration Skills,fac_a1,st_a01,\nL4,Laboratory Practicum,fac_a1,st_a01,' });
+    const u = await x.run('importClassList', { dept: 'A', preview: true, csv: 'section,subject,teacher email,student,type\nL9,Networks,fac_a1,st_a01,Dance' });
+    const c = (k) => x.db.sections.find((s) => s.code === k), out = { file: c('L1').classType, suggest: L.suggestClassType(x.db, c('L2')), lecture: L.suggestClassType(x.db, c('L3')), practicum: L.suggestClassType(x.db, c('L4')) };
+    return { ...out, applied: (await x.run('applyClassTypes', { sectionIds: ['L2', 'L3'].map((k) => c(k).id) })).changed, unknown: u.errorCount };
+  });
+  await tc('TC-110', 'Staff list', 'A dean, a chair with a comma in the name, an office head; an unknown position, a non-UB email, a dean in an office, somebody who has an account; temporary passwords are random', { created: 3, errors: 3, existing: 1, chair: 'Dela Cruz, Juan', random: true, checkedOnly: 0 }, async () => {
+    const x = lab(); await x.run('addDepartment', { name: 'Registrar', kind: 'office' }); const n = x.db.users.length;
+    const csv = 'name,UB email,position,department or office\nMaria Santos,msantos@ubaguio.edu,Dean,SIT\n"Dela Cruz, Juan",jdcruz@ubaguio.edu,Program Chair,SIT\nAna Reyes,areyes@ubaguio.edu,Office Head,Registrar\nX,x1@ubaguio.edu,Janitor,SIT\nY,y@gmail.com,Dean,SIT\nZ,z1@ubaguio.edu,Dean,Registrar\nDean A,dean_a@ubaguio.edu,Dean,SIT';
+    await x.run('importStaff', { csv, preview: true }); const checkedOnly = x.db.users.length - n;
+    const r = await x.run('importStaff', { csv });
+    return { created: r.created, errors: r.errorCount, existing: r.existing, chair: x.db.users.find((u) => u.username === 'jdcruz').name, random: new Set(r.passwords.map((p) => p.tempPassword)).size === 3 && r.passwords.every((p) => p.tempPassword.length >= 10 && !p.tempPassword.includes(p.username)), checkedOnly };
+  });
+  await tc('TC-111', 'Upgrade', 'Classes from before they had a semester: evaluated in AY 2026-27 Term 1; never evaluated', ['2026-1', '2026-1'], () => {
+    const d = buildSeed(); for (const s of d.sections) delete s.term; d.sections.push({ id: 'nx', code: 'NX', subject: 'New', facultyId: 'fac_a1', dept: 'A', studentIds: [] });
+    upgradeData(d); return ['sec1', 'nx'].map((id) => d.sections.find((s) => s.id === id).term);
+  });
+  const period = async (x, extra) => { const p = await x.run('createPeriod', { name: 'Timeline', deadline: '2031-03-10', startsOn: '2031-03-01', ...extra }); return () => x.db.periods.find((k) => k.id === p.id); };
+  await tc('TC-112', 'The period by itself', 'Starts Mar 1, deadline Mar 10: evaluations on Feb 28 / Mar 1; answering on Feb 28; reminders on Mar 6 and Mar 11; the notice; open 12 hours after the deadline; closed 25 hours after', { feb28: 0, mar1: true, early: 'refused', remindMar6: true, remindMar11: false, notice: true, after12h: 'open', after25h: 'closed', stored: true }, async () => {
+    const x = lab(), p = await period(x), out = {}, n = () => x.db.tasks.filter((t) => t.periodId === p().id).length;
+    L.runDailyAutomation(x.db, at('2031-02-28')); out.feb28 = n();
+    L.runDailyAutomation(x.db, at('2031-03-01', 0.1)); out.mar1 = n() > 0;
+    out.early = 'refused'; // (today is before the start date)
+    x.db.tasks.push({ id: 'probe', periodId: p().id, evaluatorId: 'st_a01', targetId: 'fac_a1', group: 'ST', sectionId: 'sec1', draft: null, response: null });
+    if ((await x.run('submitEvaluation', { taskId: 'probe', answers: {} }, { id: 'st_a01' })).error !== 'This evaluation has not started yet. It opens on its start date.') out.early = 'accepted';
+    x.db.tasks = x.db.tasks.filter((t) => t.id !== 'probe');
+    const reminded = (d) => { const before = x.db.notifications.filter((n) => n.key?.startsWith(`rem|${p().id}`)).length; L.runDailyAutomation(x.db, at(d)); return x.db.notifications.filter((n) => n.key?.startsWith(`rem|${p().id}`)).length > before; };
+    out.remindMar6 = reminded('2031-03-06'); p().lastAuto = null; out.remindMar11 = reminded('2031-03-11');
+    out.notice = x.db.notifications.some((n) => n.key?.startsWith(`cls|${p().id}|notice|hr`)); out.after12h = p().status;
+    L.runDailyAutomation(x.db, at('2031-03-12', 13)); out.after25h = p().status; out.stored = x.db.results.some((r) => r.periodId === p().id) && p().auto.closedBy === 'evalU';
+    return out;
+  });
+  await tc('TC-113', 'Extending', 'After the deadline HR extends: it does not close; people without answers are told; an old deadline found only now still gives HR 24 hours; a reopened period needs a new deadline', { closedAfterExtending: false, told: true, oldDeadline: ['open', 'closed'], reopenOld: false, reopenNew: true }, async () => {
+    const x = lab(), p = await period(x); L.generateTasks(x.db, p().id); p().startDate = '2020-01-01';
+    L.runDailyAutomation(x.db, at('2031-03-11')); await x.run('setPeriodDeadline', { periodId: p().id, deadline: '2031-03-20' }); L.runDailyAutomation(x.db, at('2031-03-13'));
+    const closedAfterExtending = p().status === 'closed', told = x.db.notifications.some((n) => n.key?.startsWith(`ext|${p().id}|`));
+    const y = lab(); y.db.periods.find((k) => k.id === 'p4').deadline = '2020-01-01'; const now = Date.now(), st = () => y.db.periods.find((k) => k.id === 'p4').status;
+    L.runDailyAutomation(y.db, now); const a = st(); L.runDailyAutomation(y.db, now + 23 * HR_); const b = st(); L.runDailyAutomation(y.db, now + 25 * HR_);
+    const oldDeadline = [a === 'open' && b === 'open' ? 'open' : 'closed too early', st()];
+    const reopenOld = (await y.run('reopenPeriod', { periodId: 'p4' })).ok, reopenNew = (await y.run('reopenPeriod', { periodId: 'p4', deadline: '2099-01-01' })).ok;
+    return { closedAfterExtending, told, oldDeadline, reopenOld, reopenNew };
+  });
+  await tc('TC-114', 'Evaluations follow by themselves', 'A new teacher; a deactivated student; an evaluation HR removed by hand; then added again', { newTeacher: 3, deactivated: 'removed', byHand: 'stays removed', addedAgain: true }, async () => {
+    const x = lab(); x.db.users.push({ id: 'nt', username: 'nt', email: 'nt@ubaguio.edu', name: 'NT', role: 'TP', position: 'faculty', dept: 'A', active: true });
+    L.syncOpenPeriods(x.db); const n = x.db.tasks.filter((t) => t.periodId === 'p4' && (t.targetId === 'nt' || t.evaluatorId === 'nt')).length;
+    const open = x.db.tasks.find((t) => t.periodId === 'p4' && t.group === 'ST' && !t.response); x.db.users.find((u) => u.id === open.evaluatorId).active = false; L.syncOpenPeriods(x.db);
+    const gone = !x.db.tasks.some((t) => t.id === open.id), d = x.db.tasks.find((t) => t.periodId === 'p4' && t.targetId === 'nt' && t.group === 'DEAN');
+    await x.run('removeTask', { taskId: d.id }); L.syncOpenPeriods(x.db); const stays = !x.db.tasks.some((t) => t.periodId === 'p4' && t.targetId === 'nt' && t.group === 'DEAN');
+    return { newTeacher: n, deactivated: gone ? 'removed' : 'kept', byHand: stays ? 'stays removed' : 'created again', addedAgain: (await x.run('addAssignment', { periodId: 'p4', evaluatorId: 'dean_a', targetId: 'nt' })).ok };
+  });
+  await tc('TC-115', 'After sending to the VPs', 'A VP silent for 2, 4, 5 and 8 days; approving with the switch off, then on', { reminders: [0, 1, 1, 2], off: 'dir', on: 'faculty', facultyTold: true }, async () => {
+    const run = async (autoRelease) => { const x = lab(); x.db.periods.find((p) => p.id === 'p4').policy = { ...L.DEFAULT_POLICY, autoRelease }; await x.run('closePeriod', { periodId: 'p4' }); await x.run('releaseNext', { periodId: 'p4' }); return x; };
+    const x = await run(false), now = Date.now(), n = () => x.db.notifications.filter((k) => k.key?.startsWith('vpr|p4|vp')).length;
+    const reminders = [2, 4, 5, 8].map((d) => { L.runDailyAutomation(x.db, now + d * DAY); return n(); });
+    const y = await run(true); await x.run('approveRelease', { periodId: 'p4' }, VPU); await y.run('approveRelease', { periodId: 'p4' }, VPU);
+    const st = (b) => b.db.periods.find((p) => p.id === 'p4').releaseStage;
+    return { reminders, off: st(x), on: st(y), facultyTold: y.db.notifications.some((k) => k.key === 'rel|p4|fac|fac_a1') };
+  });
+  await tc('TC-116', 'Needs you', 'Sample data; a laboratory subject; a closed period; a plan past its review date', { start: ['Dean: the percentages are not set, so nobody gets a rating.'], lab: true, closed: true, plan: true }, async () => {
+    const x = lab(), has = (re) => CY.needsYou(x.db).some((k) => re.test(k.text)); const start = CY.needsYou(x.db).map((k) => k.text);
+    x.db.sections[0].subject = 'Physics Laboratory'; const labs = has(/looks like laboratory/); await x.run('closePeriod', { periodId: 'p4' });
+    x.db.plans = [{ id: 'q', status: 'open', targetId: 'fac_a1', periodId: 'p2', reviewBy: '2020-01-01', createdById: 'dean_a' }];
+    return { start, lab: labs, closed: has(/is closed: review the results/), plan: has(/due for review/) };
+  });
+  await tc('TC-117', 'Speed', 'Preparing the evaluations of 5,000 students, 300 teachers and 1,000 classes of 40, then checking them again', 'under 5 seconds, nothing added twice', () => {
+    const d = buildSeed(); d.periods = []; d.tasks = []; d.sections = []; d.users = d.users.filter((u) => u.role === 'HR');
+    for (let i = 0; i < 5000; i++) d.users.push({ id: `s${i}`, name: `s${i}`, role: 'ST', position: 'student', dept: 'A', active: true });
+    for (let i = 0; i < 300; i++) d.users.push({ id: `f${i}`, name: `f${i}`, role: 'TP', position: 'faculty', dept: ['A', 'B', 'C'][i % 3], active: true });
+    for (const k of ['A', 'B', 'C']) d.users.push({ id: `d${k}`, name: k, role: 'TP', position: 'dean', dept: k, active: true });
+    for (let i = 0; i < 1000; i++) d.sections.push({ id: `c${i}`, code: `C${i}`, subject: 'S', facultyId: `f${i % 300}`, dept: ['A', 'B', 'C'][(i % 300) % 3], studentIds: Array.from({ length: 40 }, (_, k) => `s${(i * 40 + k) % 5000}`) });
+    d.periods.push({ id: 'P', name: 'Big', status: 'open', deadline: '2099-01-01', releaseStage: 'hr', rules: d.rules, depts: null, approvals: [] });
+    const t0 = Date.now(), a = L.syncOpenPeriods(d), b = L.syncOpenPeriods(d), ms = Date.now() - t0;
+    return a.added > 40000 && b.added === 0 && b.removed === 0 && ms < 5000 ? 'under 5 seconds, nothing added twice' : `${ms} ms, added ${a.added} then ${b.added}`;
+  });
 } finally {
   server.close();
 }
@@ -761,7 +876,7 @@ const md = [
   '',
   'Each case runs automatically (`npm run test:validation`). "Actual" is measured during this run, not written by hand.',
   'Part A checks the computation rules on controlled data; Part B runs the real server, database and access control;',
-  'Part C checks the formula engine and its approval and versions; Part D the comment analysis; Part E the computation modules (plug-ins), the effective period and the reproducibility of stored results; Part F HR-configurable evaluator groups and access control; Part H evaluation tool drafts and checks, and adding an evaluator group; Part I semesters, notifications and the process steps; Part J released results, participation rule, evaluator groups and departments; Part G the margin of error, form reliability, participation forecast, development follow-up and the fixes from the 20 Nov 2026 test.',
+  'Part C checks the formula engine and its approval and versions; Part D the comment analysis; Part E the computation modules (plug-ins), the effective period and the reproducibility of stored results; Part F HR-configurable evaluator groups and access control; Part H evaluation tool drafts and checks, and adding an evaluator group; Part I semesters, notifications and the process steps; Part J released results, participation rule, evaluator groups and departments; Part K classes per semester and what the period does by itself; Part G the margin of error, form reliability, participation forecast, development follow-up and the fixes from the 20 Nov 2026 test.',
   '',
   '| ID | Requirement | Scenario | Expected | Actual | Result |',
   '|---|---|---|---|---|---|',

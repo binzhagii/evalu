@@ -36,6 +36,7 @@ export const DEFAULT_POLICY = Object.freeze({
   minAnonymity: 2,            // students' comments are shown only when at least this many students of that teacher answered
   approvalMode: 'all',        // FR17: 'all' VPs must approve, 'any' one VP is enough, or 'count' = at least approvalCount
   approvalCount: 1,
+  autoRelease: false,         // release to faculty by itself once enough VPs approved (off: HR releases)
 });
 /** A saved policy with every field; the "plus one" of earlier versions is read as "more than". */
 export function fullPolicy(saved) {
@@ -275,6 +276,35 @@ export function semesterOf(name = '') {
   const sem = /summer/i.test(name) ? 3 : /term\s*2|2nd|second/i.test(name) ? 2 : /term\s*1|1st|first/i.test(name) ? 1 : 0;
   return y && sem ? { year: Number(y[1]), sem } : null;
 }
+/* ---------- a class belongs to a semester: its term, "2026-1" (none = classes from before, used in any period) ---------- */
+export const termOf = (name) => { const k = semesterOf(name); return k ? `${k.year}-${k.sem}` : null; };
+export const termLabel = (t) => { if (!t) return 'No semester'; const [y, s] = t.split('-').map(Number); return s === 3 ? `AY ${y}-${y + 1} Summer` : periodName(y, s); };
+export const nextTermOf = (t) => { const [y, s] = t.split('-').map(Number); return s === 1 ? `${y}-2` : `${y + 1}-1`; };
+/** The semester going on: of the newest open period, else of the newest period, else the 1st semester of this school year. */
+export function currentTerm(db) {
+  const list = [...db.periods].reverse();
+  const p = list.find((x) => x.status === 'open' && termOf(x.name)) || list.find((x) => termOf(x.name));
+  return p ? termOf(p.name) : `${schoolYearNow()}-1`;
+}
+/** The semester HR prepares classes for: the open period's, else the one after the newest period. */
+export function workingTerm(db) {
+  const open = [...db.periods].reverse().find((x) => x.status === 'open' && termOf(x.name));
+  if (open) return termOf(open.name);
+  return db.periods.some((p) => termOf(p.name)) ? nextTermOf(currentTerm(db)) : currentTerm(db);
+}
+/** Is this class evaluated in this period? (a period with another kind of name takes every class) */
+export const inTerm = (p, s) => { const t = p && termOf(p.name); return !t || !s.term || s.term === t; };
+/** A class of a semester that is over: it is kept for the records and does not hold anything up. */
+export const isPastClass = (db, s) => !!s.term && s.term < currentTerm(db);
+/** A type of class the subject suggests ('lab', 'skills', 'clin-…'), or null. Only for a class HR left as lecture. */
+export function suggestClassType(db, s) {
+  if (s.classType || isExemptSection(s)) return null;
+  const t = `${s.subject} ${s.code}`.toLowerCase(), teacher = db.users.find((u) => u.id === s.facultyId);
+  if (teacher?.position === 'ci') return /skills?\s*lab|skills laboratory/.test(t) ? 'skills' : null;
+  const d = db.departments.find((x) => x.id === s.dept)?.name.toLowerCase() || '';
+  if (/clinic|infirmary/.test(t)) return /dent/.test(d) ? 'clin-dent' : /physical therapy|\bpt\b/.test(`${d} ${t}`) ? 'clin-pt' : /med(ical)?\s*tech|\bmls\b/.test(`${d} ${t}`) ? 'clin-mt' : null;
+  return /\blab(oratory)?\b/.test(t) ? 'lab' : null;
+}
 /** A period of the same school year and semester that already covers one of these departments (none chosen = all). */
 export function samePeriod(db, name, depts = []) {
   const k = semesterOf(name);
@@ -315,7 +345,8 @@ export function instrumentFor(db, tt, group, dept = null, variant = null) {
 export function taskVariant(db, task) {
   if (task.sectionId) return db.sections.find((s) => s.id === task.sectionId)?.classType || null;
   const count = {};
-  for (const s of db.sections) if (s.facultyId === task.targetId && !isExemptSection(s)) count[s.classType || ''] = (count[s.classType || ''] || 0) + 1;
+  const p = periodById(db, task.periodId);
+  for (const s of db.sections) if (s.facultyId === task.targetId && !isExemptSection(s) && inTerm(p, s)) count[s.classType || ''] = (count[s.classType || ''] || 0) + 1;
   const top = Object.entries(count).sort((a, b) => b[1] - a[1])[0];
   return top?.[0] || null;
 }
@@ -622,16 +653,22 @@ export function expectedAssignments(db, periodId) {
   // Deactivated accounts get no new tasks (their past results stay in the reports).
   const p = periodById(db, periodId);
   const out = [];
+  // looked up once: this runs by itself after every import
+  const on = new Set(db.users.filter(active).map((u) => u.id));
+  const raters = new Map(); // department -> [[person, their groups]]
+  for (const u of db.users) if (on.has(u.id) && u.role !== 'ST') { if (!raters.has(u.dept)) raters.set(u.dept, []); raters.get(u.dept).push([u, groupsOf(db, u)]); }
+  const classes = new Map();
+  for (const s of db.sections) if (!isExemptSection(s) && inTerm(p, s)) { if (!classes.has(s.facultyId)) classes.set(s.facultyId, []); classes.get(s.facultyId).push(s); }
   for (const t of targetsOf(db).filter(active)) {
     const dept = personIn(db, periodId, t).dept;
     if (!periodCovers(p, dept)) continue;
     // only the groups that count in this person's formula (a department's own formula included) get tasks
     for (const g of ratingGroups(db, periodId, t)) {
       if (g === 'ST') {
-        for (const sec of db.sections.filter((s) => s.facultyId === t.id && !isExemptSection(s)))
-          for (const sid of sec.studentIds.filter((id) => active(userById(db, id)))) out.push({ evaluatorId: sid, targetId: t.id, group: g, sectionId: sec.id });
+        for (const sec of classes.get(t.id) || [])
+          for (const sid of sec.studentIds.filter((id) => on.has(id))) out.push({ evaluatorId: sid, targetId: t.id, group: g, sectionId: sec.id });
       } else {
-        for (const e of db.users.filter((u) => active(u) && u.dept === dept && u.id !== t.id && groupsOf(db, u).includes(g)))
+        for (const [e] of (raters.get(dept) || []).filter(([u, gs]) => u.id !== t.id && gs.includes(g)))
           out.push({ evaluatorId: e.id, targetId: t.id, group: g, sectionId: null });
       }
     }
@@ -664,14 +701,50 @@ export function toolsOfPeriod(db, periodId) {
   return out;
 }
 
+export const taskKey = (t) => `${t.evaluatorId}|${t.targetId}|${t.group}|${t.sectionId || ''}`;
+/** Not started yet / the deadline (end of that day) has passed. */
+export const notStarted = (p, day = today()) => !!p.startDate && p.startDate > day;
+export const deadlinePassed = (p, now = Date.now()) => new Date(`${p.deadline}T23:59:59`).getTime() < now;
+export const CLOSE_AFTER_HOURS = 24;
+/** When an open period closes by itself: 24 hours after the deadline, and never less than 24 hours after HR was told. */
+export function closesAt(p) {
+  const h = CLOSE_AFTER_HOURS * 3600000;
+  return Math.max(new Date(`${p.deadline}T23:59:59`).getTime() + h, p.auto?.closeNotice ? Date.parse(p.auto.closeNotice) + h : 0);
+}
+/**
+ * Keep an open period's evaluations right: new classes, students and staff get theirs; unanswered ones of students who
+ * dropped a class, and of deactivated accounts, are removed (so the class size is right). Answers are never touched.
+ */
+export function syncTasks(draft, p, now = Date.now()) {
+  if (p.status !== 'open' || notStarted(p, localDay(new Date(now))) || deadlinePassed(p, now)) return { added: 0, removed: 0 };
+  const on = new Set(draft.users.filter(active).map((u) => u.id));
+  const inClass = new Map(draft.sections.map((s) => [s.id, new Set(s.studentIds)]));
+  const before = draft.tasks.length;
+  draft.tasks = draft.tasks.filter((t) => t.periodId !== p.id || t.response || (on.has(t.evaluatorId) && on.has(t.targetId) && (!t.sectionId || inClass.get(t.sectionId)?.has(t.evaluatorId))));
+  return { removed: before - draft.tasks.length, added: generateTasks(draft, p.id).added };
+}
+export const syncOpenPeriods = (draft) => draft.periods.filter((p) => p.status === 'open').reduce((a, p) => { const r = syncTasks(draft, p); return { added: a.added + r.added, removed: a.removed + r.removed }; }, { added: 0, removed: 0 });
+/** Close a period: leave out classes without enough answers, fix its rules and store every result. Returns the classes left out. */
+export function closeNow(draft, p) {
+  const flagged = runThresholdCheck(draft, p.id);
+  p.status = 'closed';
+  p.rules ||= structuredClone(draft.rules);
+  p.policy ||= currentPolicy(draft);
+  storeResults(draft, p);
+  return flagged;
+}
+
 export function generateTasks(draft, periodId) {
   // idempotent; returns {added, skippedNoForm}
-  const have = new Set(draft.tasks.filter((t) => t.periodId === periodId).map((t) => `${t.evaluatorId}|${t.targetId}|${t.group}|${t.sectionId || ''}`));
+  const have = new Set(draft.tasks.filter((t) => t.periodId === periodId).map(taskKey));
+  const off = new Set(periodById(draft, periodId)?.auto?.skip || []); // evaluations HR removed by hand stay removed
+  const forms = new Map();
+  const hasForm = (a) => { const k = `${a.targetId}|${a.group}|${a.sectionId || ''}`; if (!forms.has(k)) forms.set(k, !!formForTask(draft, { ...a, periodId })); return forms.get(k); };
   let added = 0, skippedNoForm = 0;
   for (const a of expectedAssignments(draft, periodId)) {
-    const key = `${a.evaluatorId}|${a.targetId}|${a.group}|${a.sectionId || ''}`;
-    if (have.has(key)) continue;
-    if (!formForTask(draft, a)) { skippedNoForm++; continue; }
+    const key = taskKey(a);
+    if (have.has(key) || off.has(key)) continue;
+    if (!hasForm(a)) { skippedNoForm++; continue; }
     draft.tasks.push({ id: uid('t'), periodId, ...a, draft: null, response: null });
     added++;
   }
@@ -867,12 +940,34 @@ export function forecastWarnings(draft, periodId, now = Date.now()) {
   return sent;
 }
 
-export function runDailyAutomation(draft) {
-  const day = today();
+const VP_REMIND_DAYS = 3;
+const when = (ms) => new Date(ms).toLocaleString('en-US', { month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+/**
+ * Everything evalU does by itself. Runs every few minutes on the server; each part happens once a day (or once).
+ * Returns the number of things done (0 = nothing to save).
+ */
+export function runDailyAutomation(draft, now = Date.now()) {
+  const day = localDay(new Date(now));
   let ran = 0;
-  for (const p of draft.periods.filter((x) => x.status === 'open')) {
+  for (const p of draft.periods.filter((x) => x.status === 'open' && !notStarted(x, day))) {
+    const auto = (p.auto ||= {});
+    if (!deadlinePassed(p, now)) {
+      // evaluations follow the classes, students and staff (checked on the start date, then every day)
+      if (auto.synced !== day) { auto.synced = day; const r = syncTasks(draft, p, now); if (r.added || r.removed) ran++; }
+    } else {
+      // the deadline has passed: nobody can answer, so nobody is reminded. HR is told, and can still extend it.
+      if (!auto.closeNotice) {
+        auto.closeNotice = new Date(now).toISOString(); ran++;
+        for (const h of hrUsers(draft)) notify(draft, { key: `cls|${p.id}|notice|${h.id}|${p.deadline}`, userId: h.id, kind: 'overdue', text: `The deadline of ${p.name} has passed. It closes by itself on ${when(closesAt(p))}. If people need more time, extend the deadline under Dates & release.` });
+      }
+      if (now >= closesAt(p)) {
+        const flagged = closeNow(draft, p); auto.closedBy = 'evalU'; ran++;
+        for (const h of hrUsers(draft)) notify(draft, { key: `cls|${p.id}|closed|${h.id}|${p.deadline}`, userId: h.id, kind: 'release', text: `${p.name} was closed by itself after its deadline. ${flagged ? `${plural(flagged, 'class', 'classes')} did not have enough answers. ` : ''}Review the results, then send them to the VPs. You can also reopen it with a new deadline.` });
+      }
+      continue;
+    }
     // early warning from the participation forecast, once a day, from the start of the period
-    if (p.lastForecast !== day) { p.lastForecast = day; forecastWarnings(draft, p.id); ran++; }
+    if (p.lastForecast !== day) { p.lastForecast = day; forecastWarnings(draft, p.id, now); ran++; }
     if (p.lastAuto === day) continue;
     const daysLeft = Math.round((new Date(p.deadline + 'T00:00:00') - new Date(day + 'T00:00:00')) / 86400000);
     if (daysLeft > REMIND_DAYS) continue;
@@ -880,6 +975,19 @@ export function runDailyAutomation(draft) {
     participationAlerts(draft, p.id);
     p.lastAuto = day;
     ran++;
+  }
+  // VPs who have not approved after a few days are reminded
+  for (const p of draft.periods.filter((x) => x.releaseStage === 'dir' && x.auto?.sentAt)) {
+    const last = Date.parse(p.auto.vpReminded || p.auto.sentAt);
+    const waiting = pendingApprovals(draft, p);
+    if (!waiting.length || now - last < VP_REMIND_DAYS * 86400000) continue;
+    p.auto.vpReminded = new Date(now).toISOString(); ran++;
+    for (const v of waiting) notify(draft, { key: `vpr|${p.id}|${v.id}|${day}`, userId: v.id, kind: 'reminder', text: `The results of ${p.name} are still waiting for your review. Approve them, or return them to HR with a reason.` });
+  }
+  // development plans whose review date is near or past: the person who made the plan, once
+  for (const plan of (draft.plans || []).filter((x) => x.status === 'open')) {
+    if ((Date.parse(plan.reviewBy + 'T00:00:00') - now) / 86400000 > 7) continue;
+    if (notify(draft, { key: `dpr|${plan.id}|${plan.reviewBy}`, userId: plan.createdById, kind: 'reminder', text: `The development plan of ${userById(draft, plan.targetId)?.name} is due for review on ${fmtDate(plan.reviewBy)}.` })) ran++;
   }
   return ran;
 }

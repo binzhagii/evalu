@@ -12,7 +12,7 @@ export const useApp = () => useContext(Ctx);
 const DONE = {
   createPeriod: 'Evaluation period created', closePeriod: 'Period closed', reopenPeriod: 'Period reopened',
   releaseNext: 'Results released', withdrawRelease: 'Release step withdrawn', checkThreshold: 'Participation alerts sent',
-  setPeriodDeadline: 'Deadline changed', generateTasks: 'Evaluation tasks created', sendReminders: 'Reminders sent',
+  setPeriodDeadline: 'Deadline changed', importStaff: 'Staff list imported', applyClassTypes: 'Class types set', generateTasks: 'Evaluation tasks created', sendReminders: 'Reminders sent',
   addAssignment: 'Evaluation added', removeTask: 'Evaluation removed',
   importClassList: 'Class list imported', createSection: 'Class added', deleteSection: 'Class deleted', setClassType: 'Class type changed',
   importPastResults: 'Earlier records imported', deletePastResult: 'Record deleted',

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useApp } from '../lib/store';
-import { ROLES, POSITIONS, needsDept, deptName, isNursingDept, nursingDepts, activeDepts, schoolDepts, evaluatorGroups, defaultEvaluatorGroups } from '../lib/logic';
+import { ROLES, POSITIONS, needsDept, deptName, isNursingDept, nursingDepts, activeDepts, schoolDepts, isPastClass, evaluatorGroups, defaultEvaluatorGroups } from '../lib/logic';
 import { Card, Select, Badge, Avatar, Empty, newestFirst, usePages, ask } from '../ui';
 
 /* ---------------- change your own password ---------------- */
@@ -90,7 +90,8 @@ function AccountForm({ initial, onSave, onCancel, saveLabel }) {
     const position = Object.keys(POSITIONS[role])[0];
     setF((x) => ({ ...x, role, position, dept: needsDept(role) ? x.dept : '', sectionIds: role === 'ST' ? x.sectionIds : [], evaluatorGroupIds: defaultEvaluatorGroups(role, position) }));
   };
-  const classes = db.sections.filter((s) => s.dept === f.dept);
+  // this semester's classes of the department, and the classes of other departments they are in (general education)
+  const classes = db.sections.filter((s) => !isPastClass(db, s) && (s.dept === f.dept || f.sectionIds.includes(s.id)));
   // Clinical Instructors are only in the School of Nursing
   const chosenDept = db.departments.find((d) => d.id === f.dept);
   const positions = Object.entries(POSITIONS[f.role]).filter(([k]) => k !== 'ci' || !chosenDept || isNursingDept(chosenDept) || f.position === 'ci');
@@ -139,8 +140,8 @@ function AccountForm({ initial, onSave, onCancel, saveLabel }) {
         <div className="row">
           <span className="muted">Classes:</span>
           {classes.length ? classes.map((s) => (
-            <label key={s.id} className="inline"><input type="checkbox" checked={f.sectionIds.includes(s.id)} onChange={() => toggle(s.id)} /> {s.code}</label>
-          )) : <span className="muted">No class sections in this department.</span>}
+            <label key={s.id} className="inline"><input type="checkbox" checked={f.sectionIds.includes(s.id)} onChange={() => toggle(s.id)} /> {s.code} <span className="muted small">{s.subject}</span></label>
+          )) : <span className="muted">No classes in this department this semester.</span>}
         </div>
       )}
       <div className="row">
@@ -168,6 +169,37 @@ function TempPasswordNote({ info, onClose }) {
         <button className="ghost" onClick={onClose}>Done</button>
       </span>
     </div>
+  );
+}
+
+const SAMPLE_STAFF = `name,UB email,position,department or office
+Maria Santos,msantos@ubaguio.edu,Dean,SIT
+"Dela Cruz, Juan",jdcruz@ubaguio.edu,Program Chair,SIT
+Ana Reyes,areyes@ubaguio.edu,Office Head,Office of the Registrar`;
+/** Deans, program chairs, office heads, staff…: many accounts from one file. */
+function StaffImport() {
+  const { act } = useApp();
+  const [csv, setCsv] = useState('');
+  const [out, setOut] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const run = async (preview) => { setBusy(true); const r = await act('importStaff', { csv, preview }); setBusy(false); if (r) { setOut(r); if (!preview && !r.errorCount) setCsv(''); } };
+  return (
+    <details className="card advanced-panel">
+      <summary><b>Import staff from a file</b> <span className="muted">· Deans, chairs, principals, office heads and staff. Teachers and students come from class lists.</span></summary>
+      <div className="advanced-content">
+        <p className="muted">One person per line: <code>name, UB email, position, department or office</code>. The department can be its name or its letters, for example SIT. People who already have an account are skipped.</p>
+        <label className="file-pick"><input type="file" accept=".csv,.txt,text/csv" onChange={async (e) => { const file = e.target.files?.[0]; if (file) { setCsv(await file.text()); setOut(null); } e.target.value = ''; }} />Choose CSV file…</label>
+        <textarea rows={5} value={csv} onChange={(e) => { setCsv(e.target.value); setOut(null); }} placeholder={SAMPLE_STAFF} aria-label="Staff list" />
+        <div className="row"><button className="ghost" disabled={busy || !csv.trim()} onClick={() => run(true)}>1. Check file</button><button disabled={busy || !out?.preview || !out.created} onClick={() => run(false)}>2. Import staff list</button></div>
+        {out && <div className={`note ${out.errorCount ? 'warn' : 'ok'}`}>
+          <b>{out.preview ? 'Check result (nothing saved yet):' : 'Imported.'}</b> {out.rows} row(s) read, <b>{out.created} account(s)</b> {out.preview ? 'would be created' : 'created'}{out.existing ? `, ${out.existing} already had one` : ''}.{out.errorCount > 0 && ` ${out.errorCount} row(s) have a problem and are skipped:`}
+          {out.errors.length > 0 && <ul>{out.errors.map((e) => <li key={e}>{e}</li>)}</ul>}
+          {out.preview && out.summary.length > 0 && <ul className="muted">{out.summary.map((x) => <li key={x}>{x}</li>)}</ul>}
+          {out.passwords?.length > 0 && <><p><b>Temporary passwords.</b> Give each one privately. Until the person signs in, you can see it again in the list below.</p>
+            <table><thead><tr><th>Name</th><th>UB email</th><th>Temporary password</th></tr></thead><tbody>{out.passwords.map((p) => <tr key={p.username}><td>{p.name}</td><td>{p.email}</td><td><code className="temp-pw">{p.tempPassword}</code></td></tr>)}</tbody></table></>}
+        </div>}
+      </div>
+    </details>
   );
 }
 
@@ -212,7 +244,7 @@ export function Accounts() {
   return (
     <>
       <div className="note">
-        <b>Most student and teacher accounts are created when you import a class list.</b> Use this page for one person at a time, or to update a name, reset a password, or manage departments. New accounts get a temporary password that must be changed at first sign-in.
+        <b>Most student and teacher accounts are created when you import a class list.</b> Use this page for one person at a time, or to update a name, or reset a password. New accounts get a temporary password that must be changed at first sign-in.
       </div>
 
       {temp && <TempPasswordNote info={temp} onClose={() => setTemp(null)} />}
@@ -223,6 +255,8 @@ export function Accounts() {
           ? <AccountForm initial={EMPTY} onSave={create} onCancel={() => setAdding(false)} saveLabel="Create account" />
           : <p className="muted">Create accounts for new students, faculty and staff.</p>}
       </Card>
+
+      <StaffImport />
 
       <Card title={`Accounts (${list.length})`} actions={
         <div className="row" style={{ margin: 0 }}>

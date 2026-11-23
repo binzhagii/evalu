@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { useApp } from '../lib/store';
-import { computeTarget, canSeeOwn, sectionStats, STAGE_LABEL, policyFor, currentPolicy, hasRule, ruleWords, ruleMark, isExemptSection, participationForecast, forecastText } from '../lib/logic';
+import { computeTarget, canSeeOwn, sectionStats, STAGE_LABEL, policyFor, currentPolicy, hasRule, ruleWords, ruleMark, inTerm, isExemptSection, participationForecast, forecastText } from '../lib/logic';
 import { linkFor } from '../lib/cycle';
 import { Card, Badge, Meter, Empty, Icon, RuleNote, useNav } from '../ui';
 import { ResultCard, PastRecords } from './Reports';
@@ -110,7 +110,7 @@ export function MyResults() {
       {myClasses.length > 0 && open.length > 0 && (
         <div className="no-print"><Card title="Student response progress for my classes">
           <p className="muted">{hasRule(policyFor(db, open.at(-1).id)) ? `${ruleWords(policyFor(db, open.at(-1).id)).replace(/^./, (x) => x.toUpperCase())} must answer, or that class is left out of your result. ` : ''}Tip: show the class QR code in class so students can answer on their phones right away.</p>
-          {open.flatMap((p) => myClasses.map((s) => {
+          {open.flatMap((p) => myClasses.filter((s) => inTerm(p, s)).map((s) => {
             const st = sectionStats(db, p.id, s.id);
             const fc = participationForecast(db, p.id, s.id);
             return (

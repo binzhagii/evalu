@@ -8,13 +8,14 @@ import { Card, Select, Badge, ask } from '../ui';
 const FIELD = {
   participationRule: 'Participation rule', participationPercent: 'Participation %', participationMin: 'Minimum answers (no rule)', bands: 'What each rating means', lowItem: 'Low question line',
   decimals: 'Decimal places', missingGroup: 'Missing evaluator group', minAnonymity: 'Minimum students for comments',
-  approvalMode: 'VP approvals needed', approvalCount: 'Number of VPs',
+  approvalMode: 'VP approvals needed', approvalCount: 'Number of VPs', autoRelease: 'Release by itself after VP approval',
 };
 const show = (k, v) => {
   if (k === 'participationRule') return PARTICIPATION_RULES[v]?.toLowerCase() || v;
   if (k === 'bands') return v.map((b) => Number(b).toFixed(2)).join(' / ');
   if (k === 'missingGroup') return v === 'reweight' ? 're-weight the others' : 'no final rating';
   if (k === 'approvalMode') return { all: 'every VP', any: 'any one VP', count: 'a set number' }[v] || v;
+  if (k === 'autoRelease') return v ? 'yes' : 'no';
   if (k === 'participationPercent') return `${v}%`;
   return String(v);
 };
@@ -94,6 +95,9 @@ export default function Policy() {
           {f.approvalMode === 'count' && <label className="inline">how many <input type="number" min="1" max="20" className="tiny" value={f.approvalCount} onChange={(e) => set('approvalCount', Number(e.target.value))} /></label>}
         </div>
         <p className="muted small">"Any one VP" or a set number keeps one VP on leave from blocking every result. A VP can also return results to HR with a reason instead of approving.</p>
+
+        <div className="row"><label className="inline"><input type="checkbox" checked={f.autoRelease === true} onChange={(e) => set('autoRelease', e.target.checked)} /> Release the results to faculty by themselves once enough VPs approved</label></div>
+        <p className="muted small">When this is off, HR clicks "Release to faculty" after the approvals. VPs who have not answered are reminded every 3 days.</p>
 
         <h4>Save as a new version</h4>
         {changed.length === 0 ? <p className="muted">No changes yet. Change a rule above to save a new version.</p> : (

@@ -779,3 +779,6 @@ table.fx-overview td.fx-dept button.link { font-weight:400; color:var(--mut); }
 .year-pick button { padding:6px 12px; }
 .rule-choices label.fx-choice { align-items:center; }
 .rule-choices label.fx-choice input[type=radio] { margin-top:0; }
+.needs li { gap:12px; padding:8px 0; border-bottom:1px solid var(--bd2); }
+.needs li:last-child { border-bottom:none; }
+.needs li > span { flex:1 1 260px; }
