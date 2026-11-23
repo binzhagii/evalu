@@ -18,7 +18,7 @@ export { cronbachAlpha, alphaLabel, confidenceLabel } from './stats.js';
 import { MAX_RATING, SCALES } from './ubForms.js';
 import { defaultFormula, computeFinal, methodOf } from './formula.js';
 import { sampleStats, averageOfAverages, combinedMargin, confidenceLabel } from './stats.js';
-export { METHODS, AGGREGATIONS, MISSING_RULES, ROUNDING_METHODS, roundBy, parseExpression, validateFormula, computeFinal, defaultFormula, formulaText, formulaWords, howInWords, methodOf, methodList } from './formula.js';
+export { METHODS, AGGREGATIONS, MISSING_RULES, ROUNDING_METHODS, roundBy, parseExpression, validateFormula, computeFinal, defaultFormula, asPercentages, formulaText, formulaWords, howInWords, methodOf, methodList } from './formula.js';
 
 /* ---------- evaluation policy (HR changes it without a programmer; each period keeps the version it used) ---------- */
 /**
@@ -180,6 +180,16 @@ export function evaluatorGroups(u) {
   return defaultEvaluatorGroups(u.role, u.position);
 }
 export const evaluatorGroup = (u) => evaluatorGroups(u)[0] || null;
+/**
+ * Every evaluator group a person belongs to: their own, plus the groups HR set up as "everyone with this
+ * position" (so a teacher imported later joins by themselves).
+ */
+export function groupsOf(db, u) {
+  const own = evaluatorGroups(u);
+  if (!u || u.role === 'ST') return own;
+  const byPosition = (db?.evaluatorGroups || []).filter((g) => g.active !== false && g.positions?.includes(u.position)).map((g) => g.id);
+  return byPosition.length ? [...new Set([...own, ...byPosition])] : own;
+}
 
 export function targetType(db, u) {
   if (!u) return null;
@@ -268,6 +278,63 @@ export function effectiveWeights(ins) {
   }));
 }
 
+/* ---------- versions of an evaluation tool: draft → (scheduled) → in use → old ---------- */
+// A draft or scheduled version has active = false, so it is never the form somebody answers (see instrumentFor).
+export const toolStatus = (i) => i.status || (i.active === false ? 'old' : 'in-use');
+/** Versions of the same tool: same evaluated category, evaluator group, department and type of class. */
+export const sameTool = (a, b) => a.targetType === b.targetType && a.group === b.group && (a.dept || null) === (b.dept || null) && (a.variant || null) === (b.variant || null);
+/** The parts of a tool in order, with their weight (null = not set) and indicators. Empty parts are included. */
+export function toolParts(ins) {
+  const parts = new Map();
+  for (const it of ins.items || []) {
+    const name = itemCategory(it);
+    if (!parts.has(name)) parts.set(name, { name, weight: ins.categories?.[name] ?? null, items: [] });
+    parts.get(name).items.push(it);
+  }
+  for (const name of Object.keys(ins.categories || {})) if (!parts.has(name)) parts.set(name, { name, weight: ins.categories[name] ?? null, items: [] });
+  return [...parts.values()];
+}
+/**
+ * What must be fixed before a tool can be used (empty list = ready). If any part has a weight, every part needs
+ * one and they total 100%: otherwise effectiveWeights() would ignore or stretch them without saying so.
+ */
+export function toolProblems(ins) {
+  const out = [];
+  if (!ins.items?.length) out.push('Add at least one indicator.');
+  const parts = toolParts(ins);
+  const weighted = parts.some((p) => Number(p.weight) > 0);
+  for (const p of parts) {
+    if (!p.items.length) out.push(`"${p.name}" has no indicators. Add one, or remove the part.`);
+    if (weighted && !(Number(p.weight) > 0)) out.push(`"${p.name}" has no weight.`);
+  }
+  const total = parts.reduce((a, p) => a + (Number(p.weight) || 0), 0);
+  // 0.05: three equal parts of 33.33% are accepted as 100%
+  if (weighted && Math.abs(total - 100) > 0.05) out.push(`The weights add up to ${+total.toFixed(2)}%; they must add up to 100%. ${total < 100 ? `Add ${+(100 - total).toFixed(2)}% more.` : `Remove ${+(total - 100).toFixed(2)}%.`}`);
+  const zero = (ins.items || []).filter((it) => !(Number(it.weight) > 0)).length;
+  if (zero) out.push(`${zero} indicator${zero === 1 ? ' has' : 's have'} an item weight of 0, so the answers would not count.`);
+  return out;
+}
+/**
+ * Would using this version now give people in an open period two different forms? True when somebody already
+ * answered (or saved a draft answer on) the form it would replace.
+ */
+export function toolSwitchMixes(db, ins) {
+  const openIds = new Set(db.periods.filter((p) => p.status === 'open').map((p) => p.id));
+  const tasks = db.tasks.filter((t) => t.group === ins.group && openIds.has(t.periodId));
+  const after = { ...db, instruments: db.instruments.map((i) => (i.id === ins.id ? { ...i, active: true, status: null } : sameTool(i, ins) && i.active !== false ? { ...i, active: false } : i)) };
+  const now = new Map(), replaced = new Set();
+  const key = (t) => `${t.targetId}|${t.sectionId || ''}`;
+  for (const t of tasks) {
+    if (now.has(key(t))) continue;
+    const a = formForTask(db, t)?.id || null;
+    now.set(key(t), a);
+    if (a && a !== formForTask(after, t)?.id) replaced.add(a);
+  }
+  return replaced.size > 0 && tasks.some((t) => (t.response ? replaced.has(t.response.instrumentId) : t.draft && replaced.has(now.get(key(t)))));
+}
+/** A tool's name for people: UB's name, HR's name, or who rates whom. */
+export const toolName = (db, i) => (i.name && i.name !== 'custom' ? i.name.replace(/ \((UB tool|sample)\)$/, '') : `${TARGET_TYPES[i.targetType]} by the ${groupName(db, i.group)}`);
+
 // ---------- task status ----------
 export function taskStatus(db, task) {
   if (task.response) return 'completed';
@@ -328,8 +395,17 @@ export function formulaFor(db, periodId, tt, dept) {
   if (!p) { const a = activeFormula(db, tt, dept); if (a) return formulaSnapshot(a); }
   return defaultFormula(rulesFor(db, periodId)[tt] || {}, policyFor(db, periodId));
 }
-/** Evaluation groups that have a form for a category (only those can be put in its formula). */
-export const formGroups = (db, tt) => [...new Set(db.instruments.filter((i) => i.active !== false && i.targetType === tt).map((i) => i.group))];
+/**
+ * Evaluation groups that have a tool for a category. Only a tool in use counts (with at least one indicator);
+ * { scheduled } also counts one that starts with the next period, { drafts } also one HR is still preparing.
+ */
+export const formGroups = (db, tt, { scheduled = false, drafts = false } = {}) => [...new Set(db.instruments.filter((i) => {
+  if (i.targetType !== tt) return false;
+  const s = toolStatus(i);
+  return (s === 'in-use' && i.items?.length > 0) || (s === 'scheduled' && (scheduled || drafts)) || (s === 'draft' && drafts);
+}).map((i) => i.group))];
+/** The evaluator groups of a person's rating in a period: the groups in the formula used for their category and department. */
+export const ratingGroups = (db, periodId, u) => [...new Set(formulaFor(db, periodId, targetType(db, u), u.dept).components.map((c) => c.group))];
 const median = (a) => { if (!a.length) return null; const s = [...a].sort((x, y) => x - y); const m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
 
 /**
@@ -455,17 +531,42 @@ export function expectedAssignments(db, periodId) {
   const out = [];
   for (const t of targetsOf(db).filter(active)) {
     if (!periodCovers(p, t.dept)) continue;
-    const tt = targetType(db, t);
-    for (const g of Object.keys(rulesFor(db, periodId)[tt] || {})) {
+    // only the groups that count in this person's formula (a department's own formula included) get tasks
+    for (const g of ratingGroups(db, periodId, t)) {
       if (g === 'ST') {
         for (const sec of db.sections.filter((s) => s.facultyId === t.id && !isExemptSection(s)))
           for (const sid of sec.studentIds.filter((id) => active(userById(db, id)))) out.push({ evaluatorId: sid, targetId: t.id, group: g, sectionId: sec.id });
       } else {
-        for (const e of db.users.filter((u) => active(u) && u.dept === t.dept && evaluatorGroups(u).includes(g) && u.id !== t.id))
+        for (const e of db.users.filter((u) => active(u) && u.dept === t.dept && u.id !== t.id && groupsOf(db, u).includes(g)))
           out.push({ evaluatorId: e.id, targetId: t.id, group: g, sectionId: null });
       }
     }
   }
+  return out;
+}
+
+/**
+ * The tools of a period: Map(tool id → { answered, waiting }).
+ * Answered evaluations count on the exact version they were answered on. In an open period, the evaluations still
+ * waiting count on the version they would get now (before the tasks are created: the expected evaluations).
+ * In a closed period an evaluation nobody answered has no version, so it is not counted.
+ */
+export function toolsOfPeriod(db, periodId) {
+  const p = periodById(db, periodId);
+  const out = new Map(), forms = new Map();
+  if (!p) return out;
+  const add = (id, k) => { if (!id) return; if (!out.has(id)) out.set(id, { answered: 0, waiting: 0 }); out.get(id)[k]++; };
+  const formId = (t) => {
+    const key = `${t.targetId}|${t.group}|${t.sectionId || ''}`;
+    if (!forms.has(key)) forms.set(key, formForTask(db, t)?.id || null);
+    return forms.get(key);
+  };
+  const tasks = db.tasks.filter((t) => t.periodId === periodId);
+  for (const t of tasks) {
+    if (t.response) add(t.response.instrumentId || formId(t), 'answered');
+    else if (p.status === 'open') add(formId(t), 'waiting');
+  }
+  if (!tasks.length && p.status === 'open') for (const t of expectedAssignments(db, periodId)) add(formId(t), 'waiting');
   return out;
 }
 

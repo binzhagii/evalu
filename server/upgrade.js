@@ -71,9 +71,25 @@ export function upgradeData(db) {
   const formKey = (i) => `${i.targetType}|${i.group}|${i.dept || ''}`;
   const activeKeys = new Set(db.instruments.filter((i) => i.active !== false).map(formKey));
   const newest = new Map();
-  for (const i of db.instruments.filter((x) => x.active === false && !activeKeys.has(formKey(x))))
+  // (a draft or scheduled version HR is preparing is not a retired form: it must never go live by itself)
+  for (const i of db.instruments.filter((x) => x.active === false && !x.status && !activeKeys.has(formKey(x))))
     if (!newest.has(formKey(i)) || (i.version || 1) > (newest.get(formKey(i)).version || 1)) newest.set(formKey(i), i);
   for (const i of newest.values()) set(i, 'active', true);
+
+  // Earlier versions put a new evaluator group in the weights with no percentage at once, which left the whole category
+  // without a rating ("weights not set"). The group is kept; it counts when HR puts it in the formula.
+  const builtIn = new Set(DEFAULT_EVALUATOR_GROUPS.map((g) => g.id));
+  for (const p of [null, ...db.periods.filter((x) => x.status === 'open')]) {
+    for (const [tt, r] of Object.entries((p ? p.rules : db.rules) || {})) {
+      if (hrDecided(tt)) continue;
+      for (const g of Object.keys(r)) {
+        if (builtIn.has(g) || r[g] != null || (p && db.tasks.some((t) => t.periodId === p.id && t.group === g))) continue;
+        delete r[g]; changed = true;
+        const grp = db.evaluatorGroups.find((x) => x.id === g);
+        if (grp && !grp.targetTypes?.includes(tt)) grp.targetTypes = [...(grp.targetTypes || []), tt];
+      }
+    }
+  }
 
   // UB's own evaluation tools (4-point scale), added once. They replace the sample forms;
   // forms HR made and every submitted evaluation stay as they are.

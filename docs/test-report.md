@@ -1,12 +1,12 @@
 # evalU validation test report
 
-Run: 2026-11-21T09:05:23.606Z · Node v24.21.0 · code version 91d9792 · fresh test database with the sample data
+Run: 2026-11-23T19:51:40.250Z · Node v22.22.0 · code version a03e02b · fresh test database with the sample data
 
-**Result: 71 of 71 test cases passed.**
+**Result: 86 of 86 test cases passed.**
 
 Each case runs automatically (`npm run test:validation`). "Actual" is measured during this run, not written by hand.
 Part A checks the computation rules on controlled data; Part B runs the real server, database and access control;
-Part C checks the formula engine and its approval and versions; Part D the comment analysis; Part E the computation modules (plug-ins), the effective period and the reproducibility of stored results; Part F HR-configurable evaluator groups and access control; Part G the margin of error, form reliability, participation forecast, development follow-up and the fixes from the 20 Nov 2026 test.
+Part C checks the formula engine and its approval and versions; Part D the comment analysis; Part E the computation modules (plug-ins), the effective period and the reproducibility of stored results; Part F HR-configurable evaluator groups and access control; Part H evaluation tool drafts and checks, and adding an evaluator group; Part G the margin of error, form reliability, participation forecast, development follow-up and the fixes from the 20 Nov 2026 test.
 
 | ID | Requirement | Scenario | Expected | Actual | Result |
 |---|---|---|---|---|---|
@@ -81,5 +81,20 @@ Part C checks the formula engine and its approval and versions; Part D the comme
 | TC-69 | Fix DEF-02: empty form | HR creates a Program-Chair form for Dentistry with no questions; which form do Dentistry teachers get? | UB's general form until the new form has a question | UB's general form until the new form has a question | PASS |
 | TC-70 | Fix DEF-06: large class list | Check a 3,000-row class list (about 330 KB); then a 5 MB one | ["HTTP 200, 3000 rows read","HTTP 413 with a message"] | ["HTTP 200, 3000 rows read","HTTP 413 with a message"] | PASS |
 | TC-71 | Fix DEF-03: Clinical Instructors | CI weights; the Program Chair has a form for CIs and is assigned to evaluate the Nursing CI | {"weights":{"ST":40,"DEAN":40,"CHAIR":20},"chairForm":true,"chairTask":true} | {"weights":{"ST":40,"DEAN":40,"CHAIR":20},"chairForm":true,"chairTask":true} | PASS |
+| TC-72 | Tool drafts | HR changes the student tool while a period is open: which form do students get? Then HR discards the draft | {"during":"same form","after":"same form","drafts":0} | {"during":"same form","after":"same form","drafts":0} | PASS |
+| TC-73 | Tool checks | 60/35/blank; 60/25/5; an empty part; no indicators; 60/35/5 | [false,false,false,false,true] | [false,false,false,false,true] | PASS |
+| TC-74 | Weights inside a tool | 10, 5 and 8 indicators at 60/35/5, averages 4, 3 and 2 | 3.55 | 3.55 | PASS |
+| TC-75 | Tool versions | A new version while the open period has answers; a second period is created; then the first is closed and another is created | ["scheduled","still waiting","in use","old answers unchanged"] | ["scheduled","still waiting","in use","old answers unchanged"] | PASS |
+| TC-76 | Tool drafts | The server restarts while a brand-new tool is a draft | still a draft | still a draft | PASS |
+| TC-77 | Tool wording | HR rewords an answered indicator in a draft; HR types the same indicator twice | {"oldKept":true,"newWording":true,"duplicate":"rejected"} | {"oldKept":true,"newWording":true,"duplicate":"rejected"} | PASS |
+| TC-78 | Tool checks | A tool in use has a part with no weight: HR creates a period | refused, tool named | refused, tool named | PASS |
+| TC-79 | Adding an evaluator group | Peers rate college faculty 30/10/40/20 (3.50, 3.00, 3.60, 3.40): ratings while setting up; final; peer evaluations for 5 SIT faculty; Basic Ed | {"whileSettingUp":"unchanged","blockedByDraft":true,"final":3.47,"sitPeerTasks":20,"basicEd":{"ST":10,"PRIN":1,"APRIN":1,"SHEAD":1}} | {"whileSettingUp":"unchanged","blockedByDraft":true,"final":3.47,"sitPeerTasks":20,"basicEd":{"ST":10,"PRIN":1,"APRIN":1,"SHEAD":1}} | PASS |
+| TC-80 | Tasks follow the formula | SIT has its own formula (Students 50, Dean 50): evaluations for a SIT and an SBAA teacher | {"sit":{"ST":10,"DEAN":1},"sbaa":{"ST":10,"DEAN":1,"CHAIR":1}} | {"sit":{"ST":10,"DEAN":1},"sbaa":{"ST":10,"DEAN":1,"CHAIR":1}} | PASS |
+| TC-81 | Adding an evaluator group | Faculty (a built-in group) rate college faculty; percentages of 90%; a group that already counts; nothing is kept when refused | {"builtIn":true,"ninety":false,"twice":false,"kept":0} | {"builtIn":true,"ninety":false,"twice":false,"kept":0} | PASS |
+| TC-82 | Upgrade | A group an earlier version added with a blank percentage left College faculty without ratings | {"before":null,"after":true} | {"before":null,"after":true} | PASS |
+| TC-83 | Tool drafts | A draft is saved in the database and sent to HR only; a teacher and a student try to use it | {"saved":"draft","hr":true,"teacher":false,"student":false,"status":[403,403]} | {"saved":"draft","hr":true,"teacher":false,"student":false,"status":[403,403]} | PASS |
+| TC-84 | Every category can be changed | HR gives each of the six categories new percentages; a VP approves; a new period is created | {"COLLEGE_FACULTY":"ST 30, DEAN 50, CHAIR 20","BASICED_TEACHER":"ST 25, PRIN 25, APRIN 25, SHEAD 25","CI":"ST 60, DEAN 40","DEAN":"CHAIR 40, SEC 10, FAC 50","NTP_STAFF":"NTPHEAD 100","NTP_HEAD":"NTPSTAFF 100"} | {"COLLEGE_FACULTY":"ST 30, DEAN 50, CHAIR 20","BASICED_TEACHER":"ST 25, PRIN 25, APRIN 25, SHEAD 25","CI":"ST 60, DEAN 40","DEAN":"CHAIR 40, SEC 10, FAC 50","NTP_STAFF":"NTPHEAD 100","NTP_HEAD":"NTPSTAFF 100"} | PASS |
+| TC-85 | Percentages only | A formula saved earlier as "every group the same", as "my own formula" and as percentages, when HR changes it | [[33.33,33.33,33.34],[null,null],[40,60]] | [[33.33,33.33,33.34],[null,null],[40,60]] | PASS |
+| TC-86 | Tools by period | The student tool gets a new version between two periods: which version does each period show, and how many answered? A period before its tasks are created | {"first":"old version, 38 answered","beforeTasks":"new version, 0 of 60 answered","second":"new version, 0 of 60 answered","draftListed":false,"sameAsCountingTasks":true} | {"first":"old version, 38 answered","beforeTasks":"new version, 0 of 60 answered","second":"new version, 0 of 60 answered","draftListed":false,"sameAsCountingTasks":true} | PASS |
 
 Limits of this report: these are developer-run functional, security and integration tests on simulated data. They do not replace the stakeholder evaluation (ISO/IEC 25010 questionnaire) or confirmation of the rules by HRMC.

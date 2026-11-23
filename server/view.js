@@ -69,7 +69,7 @@ export function viewFor(db, user) {
     evaluatorGroups: db.evaluatorGroups || [],
     sections: db.sections.map((s) => (isHR ? s : { ...s, studentIds: [] })),
     criteria: db.criteria,
-    instruments: db.instruments,
+    instruments: isHR ? db.instruments : db.instruments.filter((i) => !i.status), // drafts and scheduled versions are HR's until they are used
     rules: db.rules,
     periods: db.periods,
     policies: db.policies || [],

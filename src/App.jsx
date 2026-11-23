@@ -4,7 +4,8 @@ import { ROLES, POSITIONS, isTeacher } from './lib/logic';
 import { Icon, Avatar, NavContext, AskHost } from './ui';
 import { HROverview, VpOverview } from './pages/Overview';
 import Tasks from './pages/Tasks';
-import { Periods, Assignments, Forms, Monitor, Classes, AuditLog } from './pages/HR';
+import { Periods, Assignments, Monitor, Classes, AuditLog } from './pages/HR';
+import Tools from './pages/Tools';
 import Reports, { DeptResults } from './pages/Reports';
 import Analytics from './pages/Analytics';
 import Policy from './pages/Policy';
@@ -115,7 +116,7 @@ function navFor(user) {
       ['reports', 'View & print results', 'report', <Reports />, 'Read, print, or share results for a completed term'],
       ['analytics', 'Patterns in results', 'trend', <Analytics />, 'Compare scores and find areas that may need support'],
       ['accounts', 'People & sign-in', 'users', <Accounts />, 'Manage accounts, passwords, and departments'],
-      ['forms', 'Evaluation questions', 'form', <Forms />, 'View the questions people answer; changes are usually not needed'],
+      ['forms', 'Evaluation tools', 'form', <Tools />, 'See every evaluation tool, and prepare a new version when HRMC approves a change'],
       ['formulas', 'Scoring & calculation', 'scale', <Formulas />, 'Set evaluator percentages and the final-score method in one place'],
       ['policy', 'Evaluation rules', 'form', <Policy />, 'Change participation, rating, and release rules'],
       ['audit', 'Change history', 'lock', <AuditLog />, 'Review a record of important actions and changes'],

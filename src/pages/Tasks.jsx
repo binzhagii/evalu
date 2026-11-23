@@ -97,6 +97,42 @@ function TaskCard({ t, s, onOpen }) {
   );
 }
 
+/** The questions of a form with their ratings, in the form's parts. Also used by HR to preview a tool. */
+export function QuestionList({ ins, criteria, answers, errors = [], onAnswer }) {
+  const critOf = (id) => criteria.find((c) => c.id === id);
+  const crit = (id) => critOf(id)?.text || id;
+  // the form's categories in order, e.g. "Content knowledge and pedagogy (35%)"
+  const parts = [];
+  ins.items.forEach((it, i) => {
+    const name = itemCategory(it);
+    if (parts.at(-1)?.name !== name) parts.push({ name, weight: ins.categories?.[name], items: [] });
+    parts.at(-1).items.push({ it, n: i + 1 });
+  });
+  const showHeads = parts.length > 1 || parts[0]?.name !== 'General';
+  return parts.map((p) => (
+    <section key={p.items[0].it.criterionId} className="q-part">
+      {showHeads && <h3 className="q-head">{p.name}{p.weight != null && <span className="muted"> · {p.weight}%</span>}</h3>}
+      {p.items.map(({ it, n: i }) => {
+        const words = ratingWords(ins, critOf(it.criterionId));
+        const own = words !== ratingWords(ins);
+        return (
+          <div key={it.criterionId} id={`q-${it.criterionId}`} className={`q ${errors.includes(it.criterionId) ? 'err' : ''} ${answers[it.criterionId] != null ? 'answered' : ''}`}>
+            <div className="q-text"><span className="q-num">{i}</span>{crit(it.criterionId)}</div>
+            <div className={`rating ${own ? 'rating-own' : ''}`} role="radiogroup" aria-label={`Rating for item ${i}`}>
+              {Array.from({ length: MAX_RATING }, (_, k) => MAX_RATING - k).map((v) => (
+                <label key={v} className={answers[it.criterionId] === v ? 'on' : ''} title={words[v - 1]}>
+                  <input type="radio" name={it.criterionId} checked={answers[it.criterionId] === v} onChange={() => onAnswer(it.criterionId, v)} />
+                  <b>{v}</b><small>{words[v - 1]}</small>
+                </label>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+    </section>
+  ));
+}
+
 function EvalForm({ taskId, onClose, onDone }) {
   const { db, act } = useApp();
   const task = db.tasks.find((t) => t.id === taskId);
@@ -114,16 +150,6 @@ function EvalForm({ taskId, onClose, onDone }) {
   const [errors, setErrors] = useState([]);
   const [confirm, setConfirm] = useState(false);
   const [busy, setBusy] = useState(false);
-  const critOf = (id) => db.criteria.find((c) => c.id === id);
-  const crit = (id) => critOf(id)?.text || id;
-  // the form's categories in order, e.g. "Content knowledge and pedagogy (35%)"
-  const parts = [];
-  ins.items.forEach((it, i) => {
-    const name = itemCategory(it);
-    if (parts.at(-1)?.name !== name) parts.push({ name, weight: ins.categories?.[name], items: [] });
-    parts.at(-1).items.push({ it, n: i + 1 });
-  });
-  const showHeads = parts.length > 1 || parts[0]?.name !== 'General';
   const answered = ins.items.filter((it) => answers[it.criterionId] != null).length;
 
   const saveDraft = async () => {
@@ -166,29 +192,8 @@ function EvalForm({ taskId, onClose, onDone }) {
 
       {errors.length > 0 && <div className="note warn"><Icon name="alert" size={16} /> {errors.length} item(s) are not answered yet. They are marked in red below. Your other answers are kept.</div>}
 
-      {parts.map((p) => (
-        <section key={p.name} className="q-part">
-          {showHeads && <h3 className="q-head">{p.name}{p.weight != null && <span className="muted"> · {p.weight}%</span>}</h3>}
-          {p.items.map(({ it, n: i }) => {
-            const words = ratingWords(ins, critOf(it.criterionId));
-            const own = words !== ratingWords(ins);
-            return (
-              <div key={it.criterionId} id={`q-${it.criterionId}`} className={`q ${errors.includes(it.criterionId) ? 'err' : ''} ${answers[it.criterionId] != null ? 'answered' : ''}`}>
-                <div className="q-text"><span className="q-num">{i}</span>{crit(it.criterionId)}</div>
-                <div className={`rating ${own ? 'rating-own' : ''}`} role="radiogroup" aria-label={`Rating for item ${i}`}>
-                  {Array.from({ length: MAX_RATING }, (_, k) => MAX_RATING - k).map((v) => (
-                    <label key={v} className={answers[it.criterionId] === v ? 'on' : ''} title={words[v - 1]}>
-                      <input type="radio" name={it.criterionId} checked={answers[it.criterionId] === v}
-                        onChange={() => { setAnswers({ ...answers, [it.criterionId]: v }); setErrors(errors.filter((x) => x !== it.criterionId)); }} />
-                      <b>{v}</b><small>{words[v - 1]}</small>
-                    </label>
-                  ))}
-                </div>
-              </div>
-            );
-          })}
-        </section>
-      ))}
+      <QuestionList ins={ins} criteria={db.criteria} answers={answers} errors={errors}
+        onAnswer={(id, v) => { setAnswers({ ...answers, [id]: v }); setErrors(errors.filter((x) => x !== id)); }} />
 
       <Card title={twoBoxes ? 'Development plan and areas to be improved (optional)' : 'Comments (optional)'}>
         <p className="muted">

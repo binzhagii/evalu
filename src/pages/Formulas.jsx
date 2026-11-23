@@ -1,13 +1,14 @@
 // "How the final rating is computed": HR sets it in plain words, tries it, and sends it to a VP.
 // After the VP approves, HR starts using it. Old periods keep the formula they were computed with.
 // The engine behind it is src/lib/formula.js.
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useApp } from '../lib/store';
 import {
-  TARGET_TYPES, AGGREGATIONS, MISSING_RULES, ROUNDING_METHODS, formGroups, formulaKey, formulaSnapshot, methodOf, methodList,
-  defaultFormula, currentPolicy, policyFor, periodById, validateFormula, computeFinal, formulaWords, howInWords, computeTarget, targetsOf, targetType, deptName, groupName,
+  TARGET_TYPES, AGGREGATIONS, MISSING_RULES, ROUNDING_METHODS, formGroups, formulaKey, methodOf, asPercentages,
+  defaultFormula, policyFor, periodById, validateFormula, computeFinal, formulaWords, howInWords, computeTarget, targetsOf, targetType, deptName, groupName,
 } from '../lib/logic';
 import { Card, Select, Badge, ask, fmt } from '../ui';
+import { AddGroup, BothLevels, Overview, formulaNow } from './FormulaParts';
 
 const STATUS = { draft: ['pending', 'Not sent yet'], pending: ['info', 'Waiting for VP'], approved: ['completed', 'Approved, ready to use'], scheduled: ['info', 'Starts next period'], active: ['completed', 'In use'], archived: ['muted', 'Old version'], rejected: ['overdue', 'Returned by VP'] };
 const day = (iso) => (iso ? new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : '');
@@ -23,29 +24,11 @@ function FormulaForm({ f, setF, groups, groupNames, readOnly }) {
   const setComp = (i, k, v) => set('components', f.components.map((c, j) => (j === i ? { ...c, [k]: v } : c)));
   const unused = groups.filter((g) => !f.components.some((c) => c.group === g));
   const total = f.components.reduce((a, c) => a + (Number(c.weight) || 0), 0);
-  const availableMethods = methodList();
-  const versionsById = new Map(availableMethods.map((x) => [x.id, availableMethods.filter((y) => y.id === x.id).length]));
-  const methodLabel = (x) => `${x.label}${versionsById.get(x.id) > 1 ? ` (algorithm v${x.version})` : ''}`;
   const m = methodOf(f.method, f.methodVersion ?? 1);
-  const weighted = !!m?.usesWeights;
-  // a missing-group rule that does not work with the new method has to be chosen again
-  const setMethod = (x) => setF({ ...f, method: x.id, methodVersion: x.version, missing: x.missingRules.includes(f.missing) ? f.missing : '' });
-  const choice = (x) => (
-    <label key={`${x.id}@${x.version}`} className="inline fx-choice"><input type="radio" name="fx-method" disabled={readOnly} checked={f.method === x.id && (f.methodVersion ?? 1) === x.version} onChange={() => setMethod(x)} /> <span>{methodLabel(x)}{x.help && <span className="muted small"> · {x.help}</span>}</span></label>
-  );
+  const weighted = !!m?.usesWeights; // false only for a formula sent earlier with another method (read only)
   return (
     <div className="fx-form">
-      <h4>1. Choose how evaluator scores are combined</h4>
-      <div className="fx-choices">
-        {availableMethods.filter((x) => !x.advanced).map(choice)}
-      </div>
-      <details className="fx-more" open={m?.advanced || undefined}>
-        <summary>Other ways (special cases)</summary>
-        <p className="muted small">Most schools use one of the two choices above. Example with Students 3.80, Dean 2.00 and Program Chair 3.60 (40/40/20): percentages give 3.04, "a low rating counts more" gives 2.91, "counts the most" gives 2.77.</p>
-        <div className="fx-choices">{availableMethods.filter((x) => x.advanced).map(choice)}</div>
-      </details>
-
-      <h4>2. Choose evaluator groups{weighted ? ' and set their percentages' : ''}</h4>
+      <h4>1. Evaluator groups{weighted ? ' and their percentages' : ''}</h4>
       <table className="fx-comps">
         <tbody>
           {f.components.map((c, i) => (
@@ -64,12 +47,7 @@ function FormulaForm({ f, setF, groups, groupNames, readOnly }) {
           {unused.map((g) => <option key={g} value={g}>{groupNames[g] || g}</option>)}
         </Select>
       )}
-      {m?.usesExpression && (
-        <label className="field">Your formula <span className="muted small">use these names: {f.components.map((c) => c.group).join(', ')} · arithmetic, avg/min/max and if(score &gt;= 3, 4, 2) are supported</span>
-          <input className="wide mono" disabled={readOnly} value={f.expression} placeholder="0.3*ST + 0.5*DEAN + 0.2*CHAIR" onChange={(e) => set('expression', e.target.value)} /></label>
-      )}
-
-      <h4>3. If a group has no rating (for example, the Dean did not evaluate)</h4>
+      <h4>2. If a group has no rating (for example, the Dean did not evaluate)</h4>
       <Select disabled={readOnly} value={f.missing} onChange={(v) => set('missing', v)}>{!f.missing && <option value="">Choose…</option>}{Object.entries(MISSING_RULES).filter(([k]) => !m || m.missingRules.includes(k)).map(([k, l]) => <option key={k} value={k}>{short(l)}</option>)}</Select>
 
       <details className="source">
@@ -105,7 +83,7 @@ function FormulaForm({ f, setF, groups, groupNames, readOnly }) {
 
 /** "Try it": the current formula and the new one side by side, on one example and on a past period. */
 function TryIt({ db, tt, dept, draft, baseline }) {
-  if (!draft.method || !draft.components.length || !draft.missing) return <div className="fx-try"><h4>Try it</h4><p className="muted">Answer questions 1 to 3 above, then you can try the formula here.</p></div>;
+  if (!draft.method || !draft.components.length || !draft.missing) return <div className="fx-try"><h4>Try it</h4><p className="muted">Answer 1 and 2 above, then you can try the formula here.</p></div>;
   return <TryItReady db={db} tt={tt} dept={dept} draft={draft} baseline={baseline} />;
 }
 function TryItReady({ db, tt, dept, draft, baseline }) {
@@ -156,34 +134,50 @@ export default function Formulas() {
   const names = Object.fromEntries((db.evaluatorGroups || []).map((g) => [g.id, g.name]));
   const words = (formula) => formulaWords(formula, names);
   const isHR = user.role === 'HR';
-  const types = Object.keys(TARGET_TYPES).filter((x) => formGroups(db, x).length);
   const pendingAll = (db.formulas || []).filter((f) => f.status === 'pending');
-  const [tt, setTt] = useState(() => (!isHR && pendingAll[0]?.targetType) || types[0]);
+  const [tt, setTt] = useState(() => (!isHR && pendingAll[0]?.targetType) || Object.keys(TARGET_TYPES)[0]);
   const deptKeys = [...new Set((db.formulas || []).filter((f) => f.targetType === tt && f.dept).map((f) => f.dept))];
   const [dept, setDept] = useState(() => (!isHR && pendingAll[0]?.dept) || '');
   const key = formulaKey(tt, dept || null);
   const versions = (db.formulas || []).filter((f) => f.key === key).sort((a, b) => b.version - a.version);
   const active = versions.find((f) => f.status === 'active');
   const working = versions.find((f) => ['draft', 'pending', 'approved', 'scheduled', 'rejected'].includes(f.status));
-  const baseline = active ? formulaSnapshot(active) : defaultFormula(db.rules[tt] || {}, currentPolicy(db));
+  const baseline = formulaNow(db, tt, dept || null); // a department without its own formula uses the one for all departments
   const [f, setF] = useState(null);
   const [msg, setMsg] = useState('');
-  useEffect(() => { setF(working ? structuredClone(working.config) : null); }, [working?.id, working?.status]); // eslint-disable-line react-hooks/exhaustive-deps, react/set-state-in-effect
-  const groups = formGroups(db, tt);
-  const errs = f ? validateFormula(f, { allowedGroups: groups, groupNames: names }) : [];
+  const [adding, setAdding] = useState(false); // the "Add evaluator group" screen
   const editable = isHR && working && ['draft', 'rejected'].includes(working.status);
+  const editor = useRef(null);
+  const [rev, setRev] = useState(0); // a group was added to the draft on the server: read the draft again
+  const [jump, setJump] = useState(false); // after "Change" in the table: bring the formula into view
+  useEffect(() => { setF(working ? structuredClone(editable ? asPercentages(working.config) : working.config) : null); }, [working?.id, working?.status, rev]); // eslint-disable-line react-hooks/exhaustive-deps, react/set-state-in-effect
+  const groups = formGroups(db, tt, { drafts: true }); // a group whose tool is still a draft can be put in a draft formula
+  const errs = f ? validateFormula(f, { allowedGroups: formGroups(db, tt, { scheduled: true }), groupNames: names }) : [];
+  const pick = (t, d) => { setTt(t); setDept(d); setMsg(''); setAdding(false); };
+  const canAdd = isHR && (!working || ['draft', 'rejected'].includes(working.status));
+  const added = (r) => {
+    setAdding(false); setRev((n) => n + 1); setJump(true);
+    setMsg(`${r.name} added to a draft formula.${r.toolReady ? '' : ' Next: finish its tool under Evaluation tools and click "Use this version". Then send the formula to the VP.'}`);
+  };
+  useEffect(() => { if (jump && f) { editor.current?.scrollIntoView({ block: 'start' }); setJump(false); } }, [jump, f]); // eslint-disable-line react/set-state-in-effect
   const dirty = working && f && JSON.stringify(f) !== JSON.stringify(working.config);
   const who = `${TARGET_TYPES[tt]}${dept ? ` (${deptName(db, dept)} only)` : ''}`;
 
-  // start from the formula in use (a copy), or from nothing (HR decides every part)
-  const start = async (from, blank = false) => {
-    const config = blank
-      ? { method: '', methodVersion: 1, components: [], expression: '', missing: '', minGroups: 1, participation: { percent: currentPolicy(db).participationPercent, plusOne: currentPolicy(db).participationPlusOne }, effectiveFrom: '', effectiveUntil: '', rounding: { decimals: 2, method: 'HALF_UP' } }
-      : structuredClone(from?.config ?? baseline);
-    config.name = `${TARGET_TYPES[tt]}${dept ? ` – ${deptName(db, dept)}` : ''}`;
-    config.effectiveFrom ||= ''; config.effectiveUntil ||= '';
-    delete config.id; delete config.version; delete config.key; delete config.dept;
-    if (await act('saveFormulaDraft', { targetType: tt, dept: dept || null, config })) setMsg('Make your changes below, try them, then send them to the VP.');
+  /** Change the formula of a category: continue the one in progress, or start a draft from the formula in use. */
+  const change = async (t, d) => {
+    if (t !== tt || d !== dept) pick(t, d);
+    const k = formulaKey(t, d || null);
+    if (!(db.formulas || []).some((x) => x.key === k && ['draft', 'pending', 'approved', 'scheduled', 'rejected'].includes(x.status))) {
+      const config = structuredClone(asPercentages(formulaNow(db, t, d || null)));
+      config.name = `${TARGET_TYPES[t]}${d ? ` – ${deptName(db, d)}` : ''}`;
+      // a department's first formula has its own dates, not those of the formula it is copied from
+      if (d && config.dept !== d) { config.effectiveFrom = ''; config.effectiveUntil = ''; }
+      config.effectiveFrom ||= ''; config.effectiveUntil ||= '';
+      delete config.id; delete config.version; delete config.key; delete config.dept;
+      if (!(await act('saveFormulaDraft', { targetType: t, dept: d || null, config }))) return;
+      setMsg('Make your changes below, try them, then send them to the VP.');
+    }
+    setJump(true);
   };
   const save = async () => { if (await act('saveFormulaDraft', { id: working.id, config: f })) setMsg('Saved.'); };
   const send = async () => {
@@ -203,35 +197,38 @@ export default function Formulas() {
 
   return (
     <>
-      {isHR && <div className="note"><b>One place for scoring percentages and calculation.</b> Choose a category, set evaluator percentages or choose equal averaging, then check the preview and test. Send HRMC-approved changes to a VP; past results keep the formula they used.</div>}
+      {isHR && <div className="note"><b>One place for scoring percentages and calculation.</b> Every category has its own formula. Click <b>Change</b> beside a category, set its evaluator groups and percentages, then try it. Send HRMC-approved changes to a VP; past results keep the formula they used.</div>}
       {msg && <div className="note ok">{msg}</div>}
       {!isHR && pendingAll.length > 0 && (
         <Card title={`Waiting for your approval (${pendingAll.length})`}>
-          <ul>{pendingAll.map((p) => <li key={p.id}><button className="link" onClick={() => { setTt(p.targetType); setDept(p.dept || ''); }}>{p.config.name}</button> <span className="muted">· sent by {p.meta.submittedBy}</span></li>)}</ul>
+          <ul>{pendingAll.map((p) => <li key={p.id}><button className="link" onClick={() => pick(p.targetType, p.dept || '')}>{p.config.name}</button> <span className="muted">· sent by {p.meta.submittedBy}</span></li>)}</ul>
         </Card>
       )}
-      <Card title="Scoring percentages and final calculation" actions={<span className="row" style={{ margin: 0 }}>
-        <Select value={tt} onChange={(v) => { setTt(v); setDept(''); setMsg(''); }} aria-label="Who is evaluated">{types.map((x) => <option key={x} value={x}>{TARGET_TYPES[x]}</option>)}</Select>
-        <Select value={dept} onChange={(v) => { setDept(v); setMsg(''); }} aria-label="Department">
+      <Overview tt={tt} dept={dept} onPick={pick} onChange={isHR ? change : null} />
+      <Card title={`Rating formula: ${who}`} actions={<span className="row" style={{ margin: 0 }}>
+        <Select value={dept} onChange={(v) => pick(tt, v)} aria-label="Department">
           <option value="">All departments</option>
           {db.departments.filter((d) => isHR || deptKeys.includes(d.id)).map((d) => <option key={d.id} value={d.id}>Only {d.name}</option>)}
         </Select>
       </span>}>
-        <p className="muted">{isHR ? 'Choose who is evaluated, change the percentages or averaging method, preview and test the result, then send it for VP approval.' : 'HR changes the scoring rule and sends it to you. Check it with "Try it", then approve it or return it to HR. Old results never change.'}</p>
+        <p className="muted">{isHR ? 'To give one department its own formula, choose it at the top right, then click Change formula.' : 'HR changes the scoring rule and sends it to you. Check it with "Try it", then approve it or return it to HR. Old results never change.'}</p>
         <div className="fx-now">
           <span className="muted">{who} now:</span>
           <b className="fx-sentence">{words(baseline)}</b>
           <span className="muted small">If a group has no rating: {short(MISSING_RULES[baseline.missing]).toLowerCase()}. Rounded to {baseline.rounding.decimals} decimals.{active?.meta.basis ? ` Basis: ${active.meta.basis}.` : ''}</span>
-          {!active && <span className="note warn small">This is the <b>starting formula</b> that came with evalU. If the school uses a different one, {isHR ? 'choose "Change scoring"' : 'HR can change it'}.</span>}
+          {!active && <span className="note warn small">This is the <b>starting formula</b> that came with evalU. If the school uses a different one, {isHR ? 'click Change formula' : 'HR can change it'}.</span>}
         </div>
-        {isHR && !working && <div className="row"><button onClick={() => start(active)}>Change scoring</button><button className="ghost" onClick={() => start(null, true)}>Build from scratch</button><span className="muted small">Build from scratch is for a completely different scoring method.</span></div>}
+        {isHR && !working && <div className="row"><button onClick={() => change(tt, dept)}>Change formula</button>{canAdd && <button className="ghost" onClick={() => setAdding(true)}>+ Add evaluator group</button>}</div>}
       </Card>
 
+      {adding && canAdd && <AddGroup key={key + (working?.id || '')} tt={tt} dept={dept} base={asPercentages(working ? working.config : baseline)} onDone={added} onCancel={() => setAdding(false)} />}
+      <span ref={editor} />
       {working && f && (
         <Card title={`New formula for ${who}`} actions={<Badge kind={STATUS[working.status][0]}>{STATUS[working.status][1]}</Badge>}>
           {working.status === 'rejected' && <div className="note warn">The VP returned it: "{working.meta.rejectReason}". Fix it and send it again.</div>}
           {working.status === 'pending' && <div className="note">Basis: <b>{working.meta.basis}</b>. {isHR ? 'Waiting for the VP.' : 'Check it with "Try it", then approve or return it.'}</div>}
           {working.status === 'scheduled' && <div className="note">Approved by {working.meta.approvedBy}. It starts when HR creates the next evaluation period. Until then, {who} keep the formula in use now.</div>}
+          {editable && working.config.method !== 'WEIGHTED_AVERAGE' && <div className="note">This draft used another way of combining scores. It now uses percentages: check them, then save.</div>}
           <div className="fx-now"><b className="fx-sentence">{words(f)}</b></div>
           <FormulaForm f={f} setF={setF} groups={groups} groupNames={names} readOnly={!editable} />
           {errs.length > 0 && editable && <div className="note warn"><b>Before sending, fix:</b><ul>{errs.map((e) => <li key={e}>{e}</li>)}</ul></div>}
@@ -239,6 +236,7 @@ export default function Formulas() {
           <div className="row fx-actions">
             {editable && <><button disabled={errs.length > 0} onClick={send}>Send to VP for approval</button>
               <button className="ghost" disabled={!dirty} onClick={save}>Save</button>
+              {canAdd && <button className="ghost" disabled={dirty} title={dirty ? 'Save your changes first' : ''} onClick={() => setAdding(true)}>+ Add evaluator group</button>}
               <button className="ghost" onClick={async () => { if (await ask('Discard this new formula?', 'The formula in use stays the same.', { ok: 'Discard', danger: true })) act('deleteFormulaDraft', { id: working.id }); }}>Discard</button></>}
             {isHR && working.status === 'approved' && <><button onClick={use}>Start using it now</button><button className="ghost" onClick={later}>Start with the next period</button><span className="muted small">Not sure? Choose "Start with the next period": the period going on now is not affected.</span></>}
             {isHR && working.status === 'scheduled' && <button className="ghost" onClick={use}>Start using it now instead</button>}
@@ -251,6 +249,7 @@ export default function Formulas() {
       )}
       {!working && !isHR && <Card><p className="muted">Nothing is waiting for your approval for {who}.</p></Card>}
 
+      <BothLevels formula={baseline} tt={tt} dept={dept || null} />
       <Card title="Past formulas">
         {versions.length === 0 ? <p className="muted">No saved formula yet. {who} uses the starting formula shown above.</p> : (
           <table>

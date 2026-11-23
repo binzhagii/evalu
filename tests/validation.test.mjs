@@ -447,6 +447,134 @@ try {
     const ci = d.users.find((u) => u.username === 'ci_c1').id, chair = d.users.find((u) => u.username === 'chair_c').id;
     return { weights: d.rules.CI, chairForm: !!L.instrumentFor(d, 'CI', 'CHAIR', 'C'), chairTask: d.tasks.some((t) => t.targetId === ci && t.evaluatorId === chair && t.group === 'CHAIR') };
   });
+  /* ---------------- Part H: evaluation tools (drafts, checks) and adding an evaluator group ---------------- */
+  const { buildSeed } = await import('../src/lib/seed.js');
+  const { actions: A } = await import('../server/actions.js');
+  const { upgradeData } = await import('../server/upgrade.js');
+  const HRU = { id: 'hr', name: 'HR', role: 'HR', position: 'hr' }, VPU = { id: 'vp', name: 'VP', role: 'DIR', position: 'vp' };
+  /** Run an action on a copy of the sample data, like the API does (kept only when it succeeds). */
+  const lab = () => {
+    const box = { db: buildSeed() };
+    box.run = async (name, args = {}, user = HRU) => {
+      const copy = structuredClone(box.db);
+      try { const r = await A[name].run(copy, args, user, { afterSave: [] }); box.db = copy; return { ok: true, ...r }; } catch (e) { return { ok: false, error: e.message }; }
+    };
+    box.tool = (tt = 'COLLEGE_FACULTY', g = 'ST') => box.db.instruments.find((i) => i.active !== false && i.targetType === tt && i.group === g && !i.dept && !i.variant);
+    box.activate = async (tt, dept, components, when = 'now') => {
+      const f = await box.run('saveFormulaDraft', { targetType: tt, dept, config: { name: 'x', method: 'WEIGHTED_AVERAGE', components, missing: 'REWEIGHT', minGroups: 1, rounding: { decimals: 2, method: 'HALF_UP' } } });
+      const s = await box.run('submitFormula', { id: f.id, basis: 'Validation test' });
+      if (!s.ok) return s;
+      await box.run('approveFormula', { id: f.id }, VPU);
+      return box.run('activateFormula', { id: f.id, when });
+    };
+    return box;
+  };
+  const tasksOf = (db, periodId, id) => db.tasks.filter((t) => t.periodId === periodId && t.targetId === id).reduce((o, t) => ({ ...o, [t.group]: (o[t.group] || 0) + 1 }), {});
+
+  await tc('TC-72', 'Tool drafts', 'HR changes the student tool while a period is open: which form do students get? Then HR discards the draft', { during: 'same form', after: 'same form', drafts: 0 }, async () => {
+    const x = lab(), t = x.db.tasks.find((k) => k.periodId === 'p4' && k.group === 'ST' && !k.response && k.targetId === 'fac_a2');
+    const before = L.formForTask(x.db, t).id, r = await x.run('reviseForm', { instrumentId: before });
+    for (const it of x.db.instruments.find((i) => i.id === r.id).items.slice(0, 5)) await x.run('removeFormItem', { instrumentId: r.id, criterionId: it.criterionId });
+    const during = L.formForTask(x.db, t).id;
+    await x.run('discardForm', { instrumentId: r.id });
+    return { during: during === before ? 'same form' : 'changed', after: L.formForTask(x.db, t).id === before ? 'same form' : 'changed', drafts: x.db.instruments.filter((i) => i.status).length };
+  });
+  const T60 = (c) => ({ categories: c, items: [['M', 10], ['L', 5], ['R', 8]].flatMap(([k, n]) => Array.from({ length: n }, (_, i) => ({ criterionId: k + i, weight: 1, category: k }))) });
+  await tc('TC-73', 'Tool checks', '60/35/blank; 60/25/5; an empty part; no indicators; 60/35/5', [false, false, false, false, true], () =>
+    [T60({ M: 60, L: 35, R: null }), T60({ M: 60, L: 25, R: 5 }), T60({ M: 50, L: 35, R: 5, X: 10 }), { categories: {}, items: [] }, T60({ M: 60, L: 35, R: 5 })].map((i) => L.toolProblems(i).length === 0));
+  await tc('TC-74', 'Weights inside a tool', '10, 5 and 8 indicators at 60/35/5, averages 4, 3 and 2', 3.55, () => {
+    const i = T60({ M: 60, L: 35, R: 5 }), v = { M: 4, L: 3, R: 2 };
+    return +L.responseScore({ answers: Object.fromEntries(i.items.map((it) => [it.criterionId, v[it.category]])), weights: L.effectiveWeights(i) }).toFixed(4);
+  });
+  await tc('TC-75', 'Tool versions', 'A new version while the open period has answers; a second period is created; then the first is closed and another is created', ['scheduled', 'still waiting', 'in use', 'old answers unchanged'], async () => {
+    const x = lab(), old = x.tool().id, n = x.db.tasks.filter((t) => t.response?.instrumentId === old).length;
+    const r = await x.run('reviseForm', { instrumentId: old }); await x.run('useForm', { instrumentId: r.id });
+    const st = () => L.toolStatus(x.db.instruments.find((i) => i.id === r.id)), a = st();
+    const c = await x.run('createPeriod', { name: 'N1', deadline: '2099-01-01' }), b = st();
+    await x.run('closePeriod', { periodId: 'p4' }); await x.run('createPeriod', { name: 'N2', deadline: '2099-01-01' });
+    return [a, b === 'scheduled' && c.waitingTools.length === 1 ? 'still waiting' : b, st() === 'in-use' ? 'in use' : st(), x.db.tasks.filter((t) => t.response?.instrumentId === old).length === n ? 'old answers unchanged' : 'changed'];
+  });
+  await tc('TC-76', 'Tool drafts', 'The server restarts while a brand-new tool is a draft', 'still a draft', async () => {
+    const x = lab(); await x.run('createForm', { targetType: 'DEAN', group: 'SHEAD', name: 'Draft tool' });
+    upgradeData(x.db); const i = x.db.instruments.find((k) => k.name === 'Draft tool');
+    return L.toolStatus(i) === 'draft' && i.active === false ? 'still a draft' : L.toolStatus(i);
+  });
+  await tc('TC-77', 'Tool wording', 'HR rewords an answered indicator in a draft; HR types the same indicator twice', { oldKept: true, newWording: true, duplicate: 'rejected' }, async () => {
+    const x = lab(), old = x.tool(), cid = old.items[0].criterionId, was = x.db.criteria.find((c) => c.id === cid).text;
+    const r = await x.run('reviseForm', { instrumentId: old.id }), e = await x.run('editFormItem', { instrumentId: r.id, criterionId: cid, text: 'A new wording for this indicator' });
+    await x.run('addNewFormItem', { instrumentId: r.id, text: 'Typed indicator', category: 'Research and Extension' });
+    const again = await x.run('addNewFormItem', { instrumentId: r.id, text: 'typed indicator', category: 'Research and Extension' });
+    return { oldKept: x.db.criteria.find((c) => c.id === cid).text === was && x.tool().items[0].criterionId === cid, newWording: x.db.criteria.find((c) => c.id === e.criterionId).text === 'A new wording for this indicator', duplicate: again.ok ? 'accepted' : 'rejected' };
+  });
+  await tc('TC-78', 'Tool checks', 'A tool in use has a part with no weight: HR creates a period', 'refused, tool named', async () => {
+    const x = lab(); x.tool().categories['Research and Extension'] = null;
+    const r = await x.run('createPeriod', { name: 'N', deadline: '2099-01-01' });
+    return !r.ok && /Faculty by the Students/.test(r.error) && /has no weight/.test(r.error) ? 'refused, tool named' : JSON.stringify(r);
+  });
+  await tc('TC-79', 'Adding an evaluator group', 'Peers rate college faculty 30/10/40/20 (3.50, 3.00, 3.60, 3.40): ratings while setting up; final; peer evaluations for 5 SIT faculty; Basic Ed', { whileSettingUp: 'unchanged', blockedByDraft: true, final: 3.47, sitPeerTasks: 20, basicEd: { ST: 10, PRIN: 1, APRIN: 1, SHEAD: 1 } }, async () => {
+    const x = lab();
+    for (const n of ['x1', 'x2', 'x3']) x.db.users.push({ id: n, username: n, email: `${n}@ubaguio.edu`, name: n, role: 'TP', position: 'faculty', dept: 'A', active: true });
+    const before = L.computeTarget(x.db, 'p4', 'fac_a1').final;
+    const g = await x.run('addGroupWithFormula', { targetType: 'COLLEGE_FACULTY', newGroup: { name: 'Peers', positions: ['faculty'] }, weights: { ST: 30, PEERS: 10, DEAN: 40, CHAIR: 20 } });
+    if (!g.ok) return g;
+    const during = L.computeTarget(x.db, 'p4', 'fac_a1').final;
+    const blocked = !(await x.run('submitFormula', { id: g.id, basis: 'Validation test' })).ok;
+    await x.run('addNewFormItem', { instrumentId: g.toolId, text: 'Works well with fellow teachers', category: 'Collegiality' });
+    await x.run('useForm', { instrumentId: g.toolId });
+    await x.run('submitFormula', { id: g.id, basis: 'Validation test' }); await x.run('approveFormula', { id: g.id }, VPU);
+    const a = await x.run('activateFormula', { id: g.id, when: 'now' }); if (!a.ok) return a;
+    const p = await x.run('createPeriod', { name: 'N', deadline: '2099-01-01' }); await x.run('generateTasks', { periodId: p.id });
+    const f = L.formulaSnapshot(L.activeFormula(x.db, 'COLLEGE_FACULTY'));
+    return { whileSettingUp: during === before ? 'unchanged' : during, blockedByDraft: blocked, final: F.computeFinal(f, { ST: 3.5, PEERS: 3, DEAN: 3.6, CHAIR: 3.4 }).final,
+      sitPeerTasks: x.db.tasks.filter((t) => t.periodId === p.id && t.group === 'PEERS' && x.db.users.find((u) => u.id === t.targetId).dept === 'A').length, basicEd: tasksOf(x.db, p.id, 'fac_be1') };
+  });
+  await tc('TC-80', 'Tasks follow the formula', 'SIT has its own formula (Students 50, Dean 50): evaluations for a SIT and an SBAA teacher', { sit: { ST: 10, DEAN: 1 }, sbaa: { ST: 10, DEAN: 1, CHAIR: 1 } }, async () => {
+    const x = lab(), r = await x.activate('COLLEGE_FACULTY', 'A', [{ group: 'ST', weight: 50 }, { group: 'DEAN', weight: 50 }]); if (!r.ok) return r;
+    const p = await x.run('createPeriod', { name: 'N', deadline: '2099-01-01' }); await x.run('generateTasks', { periodId: p.id });
+    return { sit: tasksOf(x.db, p.id, 'fac_a1'), sbaa: tasksOf(x.db, p.id, 'fac_b1') };
+  });
+  await tc('TC-81', 'Adding an evaluator group', 'Faculty (a built-in group) rate college faculty; percentages of 90%; a group that already counts; nothing is kept when refused', { builtIn: true, ninety: false, twice: false, kept: 0 }, async () => {
+    const a = lab(), ok = await a.run('addGroupWithFormula', { targetType: 'COLLEGE_FACULTY', group: 'FAC', weights: { ST: 30, FAC: 10, DEAN: 40, CHAIR: 20 } });
+    const b = lab(), n = await b.run('addGroupWithFormula', { targetType: 'COLLEGE_FACULTY', newGroup: { name: 'Peers', positions: ['faculty'] }, weights: { ST: 30, PEERS: 10, DEAN: 30, CHAIR: 20 } });
+    const t = await b.run('addGroupWithFormula', { targetType: 'COLLEGE_FACULTY', group: 'DEAN', weights: { ST: 40, DEAN: 40, CHAIR: 20 } });
+    return { builtIn: ok.ok, ninety: n.ok, twice: t.ok, kept: b.db.evaluatorGroups.filter((g) => g.name === 'Peers').length + b.db.instruments.filter((i) => i.status).length + (b.db.formulas || []).length };
+  });
+  await tc('TC-82', 'Upgrade', 'A group an earlier version added with a blank percentage left College faculty without ratings', { before: null, after: true }, () => {
+    const d = buildSeed(); d.evaluatorGroups.push({ id: 'DEPT_HEAD', name: 'Dept Head', builtIn: false, active: true });
+    d.rules.COLLEGE_FACULTY.DEPT_HEAD = null; d.periods.find((p) => p.id === 'p4').rules.COLLEGE_FACULTY.DEPT_HEAD = null;
+    const before = L.computeTarget(d, 'p4', 'fac_a1').final; upgradeData(d);
+    return { before, after: L.computeTarget(d, 'p4', 'fac_a1').final != null };
+  });
+  await tc('TC-83', 'Tool drafts', 'A draft is saved in the database and sent to HR only; a teacher and a student try to use it', { saved: 'draft', hr: true, teacher: false, student: false, status: [403, 403] }, async () => {
+    const r = await act(hr, 'createForm', { targetType: 'DEAN', group: 'APRIN', name: 'Saved draft' }), id = r.data.result.id;
+    const sees = async (c) => (await call('/api/data', { cookie: c })).data.instruments.some((i) => i.id === id);
+    const out = { saved: sql.prepare('SELECT status FROM instruments WHERE id=?').get(id).status, hr: await sees(hr), teacher: await sees(fac), student: await sees(student), status: [(await act(fac, 'useForm', { instrumentId: id })).status, (await act(student, 'discardForm', { instrumentId: id })).status] };
+    await act(hr, 'discardForm', { instrumentId: id });
+    return out;
+  });
+  await tc('TC-84', 'Every category can be changed', 'HR gives each of the six categories new percentages; a VP approves; a new period is created', { COLLEGE_FACULTY: 'ST 30, DEAN 50, CHAIR 20', BASICED_TEACHER: 'ST 25, PRIN 25, APRIN 25, SHEAD 25', CI: 'ST 60, DEAN 40', DEAN: 'CHAIR 40, SEC 10, FAC 50', NTP_STAFF: 'NTPHEAD 100', NTP_HEAD: 'NTPSTAFF 100' }, async () => {
+    const x = lab(), want = { COLLEGE_FACULTY: { ST: 30, DEAN: 50, CHAIR: 20 }, BASICED_TEACHER: { ST: 25, PRIN: 25, APRIN: 25, SHEAD: 25 }, CI: { ST: 60, DEAN: 40 }, DEAN: { CHAIR: 40, SEC: 10, FAC: 50 }, NTP_STAFF: { NTPHEAD: 100 }, NTP_HEAD: { NTPSTAFF: 100 } };
+    for (const [tt, w0] of Object.entries(want)) { const r = await x.activate(tt, null, Object.entries(w0).map(([group, weight]) => ({ group, weight }))); if (!r.ok) return { tt, error: r.error }; }
+    const p = await x.run('createPeriod', { name: 'N', deadline: '2099-01-01' }), f = x.db.periods.find((k) => k.id === p.id).formulas;
+    return Object.fromEntries(Object.keys(want).map((tt) => [tt, f[tt].components.map((c) => `${c.group} ${c.weight}`).join(', ')]));
+  });
+  await tc('TC-85', 'Percentages only', 'A formula saved earlier as "every group the same", as "my own formula" and as percentages, when HR changes it', [[33.33, 33.33, 33.34], [null, null], [40, 60]], () => {
+    const g = (...xs) => xs.map(([group, weight]) => ({ group, weight }));
+    return [{ method: 'AVERAGE', components: g(['ST'], ['DEAN'], ['CHAIR']) }, { method: 'CUSTOM', expression: '(ST + DEAN) / 2', components: g(['ST'], ['DEAN']) }, { method: 'WEIGHTED_AVERAGE', components: g(['ST', 40], ['DEAN', 60]) }].map((f) => F.asPercentages(f).components.map((c) => c.weight));
+  });
+  await tc('TC-86', 'Tools by period', 'The student tool gets a new version between two periods: which version does each period show, and how many answered? A period before its tasks are created', { first: 'old version, 38 answered', beforeTasks: 'new version, 0 of 60 answered', second: 'new version, 0 of 60 answered', draftListed: false, sameAsCountingTasks: true }, async () => {
+    const x = lab(), old = x.tool().id, r = await x.run('reviseForm', { instrumentId: old });
+    const answered = x.db.tasks.filter((t) => t.periodId === 'p4' && t.response?.instrumentId === old).length;
+    const draftListed = L.toolsOfPeriod(x.db, 'p4').has(r.id);
+    await x.run('useForm', { instrumentId: r.id }); await x.run('closePeriod', { periodId: 'p4' });
+    const p = await x.run('createPeriod', { name: 'N', deadline: '2099-01-01' });
+    const show = (pid) => { const m = L.toolsOfPeriod(x.db, pid), n = m.get(m.has(r.id) ? r.id : old); return { v: m.has(r.id) && m.has(old) ? 'both versions' : m.has(r.id) ? 'new version' : 'old version', n }; };
+    const b = show(p.id); await x.run('generateTasks', { periodId: p.id });
+    const a = show('p4'), c = show(p.id), total = x.db.tasks.filter((t) => t.periodId === p.id && L.formForTask(x.db, t)?.id === r.id).length;
+    const of = (k) => `${k.v}, ${k.n.answered} of ${k.n.answered + k.n.waiting} answered`;
+    // sameAsCountingTasks: the same numbers counted straight from the tasks, not by the function being tested
+    return { first: `${a.v}, ${a.n.answered} answered`, beforeTasks: of(b), second: of(c), draftListed, sameAsCountingTasks: a.n.answered === answered && a.n.waiting === 0 && c.n.waiting === total };
+  });
 } finally {
   server.close();
 }
@@ -463,7 +591,7 @@ const md = [
   '',
   'Each case runs automatically (`npm run test:validation`). "Actual" is measured during this run, not written by hand.',
   'Part A checks the computation rules on controlled data; Part B runs the real server, database and access control;',
-  'Part C checks the formula engine and its approval and versions; Part D the comment analysis; Part E the computation modules (plug-ins), the effective period and the reproducibility of stored results; Part F HR-configurable evaluator groups and access control; Part G the margin of error, form reliability, participation forecast, development follow-up and the fixes from the 20 Nov 2026 test.',
+  'Part C checks the formula engine and its approval and versions; Part D the comment analysis; Part E the computation modules (plug-ins), the effective period and the reproducibility of stored results; Part F HR-configurable evaluator groups and access control; Part H evaluation tool drafts and checks, and adding an evaluator group; Part G the margin of error, form reliability, participation forecast, development follow-up and the fixes from the 20 Nov 2026 test.',
   '',
   '| ID | Requirement | Scenario | Expected | Actual | Result |',
   '|---|---|---|---|---|---|',

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useApp } from '../lib/store';
-import { ROLES, POSITIONS, TARGET_TYPES, needsDept, deptName, missingUbDepartments, isNursingDept, nursingDepts, evaluatorGroups, defaultEvaluatorGroups, groupName } from '../lib/logic';
+import { ROLES, POSITIONS, TARGET_TYPES, needsDept, deptName, missingUbDepartments, isNursingDept, nursingDepts, evaluatorGroups, groupsOf, formulaFor, defaultEvaluatorGroups, groupName } from '../lib/logic';
 import { Card, Select, Badge, Avatar, Empty, SaveInput, newestFirst, usePages, ask } from '../ui';
 
 /* ---------------- change your own password ---------------- */
@@ -230,13 +230,14 @@ function EvaluatorGroups() {
     if (!name.trim()) return setMsg('Enter a name for the evaluator group.');
     if (!targetTypes.length) return setMsg('Choose at least one evaluated category.');
     const result = await act('addEvaluatorGroup', { name, targetTypes });
-    if (result) { setMsg(`${result.name} added. Assign staff to this group under Accounts, then create its evaluation form under Forms.`); setName(''); setTargetTypes([]); }
+    if (result) { setMsg(`${result.name} added. Next: assign staff to it in their accounts below, then make its tool under Evaluation tools and put it in a formula under Scoring & calculation.`); setName(''); setTargetTypes([]); }
   };
-  const targetsFor = (id) => Object.keys(db.rules).filter((tt) => Object.hasOwn(db.rules[tt], id));
-  const membersFor = (id) => db.users.filter((u) => evaluatorGroups(u).includes(id)).length;
+  // the categories whose formula counts this group now
+  const targetsFor = (id) => Object.keys(TARGET_TYPES).filter((tt) => formulaFor(db, null, tt).components.some((c) => c.group === id));
+  const membersFor = (id) => db.users.filter((u) => groupsOf(db, u).includes(id)).length;
   return (
     <Card title="Evaluator groups and roles">
-      <p className="muted">Add an evaluation role (for example, Department Head) without changing the app. Then assign staff to it in their account and create a form for each selected evaluatee category. System access roles such as HR and VP remain fixed.</p>
+      <p className="muted">Who belongs to each evaluator group, and whom it rates now. To add a new rater with its tool and percentages in one step, use <b>Scoring &amp; calculation → Add evaluator group</b>. System access roles such as HR and VP remain fixed.</p>
       <table>
         <thead><tr><th>Evaluator group</th><th>Evaluates</th><th>Assigned accounts</th><th>Type</th></tr></thead>
         <tbody>{(db.evaluatorGroups || []).map((g) => (
@@ -244,7 +245,7 @@ function EvaluatorGroups() {
             <td><b>{groupName(db, g.id)}</b><div className="muted small">{g.id}</div></td>
             <td>{targetsFor(g.id).map((tt) => TARGET_TYPES[tt]).join(', ') || '—'}</td>
             <td>{membersFor(g.id)}</td>
-            <td>{g.builtIn ? 'Built in' : 'HR configured'}</td>
+            <td>{g.builtIn ? 'Built in' : 'HR configured'}{g.positions?.length > 0 && <div className="muted small">everyone with the position: {g.positions.map((p) => POSITIONS.TP[p] || POSITIONS.NTP[p] || p).join(', ')}</div>}</td>
           </tr>
         ))}</tbody>
       </table>
