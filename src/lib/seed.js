@@ -2,7 +2,7 @@
 // All names, criteria text and ratings below are SAMPLE data, editable in the app.
 // Used by the server (server/seed.js) to fill an empty database, and by the tests.
 // Passwords are not part of this data; the server hashes DEMO_PASSWORD for every account.
-import { UB_DEPARTMENTS, DEFAULT_EVALUATOR_GROUPS, generateTasks, runThresholdCheck, formForTask, targetType, effectiveWeights } from './logic.js';
+import { UB_DEPARTMENTS, DEFAULT_EVALUATOR_GROUPS, generateTasks, runThresholdCheck, formForTask, targetType, termOf, effectiveWeights } from './logic.js';
 import { installUbForms } from './ubInstall.js';
 
 export const DEMO_PASSWORD = 'demo1234';
@@ -168,5 +168,6 @@ export function buildSeed() {
   });
   runThresholdCheck(db, 'p1'); runThresholdCheck(db, 'p2'); runThresholdCheck(db, 'p3');
   db.notifications.forEach((n) => (n.read = true));
+  for (const s of db.sections) s.term = termOf(db.periods.at(-1).name); // the sample classes are this semester's
   return db;
 }

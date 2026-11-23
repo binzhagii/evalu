@@ -18,7 +18,7 @@
 //   usesWeights   true: HR types a percentage per group (they must add up to 100%)
 //   equalShares   true: every group counts the same (shown as equal percentages)
 //   usesExpression true: HR writes the formula (shows the formula box)
-//   advanced      true: shown under "Other ways (special cases)" so the page stays simple
+//   advanced      true: a special-case method (the Scoring page itself only uses percentages, WEIGHTED_AVERAGE)
 //   missingRules  the "if a group has no rating" rules that make sense for this method
 //   compute(items, formula) → { raw, parts?, how, error? }
 //       items  [{ group, value, weight }]: the groups that take part, each with a rating

@@ -1,7 +1,7 @@
 // What each signed-in user is allowed to see (FR2, NFR5, NFR6).
 // The browser gets a copy of the data with the same shape as before, but with
 // everything the user may not see removed. The pages then work as they did.
-import { canSeeAll, canSeeOwn, canSeeDept, canSeeComments, isResultHead, policyFor } from '../src/lib/logic.js';
+import { canSeeAll, canSeeOwn, canSeeDept, canSeeComments, isResultHead, personIn, policyFor } from '../src/lib/logic.js';
 import { decryptText } from './secrets.js';
 
 // For progress tables we only reveal THAT a student responded, not their answers.
@@ -43,7 +43,8 @@ export function viewFor(db, user) {
     } else if (t.targetId === user.id && canSeeOwn(user, p)) {
       // FR14/NFR5: my own released results, with comments grouped by source but never who gave them
       tasks.push({ ...t, evaluatorId: null, draft: null, response: t.response && shown(t, withComment(t.response, true)) });
-    } else if (target && target.id !== user.id && target.dept === user.dept && canSeeDept(user, p)) {
+    } else if (target && target.id !== user.id && canSeeDept(user, p) && personIn(db, p.id, target).dept === user.dept) {
+      // the dean of the department the person was in then
       // FR16/FR18: the dean/principal receives the department's released results (anonymous)
       tasks.push({ ...t, evaluatorId: null, draft: null, response: t.response && shown(t, withComment(t.response, true)) });
     } else if (p.status === 'open' && t.group === 'ST' && (myClasses.has(t.sectionId) || deptClasses.has(t.sectionId))) {
@@ -69,16 +70,21 @@ export function viewFor(db, user) {
     evaluatorGroups: db.evaluatorGroups || [],
     sections: db.sections.map((s) => (isHR ? s : { ...s, studentIds: [] })),
     criteria: db.criteria,
-    instruments: db.instruments,
+    instruments: isHR ? db.instruments : db.instruments.filter((i) => !i.status), // drafts and scheduled versions are HR's until they are used
     rules: db.rules,
-    periods: db.periods,
+    // who was where in a closed period: HR and the VPs get everyone, the others only the people whose results they receive
+    periods: isHR || user.role === 'DIR' ? db.periods : db.periods.map((p) => {
+      if (!p.people) return p;
+      const ids = new Set([user.id, ...tasks.filter((t) => t.periodId === p.id).map((t) => t.targetId)]);
+      return { ...p, people: Object.fromEntries(Object.entries(p.people).filter(([id]) => ids.has(id))) };
+    }),
     policies: db.policies || [],
     formulas: db.formulas || [],
     results: isHR ? db.results || [] : [], // results stored at closing (HR checks them against a fresh computation)
     tasks,
     requests: db.requests.filter((r) => isHR || r.headId === user.id),
     // development plans: HR and the VPs see all; a dean or principal those of their department; a person their own
-    plans: (db.plans || []).filter((p) => isHR || user.role === 'DIR' || p.targetId === user.id || (isResultHead(user) && people.get(p.targetId)?.dept === user.dept && p.targetId !== user.id)),
+    plans: (db.plans || []).filter((p) => isHR || user.role === 'DIR' || p.targetId === user.id || (isResultHead(user) && p.targetId !== user.id && (people.get(p.targetId)?.dept === user.dept || personIn(db, p.periodId, people.get(p.targetId)).dept === user.dept))),
     pastResults: db.pastResults.filter(pastVisible),
     notifications: db.notifications.filter((n) => n.userId === user.id),
   };

@@ -65,11 +65,22 @@ export function defaultFormula(weights = {}, policy = {}) {
     expression: '',
     missing: policy.missingGroup === 'incomplete' ? 'INVALIDATE' : 'REWEIGHT',
     minGroups: 1,
-    participation: { percent: policy.participationPercent ?? 50, plusOne: policy.participationPlusOne !== false },
     rounding: { decimals: policy.decimals ?? 2, method: 'HALF_UP' },
   };
 }
 
+
+/**
+ * A formula as percentages, the way HR changes every formula. A formula saved earlier with another method keeps its
+ * groups; "every group the same" becomes equal percentages, and HR types the percentages of a written expression.
+ */
+export function asPercentages(f) {
+  if (f.method === 'WEIGHTED_AVERAGE') return f;
+  const m = methodOf(f.method, f.methodVersion ?? 1), comps = f.components || [], n = comps.length;
+  const each = n ? Math.floor(10000 / n) / 100 : 0;
+  const weight = (c, i) => (m?.usesWeights ? c.weight : m?.equalShares ? (i === n - 1 ? +(100 - each * (n - 1)).toFixed(2) : each) : null);
+  return { ...f, method: 'WEIGHTED_AVERAGE', methodVersion: methodOf('WEIGHTED_AVERAGE').version, expression: '', components: comps.map((c, i) => ({ ...c, weight: weight(c, i) })) };
+}
 
 /** Problems that stop a formula from being submitted or used (empty list = valid). */
 export function validateFormula(f, { allowedGroups = null, groupNames = {} } = {}) {
@@ -83,7 +94,7 @@ export function validateFormula(f, { allowedGroups = null, groupNames = {} } = {
     const label = groupNames[c.group] || c.group;
     if (seen.has(c.group)) errs.push(`${label} is listed twice.`);
     seen.add(c.group);
-    if (allowedGroups && !allowedGroups.includes(c.group)) errs.push(`${label} has no evaluation form for this category, so nobody could be assigned to evaluate.`);
+    if (allowedGroups && !allowedGroups.includes(c.group)) errs.push(`${label} has no evaluation tool in use for this category, so nobody could be assigned to evaluate. Finish it under Evaluation tools first.`);
     if (!has(AGGREGATIONS, c.aggregation)) errs.push(`Choose how ${label}'s evaluators are combined.`);
     if (c.group !== 'ST' && ['SECTION_AVERAGE', 'POOLED'].includes(c.aggregation)) errs.push(`"${AGGREGATIONS[c.aggregation]}" is only for students.`);
     if (m?.usesWeights && !(Number(c.weight) > 0)) errs.push(`${label} needs a weight above 0%.`);
@@ -107,10 +118,6 @@ export function validateFormula(f, { allowedGroups = null, groupNames = {} } = {
   if (f.effectiveFrom && !validDate(f.effectiveFrom)) errs.push('Effective-from date must be a valid calendar date.');
   if (f.effectiveUntil && !validDate(f.effectiveUntil)) errs.push('Effective-until date must be a valid calendar date.');
   if (f.effectiveFrom && f.effectiveUntil && f.effectiveUntil < f.effectiveFrom) errs.push('Effective-until date must be on or after the effective-from date.');
-  const participation = f.participation || {};
-  const participationPercent = Number(participation.percent);
-  if (!Number.isFinite(participationPercent) || participationPercent < 1 || participationPercent > 100) errs.push('Student participation must be from 1% to 100%.');
-  if (typeof participation.plusOne !== 'boolean') errs.push('Choose whether to require one extra student response.');
   const mg = Number(f.minGroups ?? 1);
   if (!Number.isInteger(mg) || mg < 1 || mg > Math.max(1, comps.length)) errs.push('The minimum number of groups must be between 1 and the number of groups.');
   return errs;

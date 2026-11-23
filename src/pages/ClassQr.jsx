@@ -4,7 +4,7 @@
 import { useEffect, useState } from 'react';
 import QRCode from 'qrcode';
 import { useApp } from '../lib/store';
-import { userById, periodCovers } from '../lib/logic';
+import { userById, periodCovers, inTerm } from '../lib/logic';
 
 const BASE_KEY = 'evalu-qr-base';
 const readBase = () => { try { return localStorage.getItem(BASE_KEY) || window.location.origin; } catch { return window.location.origin; } };
@@ -21,7 +21,7 @@ function QrCard({ section, base, db }) {
     return () => { live = false; };
   }, [link]);
   const teacher = userById(db, section.facultyId)?.name || '';
-  const open = db.periods.find((p) => p.status === 'open' && periodCovers(p, section.dept));
+  const open = db.periods.find((p) => p.status === 'open' && periodCovers(p, section.dept) && inTerm(p, section));
   return (
     <div className="qr-card">
       <img src="/ub-logo.png" alt="University of Baguio" className="qr-logo" />

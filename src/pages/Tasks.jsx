@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { takeScannedClass } from './ClassQr';
 import { useApp } from '../lib/store';
-import { taskStatus, userById, formForTask, periodById, itemCategory, ratingWords, MAX_RATING, targetType, hasPlanBoxes, commentParts, packComment, groupName } from '../lib/logic';
+import { taskStatus, userById, formForTask, periodById, itemCategory, ratingWords, MAX_RATING, targetType, hasPlanBoxes, commentParts, packComment, groupName, policyFor, notStarted, hasRule, ruleWords, neededResponses } from '../lib/logic';
 import { Card, Badge, Avatar, Stat, Stats, Meter, Empty, Icon, dueText, pct } from '../ui';
 
 const MAX_COMMENT = 2000; // the server refuses longer comments
@@ -26,7 +26,8 @@ export default function Tasks() {
   const [openId, setOpenId] = useState(scan?.open || null);
   const [done, setDone] = useState(scan?.note && !scan.warn ? scan.note : null);
   const [scanWarn] = useState(scan?.warn ? scan.note : null);
-  const mine = db.tasks.filter((t) => t.evaluatorId === user.id && periodById(db, t.periodId).status === 'open');
+  const mine = db.tasks.filter((t) => t.evaluatorId === user.id && periodById(db, t.periodId).status === 'open' && !notStarted(periodById(db, t.periodId)));
+  const soon = db.periods.filter((p) => p.status === 'open' && notStarted(p));
   const withStatus = mine.map((t) => ({ t, s: taskStatus(db, t) }));
   const todo = withStatus.filter((x) => x.s !== 'completed').sort((a, b) => (a.s === 'overdue' ? -1 : 0) - (b.s === 'overdue' ? -1 : 0));
   const finished = withStatus.filter((x) => x.s === 'completed');
@@ -34,18 +35,18 @@ export default function Tasks() {
   const nextDue = todo.map((x) => periodById(db, x.t.periodId).deadline).sort()[0];
 
   if (openId) return <EvalForm taskId={openId} onClose={() => setOpenId(null)} onDone={(m) => { setDone(m); setOpenId(null); }} />;
-  if (!mine.length) return <Card><Empty icon="check" title="No evaluations assigned to you">When an evaluation period opens, the people you need to evaluate will appear here.</Empty></Card>;
+  if (!mine.length) return <Card><Empty icon="check" title="No evaluations assigned to you">{soon.length ? soon.map((p) => `${p.name} opens on ${new Date(`${p.startDate}T00:00:00`).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}.`).join(' ') : 'When an evaluation period opens, the people you need to evaluate will appear here.'}</Empty></Card>;
 
   const open = (id) => { setDone(null); setOpenId(id); };
   return (
     <>
       {done && <div className="note ok"><Icon name="check" size={16} /> {done}</div>}
       {scanWarn && <div className="note warn">{scanWarn}</div>}
-      {user.role === 'ST' && <StudentRuleNote />}
+      {user.role === 'ST' && <StudentRuleNote policy={policyFor(db, mine[0].periodId)} />}
       <Stats>
         <Stat icon="list" label="To do" value={todo.length} sub={todo.length ? dueText(nextDue) : 'All done'} tone={todo.length ? '' : 'good'} />
         <Stat icon="check" label="Submitted" value={finished.length} sub={`${pct(finished.length / mine.length)} of your evaluations`} tone="good" />
-        <Stat icon="clock" label="Overdue" value={overdue} sub={overdue ? 'Please finish these first' : 'Nothing overdue'} tone={overdue ? 'bad' : ''} />
+        <Stat icon="clock" label="Overdue" value={overdue} sub={overdue ? 'The deadline has passed; HR can extend it' : 'Nothing overdue'} tone={overdue ? 'bad' : ''} />
       </Stats>
       <Card>
         <div className="meter-row big"><span><b>Your progress</b></span><Meter value={finished.length / mine.length} tone="brand" /><b>{finished.length} of {mine.length}</b></div>
@@ -67,9 +68,9 @@ export default function Tasks() {
 }
 
 /** IC6: students are told why every answer matters. */
-function StudentRuleNote() {
+function StudentRuleNote({ policy }) {
   return (
-    <div className="note"><Icon name="alert" size={16} /> <b>Your answer counts for your whole class.</b> A class's evaluation is used only if <b>more than half of the class (half plus one)</b> answers it. For example, in a class of 40, at least 21 students must answer. Your name is never shown to your teacher.</div>
+    <div className="note"><Icon name="alert" size={16} /> <b>Your answer counts for your whole class.</b> {hasRule(policy) ? <>A class's evaluation is used only if <b>{ruleWords(policy)}</b> answers it. For example, in a class of 40, at least {neededResponses(40, policy)} students must answer.</> : 'Every answer is used.'} Your name is never shown to your teacher.</div>
   );
 }
 
@@ -92,9 +93,45 @@ function TaskCard({ t, s, onOpen }) {
         {s === 'completed' ? <Badge kind="completed">submitted</Badge> : <Badge kind={s}>{s === 'overdue' ? 'overdue' : dueText(p.deadline)}</Badge>}
         {t.draft && s !== 'completed' && ins && <span className="muted">{answered} of {ins.items.length} answered</span>}
       </div>
-      {onOpen && <button onClick={onOpen}>{t.draft ? 'Continue' : 'Start evaluation'} <Icon name="arrow" size={16} /></button>}
+      {onOpen && s !== 'overdue' && <button onClick={onOpen}>{t.draft ? 'Continue' : 'Start evaluation'} <Icon name="arrow" size={16} /></button>}
     </div>
   );
+}
+
+/** The questions of a form with their ratings, in the form's parts. Also used by HR to preview a tool. */
+export function QuestionList({ ins, criteria, answers, errors = [], onAnswer }) {
+  const critOf = (id) => criteria.find((c) => c.id === id);
+  const crit = (id) => critOf(id)?.text || id;
+  // the form's categories in order, e.g. "Content knowledge and pedagogy (35%)"
+  const parts = [];
+  ins.items.forEach((it, i) => {
+    const name = itemCategory(it);
+    if (parts.at(-1)?.name !== name) parts.push({ name, weight: ins.categories?.[name], items: [] });
+    parts.at(-1).items.push({ it, n: i + 1 });
+  });
+  const showHeads = parts.length > 1 || parts[0]?.name !== 'General';
+  return parts.map((p) => (
+    <section key={p.items[0].it.criterionId} className="q-part">
+      {showHeads && <h3 className="q-head">{p.name}{p.weight != null && <span className="muted"> · {p.weight}%</span>}</h3>}
+      {p.items.map(({ it, n: i }) => {
+        const words = ratingWords(ins, critOf(it.criterionId));
+        const own = words !== ratingWords(ins);
+        return (
+          <div key={it.criterionId} id={`q-${it.criterionId}`} className={`q ${errors.includes(it.criterionId) ? 'err' : ''} ${answers[it.criterionId] != null ? 'answered' : ''}`}>
+            <div className="q-text"><span className="q-num">{i}</span>{crit(it.criterionId)}</div>
+            <div className={`rating ${own ? 'rating-own' : ''}`} role="radiogroup" aria-label={`Rating for item ${i}`}>
+              {Array.from({ length: MAX_RATING }, (_, k) => MAX_RATING - k).map((v) => (
+                <label key={v} className={answers[it.criterionId] === v ? 'on' : ''} title={words[v - 1]}>
+                  <input type="radio" name={it.criterionId} checked={answers[it.criterionId] === v} onChange={() => onAnswer(it.criterionId, v)} />
+                  <b>{v}</b><small>{words[v - 1]}</small>
+                </label>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+    </section>
+  ));
 }
 
 function EvalForm({ taskId, onClose, onDone }) {
@@ -114,16 +151,6 @@ function EvalForm({ taskId, onClose, onDone }) {
   const [errors, setErrors] = useState([]);
   const [confirm, setConfirm] = useState(false);
   const [busy, setBusy] = useState(false);
-  const critOf = (id) => db.criteria.find((c) => c.id === id);
-  const crit = (id) => critOf(id)?.text || id;
-  // the form's categories in order, e.g. "Content knowledge and pedagogy (35%)"
-  const parts = [];
-  ins.items.forEach((it, i) => {
-    const name = itemCategory(it);
-    if (parts.at(-1)?.name !== name) parts.push({ name, weight: ins.categories?.[name], items: [] });
-    parts.at(-1).items.push({ it, n: i + 1 });
-  });
-  const showHeads = parts.length > 1 || parts[0]?.name !== 'General';
   const answered = ins.items.filter((it) => answers[it.criterionId] != null).length;
 
   const saveDraft = async () => {
@@ -161,34 +188,13 @@ function EvalForm({ taskId, onClose, onDone }) {
         <div className="meter-row"><span>{answered} of {ins.items.length} answered</span><Meter value={answered / ins.items.length} tone="brand" /></div>
         <p className="muted">Rate each statement from <b>{MAX_RATING} (highest)</b> to <b>1 (lowest)</b>, like on the paper form. Your answers are private: the person you evaluate never sees your name.</p>
         <div className="scale-key">{ratingWords(ins).map((w, i) => <span key={w}><b>{i + 1}</b> {w}</span>).reverse()}</div>
-        {task.group === 'ST' && <p className="muted">This class's evaluation counts only if more than half of the class (half plus one) answers.</p>}
+        {task.group === 'ST' && hasRule(policyFor(db, task.periodId)) && <p className="muted">This class's evaluation counts only if {ruleWords(policyFor(db, task.periodId))} answers.</p>}
       </Card>
 
       {errors.length > 0 && <div className="note warn"><Icon name="alert" size={16} /> {errors.length} item(s) are not answered yet. They are marked in red below. Your other answers are kept.</div>}
 
-      {parts.map((p) => (
-        <section key={p.name} className="q-part">
-          {showHeads && <h3 className="q-head">{p.name}{p.weight != null && <span className="muted"> · {p.weight}%</span>}</h3>}
-          {p.items.map(({ it, n: i }) => {
-            const words = ratingWords(ins, critOf(it.criterionId));
-            const own = words !== ratingWords(ins);
-            return (
-              <div key={it.criterionId} id={`q-${it.criterionId}`} className={`q ${errors.includes(it.criterionId) ? 'err' : ''} ${answers[it.criterionId] != null ? 'answered' : ''}`}>
-                <div className="q-text"><span className="q-num">{i}</span>{crit(it.criterionId)}</div>
-                <div className={`rating ${own ? 'rating-own' : ''}`} role="radiogroup" aria-label={`Rating for item ${i}`}>
-                  {Array.from({ length: MAX_RATING }, (_, k) => MAX_RATING - k).map((v) => (
-                    <label key={v} className={answers[it.criterionId] === v ? 'on' : ''} title={words[v - 1]}>
-                      <input type="radio" name={it.criterionId} checked={answers[it.criterionId] === v}
-                        onChange={() => { setAnswers({ ...answers, [it.criterionId]: v }); setErrors(errors.filter((x) => x !== it.criterionId)); }} />
-                      <b>{v}</b><small>{words[v - 1]}</small>
-                    </label>
-                  ))}
-                </div>
-              </div>
-            );
-          })}
-        </section>
-      ))}
+      <QuestionList ins={ins} criteria={db.criteria} answers={answers} errors={errors}
+        onAnswer={(id, v) => { setAnswers({ ...answers, [id]: v }); setErrors(errors.filter((x) => x !== id)); }} />
 
       <Card title={twoBoxes ? 'Development plan and areas to be improved (optional)' : 'Comments (optional)'}>
         <p className="muted">

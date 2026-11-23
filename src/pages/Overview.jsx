@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useApp } from '../lib/store';
-import { STAGES, taskStatus, sectionStats, userById, computeAll, canSeeAll, THRESHOLD, hasFinal, pendingApprovals, groupName, participationForecast } from '../lib/logic';
+import { STAGES, taskStatus, sectionStats, userById, computeAll, canSeeAll, policyFor, hasRule, ruleMark, hasFinal, pendingApprovals, groupName, participationForecast } from '../lib/logic';
+import { cyclePeriod, cycleSteps, needsYou, nextStep } from '../lib/cycle';
 import { ApprovalPanel } from './Reports';
 import { Card, Stat, Stats, Meter, Badge, Empty, PeriodPicker, Icon, useNav, fmt, pct, dueText, daysUntil, ForecastBadge } from '../ui';
 
@@ -17,28 +18,46 @@ export function ReleaseSteps({ stage }) {
 }
 
 /* ---------------- HR ---------------- */
-/** What HR does each term, in order, with a button to the right page. Steps already done get a check. */
-function TermSteps({ db, open, tasks, go }) {
-  const steps = [
-    ['Create this term’s evaluation', 'Choose the school year, term, and closing date.', 'periods', 'Dates & release', open.length > 0],
-    ['Add classes and students', 'Import the class list from the Registrar or ARC.', 'classes', 'Classes & students', db.sections.length > 0],
-    ['Create evaluation tasks', 'evalU prepares the evaluations people need to complete.', 'assign', 'Evaluation tasks', tasks.length > 0],
-    ['Check responses', 'See who has responded and which classes need more answers.', 'monitor', 'Response progress'],
-    ['Close the evaluation', 'Do this after the deadline; classes with too few answers are left out.', 'periods', 'Dates & release'],
-    ['Share results in order', 'Send results to the VPs first, then release them to faculty.', 'periods', 'Dates & release'],
-    ['View or print reports', 'Choose the reports you need for this term.', 'reports', 'View & print results'],
-  ];
+/** Only what a person has to decide; the rest happens by itself. */
+function NeedsYou({ db, go }) {
+  const list = useMemo(() => needsYou(db), [db]);
+  const [all, setAll] = useState(false);
   return (
-    <Card title="Start here · each term, step by step">
-      <ol className="term-steps">
-        {steps.map(([title, what, page, label, done], i) => (
-          <li key={title} className={done ? 'done' : ''}>
-            <span className="term-n">{done ? <Icon name="check" size={14} /> : i + 1}</span>
-            <span><b>{title}</b><span className="muted small"> · {what}</span></span>
-            <button className="ghost" onClick={() => go(page)}>{label}</button>
-          </li>
-        ))}
-      </ol>
+    <Card title={list.length ? `Needs you (${list.length})` : 'Nothing needs you right now'}>
+      {list.length === 0 ? <p className="muted">evalU creates the evaluations, reminds people and closes the period by itself.</p> : <>
+        <ul className="plain-list needs">{(all ? list : list.slice(0, 5)).map((x) => <li key={x.text} className="row between"><span>{x.text}</span><button className="ghost" onClick={() => go(x.page, x.args)}>{x.label}</button></li>)}</ul>
+        {list.length > 5 && <button className="link" onClick={() => setAll(!all)}>{all ? 'Show less' : `Show all (${list.length})`}</button>}
+      </>}
+    </Card>
+  );
+}
+
+/** What HR does each semester, in order. Every step is checked from the real data of the period; the next one stands out. */
+function CycleSteps({ db, go }) {
+  const [pidSel, setPid] = useState('');
+  const p = db.periods.find((x) => x.id === pidSel) || cyclePeriod(db);
+  const steps = useMemo(() => cycleSteps(db, p), [db, p]);
+  const next = nextStep(steps);
+  const groups = [...new Set(steps.map((s) => s.group))];
+  return (
+    <Card title={`What to do${p ? `: ${p.name}` : ''}`} actions={db.periods.length > 1 && <PeriodPicker periods={db.periods} value={p?.id} onChange={setPid} />}>
+      {next
+        ? <div className="note"><b>Next: {next.title.charAt(0).toLowerCase() + next.title.slice(1)}.</b> {next.detail} <button className="link next-link" onClick={() => go(next.page)}>Open {next.label} →</button></div>
+        : <div className="note ok"><b>Everything is done for {p.name}.</b> For the next semester, start again from step 1, then create its period.</div>}
+      {groups.map((g) => (
+        <div key={g}>
+          <h4 className="term-group">{g}</h4>
+          <ol className="term-steps" start={steps.findIndex((s) => s.group === g) + 1}>
+            {steps.map((s, i) => s.group === g && (
+              <li key={s.key} className={s.done ? 'done' : s === next ? 'next' : ''} aria-current={s === next ? 'step' : undefined}>
+                <span className="term-n">{s.done ? <Icon name="check" size={14} /> : i + 1}</span>
+                <span><b>{s.title}</b><span className="muted small"> · {s.detail}</span></span>
+                <button className="ghost" onClick={() => go(s.page)}>{s.label}</button>
+              </li>
+            ))}
+          </ol>
+        </div>
+      ))}
     </Card>
   );
 }
@@ -53,25 +72,25 @@ export function HROverview() {
   const done = status.filter((s) => s === 'completed').length;
   const overdue = status.filter((s) => s === 'overdue').length;
   const classes = open.flatMap((p) => db.sections.map((s) => ({ p, st: sectionStats(db, p.id, s.id) }))).filter((x) => x.st.required);
-  const low = classes.filter((x) => x.st.belowHalf).sort((a, b) => a.st.rate - b.st.rate);
+  const low = classes.filter((x) => x.st.belowHalf && hasRule(policyFor(db, x.p.id))).sort((a, b) => a.st.rate - b.st.rate);
   const active = db.users.filter((u) => u.active);
   const waiting = active.filter((u) => u.mustChangePassword).length;
 
   return (
     <>
-      <div className="note"><b>Start with the checklist.</b> Follow it from top to bottom. You usually do not need to change questions, scoring, or rules unless UB’s policy changes.</div>
-      <TermSteps db={db} open={open} tasks={tasks} go={go} />
+      <NeedsYou db={db} go={go} />
+      <CycleSteps db={db} go={go} />
 
       <Stats>
         <Stat icon="check" label="Responses received" value={tasks.length ? pct(done / tasks.length) : '—'} sub={`${done} of ${tasks.length} evaluations in open periods`} tone="good" />
-        <Stat icon="clock" label="Late evaluations" value={overdue} sub={overdue ? 'Send reminders from Evaluation tasks' : 'Nothing overdue'} tone={overdue ? 'bad' : ''} />
+        <Stat icon="clock" label="Late evaluations" value={overdue} sub={overdue ? 'Extend the deadline if people need more time' : 'Nothing overdue'} tone={overdue ? 'bad' : ''} />
         <Stat icon="chart" label="Classes needing more answers" value={`${low.length} / ${classes.length}`} sub="May not count if the period closed now" tone={low.length ? 'warn' : ''} />
         <Stat icon="users" label="Active accounts" value={active.length} sub={waiting ? `${waiting} have not signed in yet` : 'Everyone has signed in'} />
       </Stats>
 
       <div className="grid-2">
         <Card title="Open evaluation periods" actions={<button className="ghost" onClick={() => go('periods')}>Manage</button>}>
-          {open.length === 0 ? <Empty icon="calendar" title="No period is open">Create one under Periods &amp; release.</Empty> : open.map((p) => {
+          {open.length === 0 ? <Empty icon="calendar" title="No period is open">Create one under Dates &amp; release.</Empty> : open.map((p) => {
             const pt = db.tasks.filter((t) => t.periodId === p.id);
             const byGroup = {};
             for (const t of pt) { const g = (byGroup[t.group] ||= { n: 0, done: 0 }); g.n++; if (t.response) g.done++; }
@@ -93,12 +112,12 @@ export function HROverview() {
         </Card>
 
         <Card title="Classes needing attention" actions={<button className="ghost" onClick={() => go('monitor')}>See all</button>}>
-          {low.length === 0 ? <Empty title="Every class meets the 50%-plus-one rule" /> : (
+          {low.length === 0 ? <Empty title="No class needs more answers" /> : (
             <ul className="plain-list">
               {low.slice(0, 6).map(({ p, st }) => (
                 <li key={p.id + st.section.id}>
                   <div><b>{st.section.code}</b> <span className="muted">· {userById(db, st.section.facultyId)?.name}{open.length > 1 ? ` · ${p.name}` : ''}</span></div>
-                  <div className="meter-row"><Meter value={st.rate} mark={THRESHOLD} /><span>{st.responded}/{st.required} <span className="muted">needs {st.needed}</span></span></div>
+                  <div className="meter-row"><Meter value={st.rate} mark={ruleMark(policyFor(db, p.id))} tone="bad" /><span>{st.responded}/{st.required} <span className="muted">needs {st.needed}</span></span></div>
                   <ForecastBadge fc={participationForecast(db, p.id, st.section.id)} deadline={p.deadline} />
                 </li>
               ))}
@@ -143,8 +162,8 @@ export function VpOverview() {
   const secs = db.sections.map((s) => sectionStats(db, pid, s.id)).filter((s) => s.required);
   const invalid = secs.filter((s) => !s.valid).length;
   const depts = db.departments.map((d) => {
-    const list = complete.filter((r) => r.target.dept === d.id);
-    return { d, avg: avg(list), n: list.length, total: all.filter((r) => r.target.dept === d.id).length };
+    const list = complete.filter((r) => r.dept === d.id);
+    return { d, avg: avg(list), n: list.length, total: all.filter((r) => r.dept === d.id).length };
   });
 
   return (
@@ -155,11 +174,12 @@ export function VpOverview() {
           <ApprovalPanel period={p} />
         </Card>
       ))}
+      {(db.formulas || []).some((f) => f.status === 'pending') && <div className="note"><b>{(db.formulas || []).filter((f) => f.status === 'pending').length} formula(s) waiting for your approval.</b> <button className="link" onClick={() => go('formulas')}>Open Formula approvals</button></div>}
       <div className="row between"><span className="muted">Showing results for</span><PeriodPicker periods={periods} value={pid} onChange={setPid} /></div>
       <Stats>
         <Stat icon="star" label="Average final score" value={fmt(avg(complete))} sub="out of 4" tone="good" />
         <Stat icon="users" label="Personnel with a final score" value={`${complete.length} / ${all.length}`} sub={all.length - complete.length ? `${all.length - complete.length} without a score yet` : 'All have a final score'} />
-        <Stat icon="chart" label="Class sections excluded" value={`${invalid} / ${secs.length}`} sub="fewer than half of the class + 1 answered" tone={invalid ? 'warn' : ''} />
+        <Stat icon="chart" label="Class sections excluded" value={`${invalid} / ${secs.length}`} sub="not enough students answered" tone={invalid ? 'warn' : ''} />
         <Stat icon="calendar" label="Periods released to you" value={periods.length} />
       </Stats>
       <Card title="Average final score by department" actions={<><button className="ghost" onClick={() => go('analytics')}>Analytics</button><button onClick={() => go('reports')}>Full reports</button></>}>

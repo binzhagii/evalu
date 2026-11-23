@@ -161,8 +161,9 @@ try {
   const pid = np.data.result.id;
   assert.equal(sql.prepare('SELECT name FROM periods WHERE id=?').get(pid).name, 'Test period');
   const gen = await act(hr, 'generateTasks', { periodId: pid });
-  assert.ok(gen.data.result.added > 0);
-  assert.equal(sql.prepare('SELECT count(*) n FROM tasks WHERE period_id=?').get(pid).n, gen.data.result.added);
+  assert.ok(np.data.result.evaluations.added > 0, 'the evaluations are created by themselves');
+  assert.equal(gen.data.result.added, 0, 'clicking the button adds nothing more');
+  assert.equal(sql.prepare('SELECT count(*) n FROM tasks WHERE period_id=?').get(pid).n, np.data.result.evaluations.added);
   assert.equal((await act(hr, 'releaseNext', { periodId: pid })).status, 409, 'cannot release an open period');
   assert.equal((await act(hr, 'closePeriod', { periodId: pid })).status, 200);
   assert.ok(sql.prepare("SELECT count(*) n FROM notifications WHERE kind='invalidated'").get().n > 1, 'threshold check notified faculty');
@@ -208,13 +209,24 @@ try {
   assert.equal((await act(hr, 'setFormItemWeight', { instrumentId: rev.data.result.id, criterionId: c1, weight: 3 })).status, 200, 'new version is editable');
   assert.equal((await act(hr, 'setFormItemCategory', { instrumentId: rev.data.result.id, criterionId: c1, category: 'Teaching' })).status, 200);
   assert.equal((await act(hr, 'setFormCategoryWeight', { instrumentId: rev.data.result.id, category: 'Teaching', weight: 60 })).status, 200);
-  assert.equal(sql.prepare('SELECT active FROM instruments WHERE id=?').get(usedForm).active, 0, 'old version kept, inactive');
+  // the draft is not live: people keep the version in use until HR uses the draft, which must be complete
+  assert.equal(sql.prepare('SELECT active FROM instruments WHERE id=?').get(usedForm).active, 1, 'the version in use stays in use');
+  assert.equal(sql.prepare('SELECT status FROM instruments WHERE id=?').get(rev.data.result.id).status, 'draft');
+  assert.equal((await act(hr, 'reviseForm', { instrumentId: usedForm })).status, 409, 'one draft at a time');
+  assert.equal((await act(hr, 'useForm', { instrumentId: rev.data.result.id })).status, 409, 'weights above 100%: not usable');
+  assert.ok(!(await call('/api/data', { cookie: student })).data.instruments.some((i) => i.id === rev.data.result.id), 'students do not receive drafts');
+  assert.equal((await act(hr, 'setFormItemCategory', { instrumentId: rev.data.result.id, criterionId: c1, category: 'Management of teaching and learning processes' })).status, 200);
+  assert.equal((await act(hr, 'removeFormPart', { instrumentId: rev.data.result.id, name: 'Teaching' })).status, 200);
+  const use = await act(hr, 'useForm', { instrumentId: rev.data.result.id });
+  assert.equal(use.status, 200, use.data.error); assert.equal(use.data.result.scheduled, true, 'the open period has answers on the old version');
+  assert.equal(sql.prepare('SELECT active FROM instruments WHERE id=?').get(usedForm).active, 1, 'the open period keeps the old version');
+  assert.equal((await act(student, 'useForm', { instrumentId: rev.data.result.id })).status, 403);
   assert.equal(sql.prepare('SELECT count(*) n FROM responses WHERE instrument_id=?').get(usedForm).n > 0, true, 'past answers still point to the old version');
 
   /* ---------- FR6: class lists ---------- */
   const imp = await act(hr, 'importClassList', { csv: 'section code, subject, faculty, student\nNEW-A1, New Subject, fac_a1@ubaguio.edu, st_a01@s.ubaguio.edu\nNEW-A1, New Subject, fac_a1, st_b01\nBAD, X, st_a02, st_a01' });
   assert.equal(imp.status, 200);
-  assert.equal(imp.data.result.created, 1); assert.equal(imp.data.result.enrolled, 1); assert.equal(imp.data.result.errorCount, 2);
+  assert.equal(imp.data.result.created, 1); assert.equal(imp.data.result.enrolled, 2, 'a student of another department can join'); assert.equal(imp.data.result.errorCount, 1);
   assert.equal((await act(hr, 'createSection', { code: 'OJT-A', subject: 'Internship A', facultyId: 'fac_a1' })).status, 200);
   // the full ARC list creates the student accounts that don't exist yet
   const full = await act(hr, 'importClassList', { csv: [

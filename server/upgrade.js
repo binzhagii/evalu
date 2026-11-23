@@ -1,6 +1,6 @@
 // Brings a database made by an earlier version of evalU up to date, without losing data.
 // Runs once at start-up (see seed.js). Safe to run many times: it only fills in what is missing.
-import { formForTask, uid, UB_DEPARTMENTS, DEFAULT_POLICY, DEFAULT_EVALUATOR_GROUPS, storeResults } from '../src/lib/logic.js';
+import { formForTask, uid, UB_DEPARTMENTS, DEFAULT_POLICY, DEFAULT_EVALUATOR_GROUPS, TARGET_TYPES, targetType, currentPolicy, termOf, workingTerm, storeResults } from '../src/lib/logic.js';
 import { installUbForms } from '../src/lib/ubInstall.js';
 
 const clone = (x) => JSON.parse(JSON.stringify(x));
@@ -71,9 +71,25 @@ export function upgradeData(db) {
   const formKey = (i) => `${i.targetType}|${i.group}|${i.dept || ''}`;
   const activeKeys = new Set(db.instruments.filter((i) => i.active !== false).map(formKey));
   const newest = new Map();
-  for (const i of db.instruments.filter((x) => x.active === false && !activeKeys.has(formKey(x))))
+  // (a draft or scheduled version HR is preparing is not a retired form: it must never go live by itself)
+  for (const i of db.instruments.filter((x) => x.active === false && !x.status && !activeKeys.has(formKey(x)) && db.evaluatorGroups.find((g) => g.id === x.group)?.active !== false)) // (nor the tools of an archived evaluator group)
     if (!newest.has(formKey(i)) || (i.version || 1) > (newest.get(formKey(i)).version || 1)) newest.set(formKey(i), i);
   for (const i of newest.values()) set(i, 'active', true);
+
+  // Earlier versions put a new evaluator group in the weights with no percentage at once, which left the whole category
+  // without a rating ("weights not set"). The group is kept; it counts when HR puts it in the formula.
+  const builtIn = new Set(DEFAULT_EVALUATOR_GROUPS.map((g) => g.id));
+  for (const p of [null, ...db.periods.filter((x) => x.status === 'open')]) {
+    for (const [tt, r] of Object.entries((p ? p.rules : db.rules) || {})) {
+      if (hrDecided(tt)) continue;
+      for (const g of Object.keys(r)) {
+        if (builtIn.has(g) || r[g] != null || (p && db.tasks.some((t) => t.periodId === p.id && t.group === g))) continue;
+        delete r[g]; changed = true;
+        const grp = db.evaluatorGroups.find((x) => x.id === g);
+        if (grp && !grp.targetTypes?.includes(tt)) grp.targetTypes = [...(grp.targetTypes || []), tt];
+      }
+    }
+  }
 
   // UB's own evaluation tools (4-point scale), added once. They replace the sample forms;
   // forms HR made and every submitted evaluation stay as they are.
@@ -116,5 +132,33 @@ export function upgradeData(db) {
   // a period closed before results were stored keeps its result too (computed with its own fixed formula)
   db.results ||= [];
   for (const p of db.periods.filter((x) => x.status === 'closed' && !db.results.some((r) => r.periodId === x.id))) { storeResults(db, p); changed = true; }
+  // the participation rule is set in one place (Evaluation rules): formulas drop their own copy, except in periods
+  // that are closed or were already answered with it
+  for (const f of db.formulas || []) {
+    if (!f.config.participation || f.status === 'archived') continue;
+    const { percent, plusOne } = f.config.participation;
+    const pol = currentPolicy(db);
+    if (pol.participationPercent !== percent || (pol.participationRule === 'more') !== (plusOne !== false)) (f.meta.log ||= []).push({ at: new Date().toISOString(), by: 'System', action: 'participation rule moved', note: `now follows Evaluation rules (was ${plusOne === false ? 'at least' : 'more than'} ${percent}%)` });
+    delete f.config.participation; changed = true;
+  }
+  for (const p of db.periods.filter((x) => x.status === 'open' && !db.tasks.some((t) => t.periodId === x.id && t.response)))
+    for (const f of Object.values(p.formulas || {})) if (f.participation) { delete f.participation; changed = true; }
+
+  // classes from before they belonged to a semester: the one they were last evaluated in (else the one going on)
+  for (const s of db.sections.filter((x) => !x.term)) {
+    const ids = new Set(db.tasks.filter((t) => t.sectionId === s.id).map((t) => t.periodId));
+    const last = db.periods.filter((p) => ids.has(p.id)).at(-1);
+    const term = last ? termOf(last.name) : db.periods.some((p) => termOf(p.name)) ? workingTerm(db) : null;
+    if (term) { s.term = term; changed = true; }
+  }
+
+  // periods closed before they remembered their people: the category is in each stored result's formula
+  for (const p of db.periods.filter((x) => x.status === 'closed' && !x.people)) {
+    set(p, 'people', Object.fromEntries(db.results.filter((r) => r.periodId === p.id).map((r) => {
+      const [type, dept] = String(r.data?.formula?.key || '').split('|');
+      const u = db.users.find((x) => x.id === r.targetId);
+      return [r.targetId, { type: Object.hasOwn(TARGET_TYPES, type) ? type : targetType(db, u), dept: dept || u?.dept || null }];
+    })));
+  }
   return changed;
 }

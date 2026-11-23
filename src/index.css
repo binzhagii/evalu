@@ -565,9 +565,6 @@ details.source li { margin:2px 0; }
 .fx-choices { display:grid; gap:8px; }
 .fx-choices label.fx-choice { align-items:flex-start; }
 .fx-choices label.fx-choice input { margin-top:3px; }
-.fx-more { margin:10px 0 4px; }
-.fx-more > summary { cursor:pointer; font-weight:600; }
-.fx-more > p { margin:6px 0; }
 .fx-try { margin-top:14px; border-top:1px solid var(--bd); padding-top:4px; }
 .fx-compare { display:flex; align-items:stretch; gap:14px; flex-wrap:wrap; margin:8px 0; }
 .fx-compare > div:not(.fx-arrow) { display:grid; gap:2px; padding:10px 16px; border:1px solid var(--bd); border-radius:10px; min-width:200px; }
@@ -742,3 +739,46 @@ table:not([class]) tbody tr:hover { background:#fafbfc; }
   *, *::before, *::after { animation:none !important; transition:none !important; }
   .done-toast, .splash { display:none !important; }
 }
+/* Evaluation tools (list and one tool) and the Scoring & calculation overview */
+table.tool-list .tool-open { text-align:left; }
+.tool-part-head { margin:0; gap:8px; }
+.tool-add { margin-top:10px; }
+.tool-add input.wide { flex:1 1 260px; }
+.form-qs textarea.wide { width:100%; }
+table.fx-overview tr.on td { background:var(--pri-l); }
+table.fx-overview td.fx-dept { padding-left:26px; }
+table.fx-overview td.fx-dept button.link { font-weight:400; color:var(--mut); }
+.fx-level { border:1px solid var(--bd); border-radius:10px; padding:10px 14px; margin:8px 0; }
+.fx-level-head { display:flex; justify-content:space-between; gap:12px; font-size:16px; }
+.fx-tool { padding:8px 0 2px; border-top:1px solid var(--bd2); margin-top:8px; }
+.fx-tool ul { margin:4px 0 0; padding-left:20px; }
+.fx-tool .row { margin:0; }
+.fx-add h4 { margin:16px 0 4px; }
+@media (min-width:760px) {
+  .form-qs li.tool-item::marker { font-weight:600; }
+  .form-qs li.tool-item > .form-q-text { float:left; width:calc(100% - 270px); }
+  .form-qs li.tool-item > .form-q-tools { float:right; margin:-4px 0; gap:6px; }
+  .form-qs li.tool-item > .form-q-tools button { padding:4px 10px; font-size:13px; }
+  .form-qs li.tool-item::after { content:''; display:block; clear:both; }
+}
+
+/* Overview steps, clickable notifications, formula approvals, school year */
+.term-group { margin:14px 0 2px; color:var(--mut); font-size:13px; text-transform:uppercase; letter-spacing:.04em; }
+.term-steps li.next { background:var(--pri-l); border-radius:10px; box-shadow:0 0 0 6px var(--pri-l); }
+.next-link { margin-left:8px; color:var(--pri); }
+.term-steps li.next .term-n { background:var(--pri); color:#fff; }
+.notifs li:has(.n-open) { padding:0; }
+.n-open { display:flex; gap:12px; align-items:center; width:100%; text-align:left; background:none; color:var(--fg); padding:12px 10px; border-radius:10px; font-weight:400; }
+.n-open:hover:not(:disabled) { background:#f6f7f8; color:var(--fg); }
+.n-open .n-body { flex:1; display:grid; gap:2px; min-width:0; }
+.n-open > .icon { color:var(--mut); }
+.fx-nownext { display:flex; flex-wrap:wrap; gap:12px; align-items:stretch; margin:10px 0; }
+.fx-nownext > div:not(.fx-arrow) { flex:1 1 260px; display:grid; gap:4px; align-content:start; border:1px solid var(--bd); border-radius:10px; padding:10px 14px; }
+.year-pick { display:inline-flex; align-items:center; gap:6px; }
+.year-pick input { width:86px; }
+.year-pick button { padding:6px 12px; }
+.rule-choices label.fx-choice { align-items:center; }
+.rule-choices label.fx-choice input[type=radio] { margin-top:0; }
+.needs li { gap:12px; padding:8px 0; border-bottom:1px solid var(--bd2); }
+.needs li:last-child { border-bottom:none; }
+.needs li > span { flex:1 1 260px; }

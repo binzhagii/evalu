@@ -6,7 +6,8 @@ import { defineConfig } from 'vite'
 const evaluBackend = () => ({
   name: 'evalu-backend',
   async configureServer(server) {
-    const { handleApi } = await import('./server/api.js')
+    const { handleApi, startAutomation } = await import('./server/api.js')
+    startAutomation()
     server.middlewares.use(async (req, res, next) => {
       if (!(await handleApi(req, res))) next()
     })

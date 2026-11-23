@@ -13,13 +13,16 @@ import { getDb, save, addAudit, readAudit, verifyAudit } from './db.js';
 import { ensureSeeded } from './seed.js';
 import { handleAuthRoute, currentUser, sessionHash } from './auth.js';
 import { actions, describeAction } from './actions.js';
-import { runDailyAutomation, canSeeAll, canSeeOwn, canSeeDept } from '../src/lib/logic.js';
+import { runDailyAutomation, syncOpenPeriods, canSeeAll, canSeeOwn, canSeeDept } from '../src/lib/logic.js';
 import { viewFor } from './view.js';
 import { send, readJson, HttpError } from './http.js';
 
 // Run changes one at a time, so two requests never edit the data at the same moment.
 let queue = Promise.resolve();
 const oneAtATime = (fn) => { const p = queue.then(fn); queue = p.catch(() => {}); return p; };
+
+// After these, evaluations in open periods follow by themselves (new classes, students, staff; dropped students).
+const FOLLOWED = new Set(['createPeriod', 'setPeriodDeadline', 'reopenPeriod', 'importClassList', 'importStaff', 'createUser', 'updateUser', 'setUserActive', 'createSection', 'updateSection', 'deleteSection', 'moveDepartment', 'updateEvaluatorGroup', 'activateFormula', 'useForm']);
 
 async function runAction(name, args, user, req) {
   const action = Object.hasOwn(actions, name) ? actions[name] : null;
@@ -32,6 +35,10 @@ async function runAction(name, args, user, req) {
     const ctx = { sessionHash: sessionHash(req), afterSave: [] };
     const draft = structuredClone(getDb());          // change a copy...
     const result = await action.run(draft, args, user, ctx);
+    if (FOLLOWED.has(name) && !args?.preview) {
+      const r = syncOpenPeriods(draft);
+      if (r.added || r.removed) { addAudit(null, 'automaticTasks', `${r.added} evaluation(s) created and ${r.removed} removed by themselves`); if (result && typeof result === 'object') result.evaluations = r; }
+    }
     save(draft);                                      // ...and save it only if nothing failed
     for (const f of ctx.afterSave) f();
     if (action.audit !== false) addAudit(user, name, describeAction(name, args, draft, result)); // FR20
@@ -39,12 +46,20 @@ async function runAction(name, args, user, req) {
   });
 }
 
-/** FR10: automatic reminders, run at most once a day per open period (on the first request of the day). */
+/** FR10 and what evalU does by itself (see runDailyAutomation): checked when somebody opens evalU and by the timer below. */
 function dailyAutomation() {
   return oneAtATime(() => {
     const draft = structuredClone(getDb());
-    if (runDailyAutomation(draft)) { save(draft); addAudit(null, 'automaticReminders', 'Daily reminders, participation alerts and early warnings checked'); }
+    const open = new Set(draft.periods.filter((p) => p.status === 'open').map((p) => p.id));
+    if (!runDailyAutomation(draft)) return;
+    save(draft);
+    for (const p of draft.periods) if (open.has(p.id) && p.status === 'closed') addAudit(null, 'automaticClose', `${p.name} closed by itself after its deadline (${p.deadline})`);
+    addAudit(null, 'automaticReminders', 'Evaluations, reminders, participation alerts and early warnings checked');
   });
+}
+/** The timer: the daily work is done even when nobody opens evalU. Called once by the server. */
+export function startAutomation(minutes = 5) {
+  setInterval(() => ensureSeeded().then(dailyAutomation).catch((e) => console.error('[evalU] automatic work failed:', e)), minutes * 60000).unref();
 }
 
 /** FR20: log when someone receives results they may see (at most once per person and period every 30 minutes). */

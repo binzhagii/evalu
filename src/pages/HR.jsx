@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useApp } from '../lib/store';
 import {
-  TARGET_TYPES, STAGES, STAGE_LABEL, taskStatus, userById, sectionStats, targetsOf, evaluatorGroups, deptName, groupName,
-  formUsed, itemCategory, effectiveWeights, isExemptSection, isTeacher, pendingApprovals, periodCovers, CLASS_TYPES, approvalRuleText, policyFor, participationForecast,
+  STAGES, STAGE_LABEL, taskStatus, userById, sectionStats, targetsOf, deptName, groupName,
+  groupsOf, isExemptSection, isTeacher, pendingApprovals, periodCovers, CLASS_TYPES, approvalRuleText, plural, policyFor, currentPolicy, activeDepts, schoolDepts, hasRule, ruleWords, ruleMark, participationForecast,
+  SEMESTERS, closesAt, deadlinePassed, inTerm, isPastClass, nextTermOf, notStarted, suggestClassType, termLabel, workingTerm, localDay, periodName, samePeriod, schoolYearNow,
 } from '../lib/logic';
 
 /** Types of class HR can pick for a section. A Clinical Instructor (Nursing) works in the clinical area or the skills lab. */
@@ -10,26 +11,18 @@ const classTypesFor = (teacher) => (teacher?.position === 'ci'
   ? [['', 'Clinical area (hospital, community clinic)'], ['skills', CLASS_TYPES.skills]]
   : Object.entries(CLASS_TYPES).filter(([k]) => k !== 'skills'));
 import { QrButton } from './ClassQr';
-import { Card, StatusBadge, RuleNote, PeriodPicker, Select, Badge, SaveInput, Meter, Empty, pct, newestFirst, usePages, ask, ForecastBadge } from '../ui';
+import { Card, StatusBadge, RuleNote, PeriodPicker, Select, Badge, Meter, Empty, pct, newestFirst, usePages, useNavArgs, ask, ForecastBadge } from '../ui';
 
 const scopeText = (db, p) => (p.depts?.length ? p.depts.map((d) => deptName(db, d)).join(', ') : 'All departments');
 
 /* ----- choices for a new period, so HR picks instead of typing ----- */
-const TERMS = ['Term 1', 'Term 2', 'Summer'];
 const OPEN_FOR = [[7, '1 week'], [14, '2 weeks'], [21, '3 weeks'], [28, '4 weeks'], [42, '6 weeks']];
-const isoIn = (days) => { const d = new Date(); d.setDate(d.getDate() + days); return d.toISOString().slice(0, 10); };
-/** The school year starts mid-year, so from June on it is "this year – next year". */
-function schoolYears() {
-  const d = new Date();
-  const y = d.getMonth() >= 5 ? d.getFullYear() : d.getFullYear() - 1;
-  return [y - 1, y, y + 1, y + 2].map((s) => `AY ${s}-${String(s + 1).slice(2)}`);
-}
-const periodExists = (db, ay, term) => db.periods.some((p) => p.name.startsWith(`${ay} ${term}`));
-/** The first Term 1 / Term 2 from this school year on that has no period yet. */
+const longDate = (d) => new Date(`${d}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+const plusDays = (d, n) => { const x = new Date(`${d}T00:00:00`); x.setDate(x.getDate() + n); return localDay(x); };
+const isoIn = (days) => { const d = new Date(); d.setDate(d.getDate() + days); return localDay(d); };
+/** The first semester from this school year on that has no period yet. */
 function nextTerm(db) {
-  const years = schoolYears().slice(1);
-  for (const ay of years) for (const term of ['Term 1', 'Term 2']) if (!periodExists(db, ay, term)) return { ay, term };
-  return { ay: years[0], term: 'Term 1' };
+  for (let year = schoolYearNow(); ; year++) for (const sem of [1, 2]) if (!samePeriod(db, periodName(year, sem))) return { year, sem };
 }
 
 /* ---------------- Evaluation periods + release (FR8, FR17) ---------------- */
@@ -40,25 +33,28 @@ export function Periods() {
   const [startDate, setStartDate] = useState(isoIn(0));
   const [deadline, setDeadline] = useState(isoIn(21));
   const [depts, setDepts] = useState([]);
+  const [moving, setMoving] = useState(null); // { id, date, reopen }: the period whose deadline is being changed
   const [msg, setMsg] = useState('');
-  const name = `${pick.ay} ${pick.term}`;
-  const exists = periodExists(db, pick.ay, pick.term);
+  const firstYear = schoolYearNow();
+  const yearOk = Number.isInteger(pick.year) && pick.year >= firstYear && pick.year <= 9998;
+  const name = periodName(pick.year, pick.sem);
+  const exists = samePeriod(db, name, depts); // the same semester for other departments is fine
+  const bad = !yearOk || exists || startDate > deadline;
   const add = async () => {
-    if (exists) return setMsg(`${name} already exists.`);
+    if (bad) return;
     const r = await act('createPeriod', { name, startsOn: startDate, deadline, depts });
     if (r) {
-      setDepts([]); setStartDate(isoIn(0)); setMsg(`${name} created.${r.started?.length ? ` The new rating formula starts with this period: ${r.started.join(', ')}.` : ''} Go to Assignments and click "Generate tasks for period".`);
-      // suggest the following term next time
-      const ys = schoolYears();
-      setPick(pick.term === 'Term 1' ? { ay: pick.ay, term: 'Term 2' } : { ay: ys[Math.min(ys.indexOf(pick.ay) + 1, ys.length - 1)], term: 'Term 1' });
+      setDepts([]); setStartDate(isoIn(0)); setMsg(`${name} created.${r.started?.length ? ` The new rating formula starts with this period: ${r.started.join(', ')}.` : ''} ${r.newTools?.length ? ` New tool version(s) in use: ${r.newTools.join(', ')}.` : ''}${r.waitingTools?.length ? ` Still waiting, because another open period uses the old version: ${r.waitingTools.join(', ')}.` : ''} ${startDate > isoIn(0) ? `It opens by itself on ${longDate(startDate)}, and its evaluations are created then.` : `${r.evaluations?.added || 0} evaluation(s) were created by themselves.`}`);
+      // suggest the following semester next time
+      setPick(pick.sem === 1 ? { year: pick.year, sem: 2 } : { year: pick.year + 1, sem: 1 });
     }
   };
   const run = async (action, periodId, done) => { setMsg(''); const r = await act(action, { periodId }); if (r) setMsg(typeof done === 'function' ? done(r) : done || ''); };
   const toggle = (d) => setDepts((x) => (x.includes(d) ? x.filter((y) => y !== d) : [...x, d]));
   return (
     <>
-      <div className="note"><b>Use this page for the three main dates:</b> create the term, close it after the deadline, then send results to the VPs and release them to faculty.</div>
-      <RuleNote />
+      <div className="note"><b>Use this page for the three main dates:</b> create the semester's period, extend its deadline if people need more time, then send the results to the VPs and release them to faculty. A period opens on its start date and closes by itself 24 hours after its deadline.</div>
+      <RuleNote policy={db.periods.some((p) => p.status === 'open') ? policyFor(db, db.periods.findLast((p) => p.status === 'open').id) : currentPolicy(db)} />
       {msg && <div className="note">{msg}</div>}
       <Card title="Evaluation periods">
         <table>
@@ -72,15 +68,17 @@ export function Periods() {
                   <td>{p.name}</td>
                   <td className="muted">{scopeText(db, p)}</td>
                   <td>{p.startDate || '—'}</td>
-                  <td><input type="date" value={p.deadline} onChange={(e) => e.target.value && act('setPeriodDeadline', { periodId: p.id, deadline: e.target.value })} /></td>
-                  <td><Badge kind={p.status === 'open' ? 'pending' : 'completed'}>{p.status}</Badge></td>
+                  <td>{longDate(p.deadline)}
+                    {p.status === 'open' && <div className="muted small">{notStarted(p) ? `Opens by itself on ${longDate(p.startDate)}` : `Closes by itself on ${new Date(closesAt(p)).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`}</div>}
+                    {p.status === 'open' && <button className="ghost" onClick={() => setMoving({ id: p.id, date: plusDays(p.deadline, 3), reopen: false })}>Extend or change</button>}</td>
+                  <td><Badge kind={p.status === 'open' ? 'pending' : 'completed'}>{p.status === 'open' && notStarted(p) ? 'not started' : p.status}</Badge>{p.status === 'closed' && p.auto?.closedBy && <div className="muted small">closed by itself</div>}</td>
                   <td>{STAGE_LABEL[p.releaseStage]}{p.releaseStage === 'dir' && <><br /><span className="muted">{waiting.length ? `Waiting for approval (${approvalRuleText(db, p)}): ${waiting.map((u) => u.name).join(', ')}` : 'Enough VPs approved'}</span></>}
                     {p.rejections?.length > 0 && p.releaseStage === 'hr' && <><br /><Badge kind="overdue">returned by {p.rejections.at(-1).name}</Badge> <span className="muted small">"{p.rejections.at(-1).reason}"</span></>}
-                    <br /><span className="muted small">Rules: {policyFor(db, p.id).version ? `version ${policyFor(db, p.id).version}` : "UB's starting rules"}{p.status === 'open' ? ' (changes apply)' : ' (locked)'}</span></td>
+                    <br /><span className="muted small">Rules: {policyFor(db, p.id).version ? `version ${policyFor(db, p.id).version}` : "UB's starting rules"}{p.status === 'open' ? (db.tasks.some((t) => t.periodId === p.id && t.response) ? ' (kept: people already answered)' : ' (changes apply until someone answers)') : ' (locked)'}</span></td>
                   <td className="row">
-                    {p.status === 'open' && <button onClick={async () => { if (await ask(`Close ${p.name}?`, 'Classes where fewer than half of the class plus one answered will be excluded, and everyone concerned is notified.', { ok: 'Close period' })) run('closePeriod', p.id, (r) => `${p.name} closed. ${r.flagged} class(es) were excluded (below half + 1); the faculty, department heads and HR were notified.`); }}>Close period</button>}
-                    {p.status === 'open' && <button className="ghost" onClick={async () => (await ask('Send participation alerts?', 'Teachers and department heads of classes below half + 1 are notified now.', { ok: 'Send alerts' })) && run('checkThreshold', p.id, (r) => (r.flagged ? `${r.flagged} class(es) are at or below half. The faculty, their department heads and HR were notified.` : 'Every class has enough responses so far.'))}>Send participation alerts</button>}
-                    {p.status === 'closed' && p.releaseStage === 'hr' && <button className="ghost" onClick={async () => (await ask(`Reopen ${p.name}?`, 'Evaluators can answer again until you close it.', { ok: 'Reopen' })) && run('reopenPeriod', p.id)}>Reopen</button>}
+                    {p.status === 'open' && <button onClick={async () => { if (await ask(`Close ${p.name} now?`, (deadlinePassed(p) ? '' : `The deadline (${longDate(p.deadline)}) has not passed yet: people who have not answered will not be able to. `) + (hasRule(policyFor(db, p.id)) ? `Classes are left out when they do not reach the rule (${ruleWords(policyFor(db, p.id))} must answer), and everyone concerned is notified.` : 'There is no participation rule, so no class is left out for low participation.'), { ok: 'Close period' })) run('closePeriod', p.id, (r) => `${p.name} closed. ${r.flagged} class(es) were left out (not enough answers); the faculty, department heads and HR were notified.`); }}>Close period</button>}
+                    {p.status === 'open' && hasRule(policyFor(db, p.id)) && <button className="ghost" onClick={async () => (await ask('Send participation alerts?', 'Teachers and department heads of classes without enough answers are notified now.', { ok: 'Send alerts' })) && run('checkThreshold', p.id, (r) => (r.flagged ? `${r.flagged} class(es) do not have enough answers yet. The faculty, their department heads and HR were notified.` : 'Every class has enough responses so far.'))}>Send participation alerts</button>}
+                    {p.status === 'closed' && p.releaseStage === 'hr' && <button className="ghost" onClick={() => setMoving({ id: p.id, date: isoIn(3), reopen: true })}>Reopen</button>}
                     {nextStage && p.status === 'closed' && nextStage === 'dir' && <button onClick={async () => (await ask('Send results to the VPs?', `The results of ${p.name} go to the VPs for review and approval. They will be notified.`, { ok: 'Send to VPs' })) && run('releaseNext', p.id, 'Results sent to the VPs for review and approval. They were notified.')}>Send to VPs for approval</button>}
                     {nextStage === 'faculty' && <button disabled={waiting.length > 0} title={waiting.length ? 'Every VP must approve first' : ''} onClick={async () => (await ask('Release results to faculty?', `Every person will see their own results for ${p.name} and be notified.`, { ok: 'Release to faculty' })) && run('releaseNext', p.id, 'Results released to faculty. Each person was notified.')}>Release to faculty</button>}
                     {p.status === 'open' && <span className="muted">release after closing</span>}
@@ -93,12 +91,32 @@ export function Periods() {
         </table>
         <p className="muted">Release order is enforced: HR Specialist → VPs (review and approve) → individual faculty. Faculty see nothing until every VP has approved and HR releases the results.</p>
       </Card>
+      {moving && (() => {
+        const p = db.periods.find((x) => x.id === moving.id);
+        if (!p) return null;
+        const go = async () => { if (await act(moving.reopen ? 'reopenPeriod' : 'setPeriodDeadline', { periodId: p.id, deadline: moving.date })) { setMsg(`${p.name} is open until ${longDate(moving.date)}.`); setMoving(null); } };
+        return (
+          <Card title={`${moving.reopen ? 'Reopen' : 'Extend or change the deadline of'} ${p.name}`}>
+            <div className="row">
+              {[[3, '+3 days'], [7, '+1 week'], [14, '+2 weeks']].map(([n, l]) => <button key={n} className="ghost" onClick={() => setMoving({ ...moving, date: plusDays(moving.reopen || deadlinePassed(p) ? isoIn(0) : p.deadline, n) })}>{l}</button>)}
+              <label className="inline">New deadline <input type="date" aria-label="New deadline" value={moving.date} onChange={(e) => e.target.value && setMoving({ ...moving, date: e.target.value })} /></label>
+              <button disabled={moving.reopen && moving.date < isoIn(0)} onClick={go}>{moving.reopen ? 'Reopen' : 'Save the deadline'}</button><button className="ghost" onClick={() => setMoving(null)}>Cancel</button>
+            </div>
+            <p className="muted small">{moving.reopen ? 'People who have not answered can answer again.' : 'People who still have evaluations are told when they get more time.'} It closes by itself 24 hours after the deadline.</p>
+          </Card>
+        );
+      })()}
       <Card title="New evaluation period">
         <div className="row">
           <label className="inline">School year
-            <Select value={pick.ay} onChange={(ay) => setPick({ ...pick, ay })}>{schoolYears().map((y) => <option key={y} value={y}>{y}</option>)}</Select></label>
-          <label className="inline">Term
-            <Select value={pick.term} onChange={(term) => setPick({ ...pick, term })}>{TERMS.map((t) => <option key={t} value={t}>{t}{periodExists(db, pick.ay, t) ? ' (already created)' : ''}</option>)}</Select></label>
+            <span className="year-pick">
+              <button type="button" className="ghost" aria-label="Earlier school year" disabled={pick.year <= firstYear} onClick={() => setPick({ ...pick, year: Math.max(firstYear, pick.year - 1) })}>−</button>
+              <input type="number" min={firstYear} step="1" aria-label="School year starts in" value={pick.year} onChange={(e) => setPick({ ...pick, year: e.target.value === '' ? '' : Number(e.target.value) })} />
+              <span>–</span><b>{yearOk ? pick.year + 1 : '…'}</b>
+              <button type="button" className="ghost" aria-label="Later school year" onClick={() => setPick({ ...pick, year: (yearOk ? pick.year : firstYear - 1) + 1 })}>+</button>
+            </span></label>
+          <label className="inline">Semester
+            <Select value={pick.sem} onChange={(v) => setPick({ ...pick, sem: Number(v) })}>{SEMESTERS.map((t, i) => <option key={t} value={i + 1}>{t}{yearOk && samePeriod(db, periodName(pick.year, i + 1), depts) ? ' (already created)' : ''}</option>)}</Select></label>
           <label className="inline">Open for
             <Select value={weeks} onChange={(v) => { const n = Number(v); setWeeks(n); if (n) setDeadline(isoIn(n)); }}>
               {OPEN_FOR.map(([d, l]) => <option key={d} value={d}>{l}</option>)}
@@ -112,7 +130,7 @@ export function Periods() {
             <Select value="" onChange={(v) => { if (v === '__all') setDepts([]); else if (v) toggle(v); }}>
               <option value="">{depts.length ? '+ Add another department…' : 'All departments'}</option>
               {depts.length > 0 && <option value="__all">All departments (clear the list)</option>}
-              {db.departments.filter((d) => !depts.includes(d.id)).map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+              {activeDepts(db).filter((d) => !depts.includes(d.id)).map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
             </Select></label>
           {depts.map((id) => (
             <span key={id} className="tag">{deptName(db, id)}
@@ -120,8 +138,8 @@ export function Periods() {
             </span>
           ))}
         </div>
-        <p className={exists || startDate > deadline ? 'note warn' : 'muted'}>{exists ? <><b>{name}</b> already exists. Pick another term or school year.</> : startDate > deadline ? 'The start date must be on or before the deadline.' : <>This will create <b>{name}</b> for <b>{depts.length ? depts.map((d) => deptName(db, d)).join(', ') : 'all departments'}</b>, starting <b>{new Date(startDate + 'T00:00:00').toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}</b> and open until <b>{new Date(deadline + 'T00:00:00').toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}</b>.</>}</p>
-        <div className="row"><button onClick={add} disabled={exists || startDate > deadline}>Create {name}</button></div>
+        <p className={bad ? 'note warn' : 'muted'}>{!yearOk ? `Type a school year from ${firstYear} on.` : exists ? <><b>{exists.name}</b> already exists for {exists.depts?.length ? exists.depts.map((d) => deptName(db, d)).join(', ') : 'all departments'}. Pick another semester, school year or department.</> : startDate > deadline ? 'The start date must be on or before the deadline.' : <>This will create <b>{name}</b> for <b>{depts.length ? depts.map((d) => deptName(db, d)).join(', ') : 'all departments'}</b>, starting <b>{new Date(startDate + 'T00:00:00').toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}</b> and open until <b>{new Date(deadline + 'T00:00:00').toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}</b>.</>}</p>
+        <div className="row"><button onClick={add} disabled={!!bad}>Create {yearOk ? name : 'period'}</button></div>
         <p className="muted">You can open and close evaluations for one department at a time by creating a period for just that department. The current evaluator weights are saved with the period.</p>
       </Card>
       <details className="card advanced-panel">
@@ -146,7 +164,8 @@ export function Periods() {
 /* ---------------- Assignments / workflow (FR6, FR7, FR9, FR10) ---------------- */
 export function Assignments() {
   const { db, act } = useApp();
-  const [pidSel, setPid] = useState(db.periods[db.periods.length - 1]?.id);
+  const args = useNavArgs();
+  const [pidSel, setPid] = useState(args.periodId || db.periods[db.periods.length - 1]?.id);
   // the chosen period, or the newest one if none is chosen yet (or it was deleted)
   const pid = db.periods.some((p) => p.id === pidSel) ? pidSel : db.periods[db.periods.length - 1]?.id;
   const [msg, setMsg] = useState('');
@@ -155,14 +174,14 @@ export function Assignments() {
   const [st, setSt] = useState('');
   const [add, setAdd] = useState({ evaluatorId: '', targetId: '' });
   const tasks = db.tasks.filter((t) => t.periodId === pid);
-  const evaluators = db.users.filter((u) => u.role !== 'ST' && evaluatorGroups(u).length);
+  const evaluators = db.users.filter((u) => u.role !== 'ST' && groupsOf(db, u).length);
   const summary = {};
   tasks.forEach((t) => { const k = t.group; summary[k] ||= { pending: 0, completed: 0, overdue: 0 }; summary[k][taskStatus(db, t)]++; });
   const s = q.trim().toLowerCase();
   const match = (t) => !s || userById(db, t.evaluatorId)?.name.toLowerCase().includes(s) || userById(db, t.targetId)?.name.toLowerCase().includes(s);
   const listed = newestFirst(tasks).filter((t) => (!grp || t.group === grp) && (!st || taskStatus(db, t) === st) && match(t));
   const { rows, bar } = usePages(listed, `${pid}|${s}|${grp}|${st}`);
-  if (!db.periods.length) return <Card><Empty icon="calendar" title="No evaluation period yet">Create one under Periods &amp; release first.</Empty></Card>;
+  if (!db.periods.length) return <Card><Empty icon="calendar" title="No evaluation period yet">Create one under Dates &amp; release first.</Empty></Card>;
 
   const addOne = async () => {
     setMsg('');
@@ -178,8 +197,8 @@ export function Assignments() {
           <button onClick={async () => { const r = await act('generateTasks', { periodId: pid }); if (r) setMsg(`${r.added} evaluation(s) prepared from the class lists and staff roles.${r.skippedNoForm ? ` ${r.skippedNoForm} skipped because no form exists.` : ''} Internship, practicum and field trip subjects were skipped.`); }}>Create evaluation tasks</button>
           <button className="ghost" onClick={async () => { const r = await act('sendReminders', { periodId: pid }); if (r) setMsg(`Reminders sent to ${r.sent} evaluator(s) with unfinished evaluations. Their department heads and HR were alerted too.`); }}>Send reminders now</button>
         </div>
-        <p className="muted"><b>Do this after creating a term and importing its class lists.</b> evalU uses the lists and staff roles to prepare who evaluates whom. You can click again after updating a class list; only new evaluations are added.</p>
-        <p className="muted">Reminders are also sent automatically once a day during the last 7 days before the deadline, and every day after it until the period is closed.</p>
+        <p className="muted"><b>You usually don't need this button.</b> evalU creates the evaluations by itself when the period starts and after every change in the classes, students and staff, and removes the unanswered ones of students who dropped a class.</p>
+        <p className="muted">Reminders are sent by themselves once a day during the last 7 days before the deadline.</p>
         <table>
           <thead><tr><th>Evaluator group</th><th>Pending</th><th>Completed</th><th>Overdue</th></tr></thead>
           <tbody>{Object.entries(summary).map(([g, x]) => <tr key={g}><td>{groupName(db, g)}</td><td>{x.pending}</td><td>{x.completed}</td><td>{x.overdue}</td></tr>)}</tbody>
@@ -190,7 +209,7 @@ export function Assignments() {
         <div className="advanced-content">
         <Card title="Add an evaluator assignment">
           <div className="row">
-            <Select value={add.evaluatorId} onChange={(v) => setAdd({ ...add, evaluatorId: v })}><option value="">Evaluator…</option>{evaluators.map((u) => <option key={u.id} value={u.id}>{u.name} ({evaluatorGroups(u).map((g) => groupName(db, g)).join(' / ')})</option>)}</Select>
+            <Select value={add.evaluatorId} onChange={(v) => setAdd({ ...add, evaluatorId: v })}><option value="">Evaluator…</option>{evaluators.map((u) => <option key={u.id} value={u.id}>{u.name} ({groupsOf(db, u).map((g) => groupName(db, g)).join(' / ')})</option>)}</Select>
             <Select value={add.targetId} onChange={(v) => setAdd({ ...add, targetId: v })}><option value="">Evaluates…</option>{targetsOf(db).map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}</Select>
             <button onClick={addOne}>Add</button>
           </div>
@@ -201,7 +220,7 @@ export function Assignments() {
           <Select value={st} onChange={setSt}><option value="">Any status</option><option value="pending">Pending</option><option value="completed">Completed</option><option value="overdue">Overdue</option></Select>
           <input placeholder="Search a name (optional)" value={q} onChange={(e) => setQ(e.target.value)} />
         </div>
-        {listed.length === 0 ? <Empty icon="list" title={tasks.length ? 'No tasks match' : 'No tasks yet'}>{tasks.length ? 'Change the filters above.' : 'Click "Generate tasks for period" above.'}</Empty> : <>
+        {listed.length === 0 ? <Empty icon="list" title={tasks.length ? 'No tasks match' : 'No tasks yet'}>{tasks.length ? 'Change the filters above.' : 'Click "Create evaluation tasks" above.'}</Empty> : <>
         <table>
           <thead><tr><th>Evaluator</th><th>As</th><th>Evaluates</th><th>Class</th><th>Status</th><th /></tr></thead>
           <tbody>
@@ -241,28 +260,41 @@ export function Classes() {
   const [out, setOut] = useState(null);
   const [busy, setBusy] = useState(false);
   const [listDept, setListDept] = useState('');
+  const [drop, setDrop] = useState(false); // remove the students who are not on the list any more
+  const [term, setTerm] = useState(() => workingTerm(db)); // the semester HR works on
+  const terms = [...new Set([workingTerm(db), nextTermOf(workingTerm(db)), ...db.sections.map((s) => s.term).filter(Boolean), term])].filter(Boolean).sort().reverse();
   const [msg, setMsg] = useState('');
+  const suggested = db.sections.filter((s) => s.term === term && suggestClassType(db, s));
   const faculty = db.users.filter((u) => isTeacher(u) && u.active);
   const used = new Set(db.tasks.map((t) => t.sectionId).filter(Boolean));
   const [dept, setDept] = useState('');
   const [kind, setKind] = useState('');
   const [q, setQ] = useState('');
   const qs = q.trim().toLowerCase();
-  const listed = newestFirst(db.sections).filter((x) => (!dept || x.dept === dept)
+  const ofTerm = db.sections.filter((x) => (term === '__none' ? !x.term : x.term === term));
+  const listed = newestFirst(ofTerm).filter((x) => (!dept || x.dept === dept)
     && (!kind || (kind === 'exempt') === isExemptSection(x))
     && (!qs || `${x.code} ${x.subject} ${userById(db, x.facultyId)?.name || ''}`.toLowerCase().includes(qs)));
-  const { rows, bar } = usePages(listed, `${dept}|${kind}|${qs}`);
+  const { rows, bar } = usePages(listed, `${dept}|${kind}|${qs}|${term}`);
   return (
     <>
-      <div className="note"><b>Most common action: import a class list.</b> Choose the department, check the file, then import it. Students are enrolled in those classes; internship, practicum, and field trip subjects are not evaluated.</div>
+      <div className="note"><b>Each semester, import the class list.</b> Choose the semester and department, check the file, then import it. Evaluations are created by themselves. Import a newer list any time: new students are added, and you can remove the ones who dropped. Internship, practicum, and field trip subjects are not evaluated.</div>
+      <div className="row"><label className="inline"><b>Semester</b> <Select value={term} onChange={(v) => { setTerm(v); setOut(null); }} aria-label="Semester">{terms.map((t) => <option key={t} value={t}>{termLabel(t)}{t === workingTerm(db) ? ' (now)' : ''}</option>)}{db.sections.some((s) => !s.term) && <option value="__none">No semester (from before)</option>}</Select></label>
+        <span className="muted">{plural(ofTerm.length, 'class', 'classes')} in this semester{isPastClass(db, { term }) ? ' · over, kept for the records' : ''}</span></div>
+      {suggested.length > 0 && (
+        <Card title={`${plural(suggested.length, 'class looks', 'classes look')} like laboratory or clinical`} actions={<button onClick={() => act('applyClassTypes', { sectionIds: suggested.map((s) => s.id) })}>Set them all</button>}>
+          <p className="muted">The type decides which form the students answer. These come from the subject names; uncommon ones can be set one by one below.</p>
+          <ul className="plain-list">{suggested.slice(0, 8).map((s) => <li key={s.id} className="row between"><span><b>{s.code}</b> {s.subject} → {CLASS_TYPES[suggestClassType(db, s)]}</span><button className="ghost" onClick={() => act('applyClassTypes', { sectionIds: [s.id] })}>Set</button></li>)}{suggested.length > 8 && <li className="muted">and {suggested.length - 8} more</li>}</ul>
+        </Card>
+      )}
       {msg && <div className="note">{msg}</div>}
       <Card title="Import a class list">
-        <p className="muted">Choose the class list file from the Registrar/ARC, or paste it below. It must be a CSV file (in Excel: <b>File → Save As → CSV</b>). One student per line, in this order:</p>
-        <p><code>section code, subject, teacher name, teacher email, student ID, student name, student UB email</code></p>
-        <p className="muted">Classes that don't exist yet are created. <b>Teachers and students who don't have an account yet get one automatically</b> in the department you choose. A student's first password is their <b>student ID</b>; a teacher's is the part of their email before the @ (for example <code>jdelacruz</code>). Everyone must change it when they first sign in. People who already have an account are just added to the class. Rows with a problem are listed and skipped.</p>
+        <p className="muted">Choose the class list file from the Registrar/ARC, or paste it below. It must be a CSV file (in Excel: <b>File → Save As → CSV</b>). One student per line. If the first row has the column names, the columns can be in any order:</p>
+        <p><code>section code, subject, teacher name, teacher email, student ID, student name, student UB email</code> <span className="muted">and, if you have them: <code>subject code</code>, <code>type of class</code>, <code>student department</code></span></p>
+        <p className="muted">Names like "Dela Cruz, Juan" are read when they are in quotes (Excel does this by itself). The same section can have several subjects and teachers, and students of other departments can be in a class. Classes that don't exist yet are created. <b>Teachers and students who don't have an account yet get one automatically</b> in the department you choose. A student's first password is their <b>student ID</b>; a teacher's is the part of their email before the @ (for example <code>jdelacruz</code>). Everyone must change it when they first sign in. People who already have an account are just added to the class. Rows with a problem are listed and skipped.</p>
         <div className="row">
           <label className="inline">Department of this list
-            <Select value={listDept} onChange={setListDept}><option value="">Choose…</option>{db.departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</Select></label>
+            <Select value={listDept} onChange={setListDept}><option value="">Choose…</option>{schoolDepts(db).map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</Select></label>
         </div>
         <div className="row">
           <label className="file-pick"><input type="file" accept=".csv,.txt,text/csv" onChange={async (e) => { const file = e.target.files?.[0]; if (file) { setCsv(await file.text()); setOut(null); } e.target.value = ''; }} />Choose CSV file…</label>
@@ -271,8 +303,8 @@ export function Classes() {
         <textarea rows={6} value={csv} onChange={(e) => { setCsv(e.target.value); setOut(null); }} placeholder={SAMPLE_CLASS_LIST} />
         <div className="row">
           {/* step 1: check the file (nothing is saved); step 2: import */}
-          <button className="ghost" disabled={busy || !csv.trim() || !listDept} title={listDept ? '' : 'Choose the department first'} onClick={async () => { setBusy(true); const r = await act('importClassList', { csv, dept: listDept, preview: true }); setBusy(false); if (r) setOut(r); }}>1. Check file</button>
-          <button disabled={busy || !csv.trim() || !listDept || !out?.preview} title={out?.preview ? '' : 'Check the file first'} onClick={async () => { if (out.errorCount && !(await ask('Import with problem rows?', `${out.errorCount} row(s) have a problem and will be skipped. The other rows are imported.`, { ok: 'Import the good rows' }))) return; setBusy(true); const r = await act('importClassList', { csv, dept: listDept }); setBusy(false); if (r) { setOut(r); if (!r.errorCount) setCsv(''); } }}>{busy ? 'Working… (big lists can take a minute)' : '2. Import class list'}</button>
+          <button className="ghost" disabled={busy || !csv.trim() || !listDept} title={listDept ? '' : 'Choose the department first'} onClick={async () => { setBusy(true); const r = await act('importClassList', { csv, dept: listDept, term, preview: true }); setBusy(false); if (r) setOut(r); }}>1. Check file</button>
+          <button disabled={busy || !csv.trim() || !listDept || !out?.preview || term === '__none'} title={out?.preview ? '' : 'Check the file first'} onClick={async () => { if (out.errorCount && !(await ask('Import with problem rows?', `${out.errorCount} row(s) have a problem and will be skipped. The other rows are imported.`, { ok: 'Import the good rows' }))) return; setBusy(true); const r = await act('importClassList', { csv, dept: listDept, term, drop }); setBusy(false); setDrop(false); if (r) { setOut(r); if (!r.errorCount) setCsv(''); } }}>{busy ? 'Working… (big lists can take a minute)' : '2. Import class list'}</button>
           {csv.trim() && <span className="muted">{csv.trim().split(/\r?\n/).filter((l) => l.trim() && !/^\s*section/i.test(l)).length} row(s) in the file</span>}</div>
         {out?.preview && (
           <div className={`note ${out.errorCount ? 'warn' : 'ok'}`}>
@@ -280,20 +312,22 @@ export function Classes() {
             {out.duplicates > 0 && <> <b>{out.duplicates} duplicate row(s)</b> are counted once.</>}
             {out.errorCount > 0 ? <> <b>{out.errorCount} row(s) have a problem</b> and would be skipped:</> : ' No problems found.'}
             {(out.errors.length > 0 || out.warnings?.length > 0) && <ul>{out.errors.map((e, i) => <li key={'e' + i}>{e}</li>)}{out.warnings.map((w, i) => <li key={'w' + i} className="muted">{w}</li>)}</ul>}
+            {out.droppedCount > 0 && <div><label className="inline"><input type="checkbox" checked={drop} onChange={(e) => setDrop(e.target.checked)} /> <b>Remove the {plural(out.droppedCount, 'student')} who {out.droppedCount === 1 ? 'is' : 'are'} not on this list any more</b> (dropped). Their answers, if any, are kept.</label><details className="source"><summary>Show who</summary><ul>{out.dropped.map((d) => <li key={d}>{d}</li>)}</ul></details></div>}
+            {out.notInFile?.length > 0 && <div className="small muted">Classes of this department that are not in the file (nothing happens to them): {out.notInFile.join('; ')}</div>}
             {out.newClasses?.length > 0 && <div className="small muted">New classes: {out.newClasses.join('; ')}</div>}
           </div>
         )}
-        {out && !out.preview && <div className={`note ${out.errorCount ? 'warn' : 'ok'}`}><b>Imported.</b> {out.created} class section(s) created, <b>{out.teachers || 0} teacher account(s)</b> and <b>{out.accounts || 0} student account(s) created</b>, {out.enrolled} enrolment(s) added{out.duplicates ? `, ${out.duplicates} duplicate row(s) counted once` : ''}.{(out.accounts > 0 || out.teachers > 0) && ' New students sign in with their UB email and their student ID as the password; new teachers with their UB email and the part before the @.'}{out.errorCount > 0 && <> {out.errorCount} row(s) skipped:<ul>{out.errors.map((e, i) => <li key={i}>{e}</li>)}</ul></>}</div>}
+        {out && !out.preview && <div className={`note ${out.errorCount ? 'warn' : 'ok'}`}><b>Imported.</b> {out.created} class section(s) created, <b>{out.teachers || 0} teacher account(s)</b> and <b>{out.accounts || 0} student account(s) created</b>, {out.enrolled} enrolment(s) added{out.duplicates ? `, ${out.duplicates} duplicate row(s) counted once` : ''}.{(out.accounts > 0 || out.teachers > 0) && ' New students sign in with their UB email and their student ID as the password; new teachers with their UB email and the part before the @.'}{out.evaluations && <> <b>{out.evaluations.added} evaluation(s) created</b>{out.evaluations.removed ? <> and {out.evaluations.removed} removed</> : ''} by themselves.</>}{out.errorCount > 0 && <> {out.errorCount} row(s) skipped:<ul>{out.errors.map((e, i) => <li key={i}>{e}</li>)}</ul></>}</div>}
       </Card>
       <Card title="Add a class section">
         <div className="row">
           <input placeholder="Section code" value={f.code} onChange={(e) => setF({ ...f, code: e.target.value })} />
           <input placeholder="Subject" value={f.subject} onChange={(e) => setF({ ...f, subject: e.target.value })} className="wide" />
           <Select value={f.facultyId} onChange={(v) => setF({ ...f, facultyId: v })}><option value="">Teacher…</option>{faculty.map((u) => <option key={u.id} value={u.id}>{u.name} · {deptName(db, u.dept)}</option>)}</Select>
-          <button onClick={async () => { setMsg(''); if (await act('createSection', f)) { setF({ code: '', subject: '', facultyId: '' }); setMsg('Section added. Enrol students under Accounts or by importing a class list.'); } }}>Add</button>
+          <button onClick={async () => { setMsg(''); if (await act('createSection', { ...f, term })) { setF({ code: '', subject: '', facultyId: '' }); setMsg('Section added. Enrol students under People & sign-in or by importing a class list.'); } }}>Add</button>
         </div>
       </Card>
-      <Card title={`Class sections (${listed.length}${listed.length !== db.sections.length ? ` of ${db.sections.length}` : ''})`} actions={<QrButton sections={listed.filter((x) => !isExemptSection(x))} label="QR codes for these classes" />}>
+      <Card title={`Classes of ${term === '__none' ? 'no semester' : termLabel(term)} (${listed.length}${listed.length !== ofTerm.length ? ` of ${ofTerm.length}` : ''})`} actions={<QrButton sections={listed.filter((x) => !isExemptSection(x))} label="QR codes for these classes" />}>
         <div className="row">
           <Select value={dept} onChange={setDept}><option value="">All departments</option>{db.departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</Select>
           <Select value={kind} onChange={setKind}><option value="">Evaluated and not evaluated</option><option value="evaluated">Evaluated only</option><option value="exempt">Not evaluated (practicum, internship, field trip)</option></Select>
@@ -322,220 +356,19 @@ export function Classes() {
   );
 }
 
-/** Pick a percentage (0, 5, 10 … 100) instead of typing it. Blank = not set. */
-function PercentPicker({ value, onSave }) {
-  const steps = Array.from({ length: 21 }, (_, i) => i * 5);
-  const cur = value ?? '';
-  return (
-    <Select value={cur} onChange={(v) => String(v) !== String(cur) && onSave(v === '' ? null : Number(v))}>
-      <option value="">not set</option>
-      {cur !== '' && !steps.includes(Number(cur)) && <option value={cur}>{cur}%</option>}
-      {steps.map((n) => <option key={n} value={n}>{n}%</option>)}
-    </Select>
-  );
-}
-
-/** Pick a category from a list; "+ New category…" asks for a name once. */
-function CategoryPicker({ value, options, onSave }) {
-  const cur = value && value !== 'General' ? value : '';
-  return (
-    <Select value={cur} onChange={(v) => {
-      if (v !== '__new') return v !== cur && onSave(v);
-      const n = window.prompt('Name of the new category, e.g. Assessment of Learners');
-      if (n && n.trim()) onSave(n.trim());
-    }}>
-      <option value="">General</option>
-      {options.filter((c) => c !== 'General').map((c) => <option key={c} value={c}>{c}</option>)}
-      <option value="__new">+ New category…</option>
-    </Select>
-  );
-}
-
-const VORDER = ['', 'lab', 'skills', 'clin-mt', 'clin-pt', 'clin-dent'];
-/** When a class-type form is used, in plain words. */
-const WHEN = {
-  lab: 'laboratory classes', skills: 'Nursing skills laboratory',
-  'clin-dent': 'Dentistry clinical classes', 'clin-pt': 'Physical Therapy clinical classes', 'clin-mt': 'Medical Technology clinical classes',
-};
-
-/* ---------------- Dynamic forms (FR3, FR4, NFR9) ---------------- */
-export function Forms() {
-  const { db, act } = useApp();
-  const [newCrit, setNewCrit] = useState('');
-  const [showOld, setShowOld] = useState(false);
-  const [ttF, setTtF] = useState('');
-  const forms = newestFirst(db.instruments.filter((i) => (showOld || i.active !== false) && (!ttF || i.targetType === ttF)));
-  // start on the form most people answer: college faculty evaluated by students
-  const [sel, setSel] = useState(() => (db.instruments.find((i) => i.active !== false && i.targetType === 'COLLEGE_FACULTY' && i.group === 'ST' && !i.dept && !i.variant) || forms[forms.length - 1])?.id);
-  // every category name used on any form, so HR can pick one instead of typing it
-  // (only forms in use: old and sample forms that were replaced don't add their categories)
-  const allCats = [...new Set(db.instruments.filter((i) => i.active !== false || i.id === sel).flatMap((i) => [...i.items.map((it) => it.category), ...Object.keys(i.categories || {})]).filter(Boolean))].sort();
-  const crit = usePages(newestFirst(db.criteria));
-  const [nf, setNf] = useState({ targetType: 'COLLEGE_FACULTY', group: 'ST', dept: '', variant: '' });
-  const [msg, setMsg] = useState('');
-  const ins = db.instruments.find((i) => i.id === sel);
-  const used = new Set(ins?.items.map((i) => i.criterionId));
-  const groupsFor = (tt) => Object.keys(db.rules[tt] || {});
-  const answered = new Set(db.tasks.filter((t) => t.response).flatMap((t) => Object.keys(t.response.answers)));
-  const locked = ins && (ins.active === false || formUsed(db, ins));
-  const cats = ins ? [...new Set(ins.items.map(itemCategory))] : [];
-  const eff = ins ? effectiveWeights(ins) : {};
-  const effTotal = Object.values(eff).reduce((a, w) => a + w, 0);
-  // categories start closed so the page stays short; open one to work on its questions
-  const [open, setOpen] = useState([]);
-  const [find, setFind] = useState('');
-  const q = find.trim().toLowerCase();
-  const toggle = (c) => setOpen(open.includes(c) ? open.filter((x) => x !== c) : [...open, c]);
-  const critText = (id) => db.criteria.find((c) => c.id === id)?.text || '';
-  const catTotal = cats.reduce((a, c) => a + (Number(ins?.categories?.[c]) || 0), 0);
-  useEffect(() => { setOpen([]); setFind(''); }, [sel]);
-  // plain-language names: "Rated by the Dean — laboratory classes", grouped under who is evaluated
-  const isUb = (i) => i.name.includes('(UB tool)');
-  const whenUsed = (i) => [
-    i.variant ? WHEN[i.variant] : i.targetType === 'CI' ? 'clinical area (hospital, community clinic)' : i.group === 'ST' && i.targetType === 'COLLEGE_FACULTY' && !i.dept ? 'lecture classes' : '',
-    i.dept ? `only ${deptName(db, i.dept).replace(/\s*\([A-Z]+\)$/, '')}` : '',
-  ].filter(Boolean).join(', ');
-  const label = (i) => `Rated by ${i.group === 'ST' ? 'the students' : `the ${groupName(db, i.group)}`}${whenUsed(i) ? ` — ${whenUsed(i)}` : ''}${!isUb(i) ? (i.items.length ? ' (custom form)' : ' (custom form, no questions yet)') : ''}${i.active === false ? ` (old version ${i.version || 1})` : ''}`;
-  const groupOrder = (db.evaluatorGroups || []).map((g) => g.id);
-  const byType = Object.keys(TARGET_TYPES).map((tt) => [tt, forms.filter((i) => i.targetType === tt)
-    .sort((a, b) => groupOrder.indexOf(a.group) - groupOrder.indexOf(b.group) || (a.dept ? 99 : VORDER.indexOf(a.variant || '')) - (b.dept ? 99 : VORDER.indexOf(b.variant || '')) || (b.version || 1) - (a.version || 1))]).filter(([, l]) => l.length);
-
-  return (
-    <>
-      <div className="note"><b>UB’s standard questions are already set up.</b> You can review them here. Only change a form when HRMC has approved a change; submitted evaluations keep the version they used.</div>
-      {msg && <div className="note">{msg}</div>}
-      <Card title="Evaluation forms" actions={<label className="inline muted"><input type="checkbox" checked={showOld} onChange={(e) => setShowOld(e.target.checked)} /> Show old versions</label>}>
-        <div className="row">
-          <label className="inline"><span className="muted">Who is evaluated</span>
-            <Select value={ttF} onChange={(v) => { setTtF(v); const first = newestFirst(db.instruments.filter((i) => (showOld || i.active !== false) && (!v || i.targetType === v))).at(-1); if (first) setSel(first.id); }} aria-label="Who is evaluated"><option value="">Everyone</option>{Object.entries(TARGET_TYPES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</Select>
-          </label>
-          <label className="inline wide"><span className="muted">Form</span>
-            <Select value={sel} onChange={setSel} className="wide" aria-label="Form">
-              {byType.map(([tt, list]) => <optgroup key={tt} label={TARGET_TYPES[tt]}>{list.map((i) => <option key={i.id} value={i.id}>{label(i)}</option>)}</optgroup>)}
-            </Select>
-          </label>
-          {ins && ins.active !== false && <button className="ghost" onClick={async () => { const r = await act('reviseForm', { instrumentId: ins.id }); if (r) { setSel(r.id); setMsg(`Version ${r.version} created. Edit it below; evaluations already submitted keep the old version.`); } }}>Create new version</button>}
-        </div>
-        {ins && (
-          <>
-            <div className="form-about">
-              <span><b>{TARGET_TYPES[ins.targetType]}</b>, rated by <b>{ins.group === 'ST' ? 'the students' : `the ${groupName(db, ins.group)}`}</b></span>
-              <span>Used for: {whenUsed(ins) || 'everyone of this kind'}</span>
-              <span>{isUb(ins) ? <>UB tool: {ins.name.replace(' (UB tool)', '')}</> : <>Custom form made in evalU (not one of UB's tools){!ins.items.length && <> · <b>no questions yet</b></>}</>}</span>
-              <span>{(ins.version || 1) === 1 ? 'Original version' : `Version ${ins.version} (changed ${ins.version - 1} time${ins.version > 2 ? 's' : ''})`}{ins.active === false ? ' · old, kept for past results' : !ins.items.length ? ' · not used yet: add at least one question (until then, the general form is used)' : ' · in use'}</span>
-            </div>
-            {locked
-              ? <div className="note warn">{ins.active === false ? 'This is an old version, kept with the results that used it. It can\'t be changed.' : 'This form already has submitted evaluations, so it is locked to keep past results unchanged. Click "Create new version" to make changes.'}</div>
-              : <p className="muted">Dropdown choices save as soon as you pick them; item weights save when you leave the box. Evaluations already submitted keep the weights they were submitted with.</p>}
-            <div className="row">
-              <input placeholder="Find a question on this form…" value={find} onChange={(e) => setFind(e.target.value)} className="wide" />
-              <button className="ghost" onClick={() => setOpen(open.length === cats.length ? [] : cats)}>{open.length === cats.length ? 'Hide all questions' : 'Show all questions'}</button>
-            </div>
-            <table className="form-cats">
-              <thead><tr><th>Category</th><th>Weight</th><th>Questions</th><th /></tr></thead>
-              <tbody>
-                {cats.map((c) => {
-                  const items = ins.items.filter((it) => itemCategory(it) === c);
-                  const shown = q ? items.filter((it) => critText(it.criterionId).toLowerCase().includes(q)) : items;
-                  const isOpen = q ? shown.length > 0 : open.includes(c);
-                  if (q && !shown.length) return null;
-                  return [
-                    <tr key={c} className={`cat-head ${isOpen ? 'on' : ''}`}>
-                      <td><button className="link" onClick={() => toggle(c)}>{isOpen ? '▾' : '▸'} {c}</button></td>
-                      <td>{locked ? <b>{ins.categories?.[c] != null ? `${ins.categories[c]}%` : '—'}</b> : <PercentPicker value={ins.categories?.[c]} onSave={(weight) => act('setFormCategoryWeight', { instrumentId: ins.id, category: c, weight })} />}</td>
-                      <td>{q ? `${shown.length} of ${items.length}` : items.length}</td>
-                      <td><button className="ghost" onClick={() => toggle(c)}>{isOpen ? 'Hide' : 'Show questions'}</button></td>
-                    </tr>,
-                    isOpen && (
-                      <tr key={`${c}-q`} className="cat-body"><td colSpan={4}>
-                        <ol className="form-qs">
-                          {shown.map((it) => {
-                            const cr = db.criteria.find((x) => x.id === it.criterionId);
-                            return (
-                              <li key={it.criterionId}>
-                                <div className="form-q-text">{cr?.text}
-                                  {cr?.levels && <div className="muted small">{cr.levels.map((l, k) => `${k + 1} = ${l}`).join(' · ')}</div>}
-                                  <span className="muted small"> · counts {effTotal ? pct(eff[it.criterionId] / effTotal) : '—'} of the score</span>
-                                </div>
-                                {!locked && (
-                                  <div className="form-q-tools">
-                                    <label className="inline small muted">Move to <CategoryPicker value={it.category} options={allCats} onSave={(category) => act('setFormItemCategory', { instrumentId: ins.id, criterionId: it.criterionId, category })} /></label>
-                                    <label className="inline small muted">Weight <SaveInput type="number" min="0" step="0.5" className="tiny" value={it.weight} onSave={(weight) => act('setFormItemWeight', { instrumentId: ins.id, criterionId: it.criterionId, weight })} /></label>
-                                    <button className="ghost" onClick={async () => (await ask('Remove this question from the form?', `"${cr?.text || ''}"`, { ok: 'Remove question', danger: true })) && act('removeFormItem', { instrumentId: ins.id, criterionId: it.criterionId })}>Remove</button>
-                                  </div>
-                                )}
-                              </li>
-                            );
-                          })}
-                        </ol>
-                        {!locked && !q && (
-                          <Select value="" onChange={(v) => v && act('addFormItem', { instrumentId: ins.id, criterionId: v, category: c === 'General' ? '' : c })}>
-                            <option value="">+ Add a question to "{c}"…</option>
-                            {db.criteria.filter((x) => !used.has(x.id)).map((x) => <option key={x.id} value={x.id}>{x.text}</option>)}
-                          </Select>
-                        )}
-                      </td></tr>
-                    ),
-                  ];
-                })}
-                <tr className="cat-total"><td>Total</td><td>{cats.some((c) => ins.categories?.[c] != null) ? <b>{catTotal}%</b> : <span className="muted">no category weights</span>} {catTotal !== 100 && cats.some((c) => ins.categories?.[c] != null) && <Badge kind="overdue">should be 100%</Badge>}</td><td>{ins.items.length}</td><td /></tr>
-              </tbody>
-            </table>
-            {q && !cats.some((c) => ins.items.some((it) => itemCategory(it) === c && critText(it.criterionId).toLowerCase().includes(q))) && <p className="muted">No question on this form matches "{find}".</p>}
-            <p className="muted small">Each category counts its weight of the score, shared equally by its questions (unless you change a question's weight). Click a category to see, move or remove its questions.</p>
-            {!locked && (
-              <Select value="" onChange={(v) => v && act('addFormItem', { instrumentId: ins.id, criterionId: v })}>
-                <option value="">+ Add a question (no category)…</option>
-                {db.criteria.filter((c) => !used.has(c.id)).map((c) => <option key={c.id} value={c.id}>{c.text}</option>)}
-              </Select>
-            )}
-          </>
-        )}
-      </Card>
-      <details className="card add-form">
-        <summary><b>+ Add a custom form</b> <span className="muted">(only if UB adds a new evaluation tool; the UB forms above are already set up)</span></summary>
-        <div className="row">
-          <Select value={nf.targetType} onChange={(v) => setNf({ ...nf, targetType: v, group: groupsFor(v)[0] })}>{Object.entries(TARGET_TYPES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</Select>
-          <Select value={nf.group} onChange={(v) => setNf({ ...nf, group: v })}>{groupsFor(nf.targetType).map((g) => <option key={g} value={g}>{groupName(db, g)}</option>)}</Select>
-          <Select value={nf.dept} onChange={(v) => setNf({ ...nf, dept: v })}><option value="">All departments</option>{db.departments.map((d) => <option key={d.id} value={d.id}>Only {d.name}</option>)}</Select>
-          <Select value={nf.variant} onChange={(v) => setNf({ ...nf, variant: v })}>{Object.entries(CLASS_TYPES).map(([k, l]) => <option key={k} value={k}>{k ? `Only for: ${l}` : 'Any type of class'}</option>)}</Select>
-          <button onClick={async () => { const r = await act('createForm', nf); if (r) setSel(r.id); }}>Create empty form</button>
-        </div>
-        <p className="muted">A department-specific form (e.g. for Nursing) is used for that department instead of the general one. A form for a type of class (e.g. laboratory) is used for the classes set to that type under Class lists.</p>
-      </details>
-      <details className="card advanced-panel">
-        <summary><b>Manage the question bank</b> <span className="muted">· Advanced. Questions already used in submitted evaluations are protected.</span></summary>
-        <div className="advanced-content">
-        <p className="muted">The criteria come from UB's evaluation tools. Criteria already answered in submitted evaluations can't be reworded or deleted, so past reports stay exactly as they were.</p>
-        <div className="row"><input className="wide" placeholder="New criterion" value={newCrit} onChange={(e) => setNewCrit(e.target.value)} />
-          <button onClick={async () => { if (newCrit.trim() && await act('addCriterion', { text: newCrit })) setNewCrit(''); }}>Add criterion</button></div>
-        <table><tbody>
-          {crit.rows.map((c) => (
-            <tr key={c.id}>
-              <td>{answered.has(c.id) ? <span>{c.text} <Badge kind="muted">used</Badge></span> : <SaveInput className="wide" value={c.text} onSave={(text) => act('renameCriterion', { criterionId: c.id, text })} />}</td>
-              <td><button className="ghost" disabled={answered.has(c.id) || db.instruments.some((i) => i.items.some((it) => it.criterionId === c.id))} title="Remove from forms first" onClick={async () => (await ask('Delete this question from the criteria bank?', `"${c.text}"`, { ok: 'Delete question', danger: true })) && act('deleteCriterion', { criterionId: c.id })}>Delete</button></td>
-            </tr>
-          ))}
-        </tbody></table>
-        {crit.bar}
-        </div>
-      </details>
-    </>
-  );
-}
-
 /* ---------------- Section monitor (dean / chair / HR) (FR9, FR11) ---------------- */
 export function Monitor({ deptOnly }) {
   const { db, user } = useApp();
   const open = db.periods.filter((p) => p.status === 'open');
-  const secs = db.sections.filter((s) => !deptOnly || s.dept === user.dept);
+  const all = db.sections.filter((s) => !deptOnly || s.dept === user.dept);
   const depts = db.departments.filter((d) => !deptOnly || d.id === user.dept);
   return (
     <>
-      <RuleNote />
+      <RuleNote policy={open.length ? policyFor(db, open.at(-1).id) : currentPolicy(db)} />
       {open.length === 0 && <Card><Empty icon="calendar" title="No evaluation period is open" /></Card>}
       {open.map((p) => {
         const pt = db.tasks.filter((t) => t.periodId === p.id);
+        const secs = all.filter((s) => inTerm(p, s));
         const dept = (d) => pt.filter((t) => userById(db, t.evaluatorId)?.dept === d.id || userById(db, t.targetId)?.dept === d.id);
         return (
           <div key={p.id}>
@@ -560,7 +393,7 @@ export function Monitor({ deptOnly }) {
   );
 }
 
-/** Participation forecast summary: how many classes may not reach half + 1 by the deadline at their current pace. */
+/** Participation forecast summary: how many classes may not have enough answers by the deadline at their current pace. */
 function EarlyWarning({ period: p, secs }) {
   const { db } = useApp();
   const fcs = secs.map((s) => participationForecast(db, p.id, s.id)).filter(Boolean);
@@ -569,14 +402,14 @@ function EarlyWarning({ period: p, secs }) {
   const by = new Date(p.deadline + 'T00:00:00').toLocaleDateString(undefined, { month: 'long', day: 'numeric' });
   return (
     <div className={`note ${risk ? 'warn' : 'ok'}`}>
-      <b>Forecast for {by}:</b> {risk ? `${risk} class${risk > 1 ? 'es' : ''} may not reach half + 1 at the current pace` : 'every class is on track or already has enough answers'}{track ? ` · ${track} on track` : ''} · {fcs.filter((f) => f.status === 'reached').length} already have enough.
+      <b>Forecast for {by}:</b> {risk ? `${risk} class${risk > 1 ? 'es' : ''} may not have enough answers at the current pace` : 'every class is on track or already has enough answers'}{track ? ` · ${track} on track` : ''} · {fcs.filter((f) => f.status === 'reached').length} already have enough.
       {risk > 0 && ' Teachers and department heads of the classes at risk were warned. Choose "Only classes at risk" below to see them.'}
-      <details className="source"><summary>How the forecast works</summary><p>Pace = answers so far ÷ days since the period opened. Expected by the deadline = answers so far + pace × days left. A class is "at risk" when that is below half of the class plus one. The first 2 days are too early to tell. It assumes students keep answering at the same pace; reminders and class time with the QR code usually raise it.</p></details>
+      <details className="source"><summary>How the forecast works</summary><p>Pace = answers so far ÷ days since the period opened. Expected by the deadline = answers so far + pace × days left. A class is "at risk" when that is below the number of answers it needs. The first 2 days are too early to tell. It assumes students keep answering at the same pace; reminders and class time with the QR code usually raise it.</p></details>
     </div>
   );
 }
 
-/** Response rate of each class in a period, a page at a time; "below half + 1" classes can be shown alone. */
+/** Response rate of each class in a period, a page at a time; the classes without enough answers can be shown alone. */
 function ClassProgress({ title, period: p, secs }) {
   const { db } = useApp();
   const [only, setOnly] = useState('');
@@ -594,7 +427,7 @@ function ClassProgress({ title, period: p, secs }) {
   return (
             <Card title={`${title} (${shown.length})`}>
               <div className="row">
-                <Select value={only} onChange={setOnly}><option value="">All classes</option><option value="low">Only classes below half + 1</option><option value="ok">Only classes with enough responses</option><option value="risk">Only classes at risk (forecast)</option></Select>
+                <Select value={only} onChange={setOnly}><option value="">All classes</option><option value="low">Only classes without enough answers</option><option value="ok">Only classes with enough responses</option><option value="risk">Only classes at risk (forecast)</option></Select>
                 {depts.length > 1 && <Select value={dept} onChange={setDept}><option value="">All departments</option>{depts.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</Select>}
               </div>
               <table>
@@ -602,8 +435,8 @@ function ClassProgress({ title, period: p, secs }) {
                 <tbody>{rows.map((s) => {
                   if (isExemptSection(s)) return <tr key={s.id}><td>{s.code} – {s.subject}</td><td>{userById(db, s.facultyId)?.name}</td><td colSpan={2} className="muted">—</td><td><Badge kind="muted">not evaluated (practicum/internship/field trip)</Badge></td><td /></tr>;
                   const st = sectionStats(db, p.id, s.id);
-                  return <tr key={s.id}><td>{s.code} – {s.subject}</td><td>{userById(db, s.facultyId)?.name}</td><td><div className="meter-row"><Meter value={st.rate} mark={0.5} /><span>{st.responded}/{st.required} <span className="muted">needs {st.needed}</span></span></div></td><td>{pct(st.rate)}</td>
-                    <td>{!st.required ? <span className="muted">no tasks yet</span> : st.belowHalf ? <Badge kind="overdue">below half + 1 – would be excluded</Badge> : <Badge kind="completed">enough responses</Badge>}</td>
+                  return <tr key={s.id}><td>{s.code} – {s.subject}</td><td>{userById(db, s.facultyId)?.name}</td><td><div className="meter-row"><Meter value={st.rate} mark={ruleMark(policyFor(db, p.id))} tone={st.valid ? 'good' : 'bad'} /><span>{st.responded}/{st.required} <span className="muted">needs {st.needed}</span></span></div></td><td>{pct(st.rate)}</td>
+                    <td>{!st.required ? <span className="muted">no tasks yet</span> : st.belowHalf ? <Badge kind="overdue">{hasRule(policyFor(db, p.id)) ? 'not enough answers – would be left out' : `needs ${st.needed - st.responded} more to have a score`}</Badge> : <Badge kind="completed">enough responses</Badge>}</td>
                     <td><ForecastBadge fc={participationForecast(db, p.id, s.id)} deadline={p.deadline} /></td></tr>;
                 })}</tbody>
               </table>
@@ -639,7 +472,7 @@ export function AuditLog() {
     const lines = [['When', 'Who', 'Action', 'Details', 'Hash'], ...list.map((r) => [r.at, r.user_name || 'System', AUDIT_LABEL[r.action] || r.action, r.detail || '', r.hash || ''])].map((x) => x.map(esc).join(','));
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([lines.join('\r\n')], { type: 'text/csv' }));
-    a.download = `evalU-audit-log-${new Date().toISOString().slice(0, 10)}.csv`; a.click();
+    a.download = `evalU-audit-log-${localDay()}.csv`; a.click();
   };
   const load = async () => {
     setErr('');
