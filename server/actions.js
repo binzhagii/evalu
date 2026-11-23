@@ -6,7 +6,7 @@ import {
   GROUPS, TARGET_TYPES, STAGES, ROLES, POSITIONS, needsDept, uid, userById, periodById, targetType, defaultEvaluatorGroups, groupName,
   instrumentFor, formForTask, effectiveWeights, generateTasks, runThresholdCheck, participationAlerts, sendReminders,
   isInstitutionalEmail, INSTITUTION_DOMAIN, notify, directors, pendingApprovals, resultHeads, hrUsers, isEvaluatee, isTeacher, isNursingDept, stageAtLeast, isResultHead, PLAN_OUTCOMES, UB_DEPARTMENTS, missingUbDepartments, MAX_RATING, CLASS_TYPES,
-  groupsOf, ratingGroups, toolStatus, sameTool, toolParts, toolProblems, toolSwitchMixes, toolName, defaultFormula, asPercentages, today, samePeriod, deptName,
+  evaluatorGroups, groupsOf, ratingGroups, toolStatus, sameTool, toolParts, toolProblems, toolSwitchMixes, toolName, defaultFormula, asPercentages, personIn, groupUse, groupUsedBefore, DEPT_KINDS, deptKeep, today, samePeriod, deptName,
   currentPolicy, formulaKey, activeFormula, formulaSnapshot, formGroups, validateFormula, storeResults, methodOf, commentParts, METHODS, AGGREGATIONS, MISSING_RULES, ROUNDING_METHODS,
 } from '../src/lib/logic.js';
 import { HttpError } from './http.js';
@@ -81,6 +81,9 @@ function accountFields(db, { name, username, email, role, position, dept, evalua
   if (!Object.hasOwn(POSITIONS[role], position)) fail('Choose a position for this role.');
   u.role = role; u.position = position;
   u.dept = needsDept(role) ? find(db.departments, dept, 'Department').id : null;
+  const home = u.dept && db.departments.find((d) => d.id === u.dept);
+  if (home?.active === false && db.users.find((x) => x.id === editingId)?.dept !== home.id) fail(`${home.name} is deactivated. Choose another department.`);
+  if (home?.kind === 'office' && role !== 'NTP') fail(`${home.name} is an office: only non-teaching personnel belong to it.`);
   if (position === 'ci' && !isNursingDept(db.departments.find((d) => d.id === u.dept))) fail("The Clinical Instructor position is for the School of Nursing (UB's Nursing CI tools). For clinical instructors in Dentistry, Medical Technology or Physical Therapy, choose Faculty, then set their classes' type to the clinical type of their program under Class lists: they get UB's clinical tools and the 40/40/20 weights.");
   if (role === 'TP' || role === 'NTP') {
     const assigned = Array.isArray(evaluatorGroupIds) ? evaluatorGroupIds : defaultEvaluatorGroups(role, position);
@@ -89,6 +92,11 @@ function accountFields(db, { name, username, email, role, position, dept, evalua
     u.evaluatorGroupIds = [...new Set(assigned)];
   } else u.evaluatorGroupIds = [];
   return u;
+}
+/** Did anyone already answer an evaluation of one of these people in an open period? */
+function evaluatedNow(db, ids) {
+  const who = new Set(ids), open = new Set(db.periods.filter((p) => p.status === 'open').map((p) => p.id));
+  return db.tasks.some((t) => t.response && open.has(t.periodId) && who.has(t.targetId));
 }
 /** Put a student in exactly these class sections (only sections of their department). */
 function enroll(db, user, sectionIds) {
@@ -191,9 +199,9 @@ function sectionFields(db, { code, subject, facultyId }, editingId = null) {
 // ---------- development plans ----------
 const planRec = (db, id) => (db.plans || []).find((p) => p.id === id) || fail('Development plan not found.', 404);
 /** HR, or the dean/principal of the person's department (not for themselves). */
-function mayPlanFor(user, t) {
+function mayPlanFor(db, user, t, periodId) {
   if (user.role === 'HR') return;
-  if (isResultHead(user) && user.dept === t.dept && user.id !== t.id) return;
+  if (isResultHead(user) && user.id !== t.id && [t.dept, personIn(db, periodId, t).dept].includes(user.dept)) return; // now, or when they were rated
   fail("Only HR or the dean or principal of the person's department can make or change a development plan.", 403);
 }
 function planFields({ areas, actions, reviewBy }) {
@@ -206,7 +214,7 @@ function planFields({ areas, actions, reviewBy }) {
 // ---------- notifications for the release steps ----------
 
 /** Keep only the parts of a formula the engine understands (never code, never extra fields). */
-function cleanFormula(c = {}, policy = {}, groups = Object.keys(GROUPS)) {
+function cleanFormula(c = {}, groups = Object.keys(GROUPS)) { // (the participation rule is in the policy, not in formulas)
   const pick = (v, list, def) => (typeof v === 'string' && Object.hasOwn(list, v) ? v : def);
   const method = pick(c.method, METHODS, '');
   const methodVersion = c.methodVersion == null ? 1 : Number(c.methodVersion);
@@ -225,10 +233,6 @@ function cleanFormula(c = {}, policy = {}, groups = Object.keys(GROUPS)) {
     expression: typeof c.expression === 'string' ? c.expression.slice(0, 300) : '',
     missing: pick(c.missing, MISSING_RULES, ''),
     minGroups: Math.max(1, Math.min(12, Number.parseInt(c.minGroups, 10) || 1)),
-    participation: {
-      percent: number(c.participation?.percent ?? policy.participationPercent ?? 50, 'Student participation %', 1, 100),
-      plusOne: typeof c.participation?.plusOne === 'boolean' ? c.participation.plusOne : policy.participationPlusOne !== false,
-    },
     effectiveFrom: c.effectiveFrom ? date(c.effectiveFrom) : '',
     effectiveUntil: c.effectiveUntil ? date(c.effectiveUntil) : '',
     rounding: { decimals: Math.max(0, Math.min(4, Number.parseInt(c.rounding?.decimals, 10) || 0)), method: pick(c.rounding?.method, ROUNDING_METHODS, 'HALF_UP') },
@@ -255,7 +259,7 @@ function notifyRelease(db, p, stage) {
     const people = new Set(db.tasks.filter((t) => t.periodId === p.id).map((t) => t.targetId));
     for (const id of people) {
       const u = userById(db, id);
-      if (u && u.active !== false && isEvaluatee(u)) notify(db, { key: `rel|${p.id}|fac|${id}`, userId: id, kind: 'release', text: `Your evaluation results for ${p.name} are now available under "My results".` });
+      if (u && u.active !== false && (isEvaluatee(u) || p.people?.[u.id])) notify(db, { key: `rel|${p.id}|fac|${id}`, userId: id, kind: 'release', text: `Your evaluation results for ${p.name} are now available under "My results".` });
     }
     for (const h of db.users.filter((u) => u.active !== false && (u.position === 'dean' || u.position === 'principal'))) {
       notify(db, { key: `rel|${p.id}|head|${h.id}`, userId: h.id, kind: 'release', text: `Department results for ${p.name} are now available under "Department results".` });
@@ -351,6 +355,8 @@ export const actions = {
       if (db.sections.some((s) => s.facultyId === u.id) && !isTeacher(next)) {
         fail('This person still teaches a class section, so they must stay Faculty or Clinical Instructor.', 409);
       }
+      // someone already evaluated in an open period keeps their department and position until it is closed
+      if ((next.dept !== u.dept || next.role !== u.role || next.position !== u.position) && evaluatedNow(db, [u.id])) fail(`${u.name} was already evaluated in an open period, so their department and position can't change until it is closed.`, 409);
       Object.assign(u, next);
       for (const s of db.sections) if (s.facultyId === u.id) s.dept = u.dept;
       enroll(db, u, sectionIds ?? db.sections.filter((s) => s.studentIds.includes(u.id)).map((s) => s.id));
@@ -371,6 +377,67 @@ export const actions = {
       // which left everyone in the category without a rating until the scoring was changed.)
       db.evaluatorGroups.push({ id, name: label, builtIn: false, active: true, targetTypes: targets });
       return { id, name: label, targetTypes: targets };
+    },
+  },
+  /** Rename a group; change who belongs to a group HR made (by position and/or chosen people). */
+  updateEvaluatorGroup: {
+    roles: HR,
+    run(db, { id, name, positions, userIds }) {
+      const g = find(db.evaluatorGroups || [], id, 'Evaluator group');
+      if (g.active === false) fail('This group is archived. Restore it first.', 409);
+      const label = text(name, 'Evaluator group name', 80);
+      if (db.evaluatorGroups.some((x) => x.id !== g.id && x.name.toLowerCase() === label.toLowerCase())) fail('Another evaluator group has that name.', 409);
+      g.name = label;
+      if (g.builtIn) { if (positions !== undefined || userIds !== undefined) fail("The members of a built-in group come from each person's position.", 409); return { name: label }; }
+      if (positions === undefined && userIds === undefined) return { name: label };
+      const known = new Set(['TP', 'NTP'].flatMap((r) => Object.keys(POSITIONS[r])));
+      const pos = Array.isArray(positions) ? [...new Set(positions)] : [];
+      if (pos.some((x) => !known.has(x))) fail('Choose positions from the list.');
+      const people = new Set(Array.isArray(userIds) ? userIds : []);
+      for (const uId of people) if (!['TP', 'NTP'].includes(account(db, uId).role)) fail('Only teaching and non-teaching personnel can be put in an evaluator group.');
+      if (!pos.length && !people.size) fail('Choose who belongs to this group: everyone with a position, or chosen people.');
+      if (pos.length) g.positions = pos; else delete g.positions;
+      for (const u of db.users) {
+        const has = Array.isArray(u.evaluatorGroupIds) && u.evaluatorGroupIds.includes(g.id);
+        if (people.has(u.id) && !has) u.evaluatorGroupIds = [...evaluatorGroups(u), g.id];
+        if (!people.has(u.id) && has) u.evaluatorGroupIds = u.evaluatorGroupIds.filter((x) => x !== g.id);
+      }
+      return { name: label };
+    },
+  },
+  /** A group no formula uses: deleted when it was never used, archived (kept for old results) when it was. */
+  deleteEvaluatorGroup: {
+    roles: HR,
+    run(db, { id }) {
+      const g = find(db.evaluatorGroups || [], id, 'Evaluator group');
+      if (g.builtIn) fail("Built-in groups can't be deleted, because accounts and UB's printed sheets use them. Remove it from the formulas instead.", 409);
+      const use = groupUse(db, g.id);
+      if (use.list.length) fail(`${g.name} still counts in: ${use.list.join('; ')}. Remove it there first.`, 409);
+      const archive = groupUsedBefore(db, g.id);
+      const drafts = db.instruments.filter((i) => i.group === g.id && (i.status || !archive));
+      db.instruments = db.instruments.filter((i) => !drafts.includes(i));
+      dropOwnQuestions(db, drafts.flatMap((i) => i.items.map((it) => it.criterionId)));
+      if (archive) {
+        g.active = false;
+        for (const i of db.instruments) if (i.group === g.id) i.active = false;
+      } else {
+        db.evaluatorGroups = db.evaluatorGroups.filter((x) => x.id !== g.id);
+        for (const u of db.users) if (Array.isArray(u.evaluatorGroupIds)) u.evaluatorGroupIds = u.evaluatorGroupIds.filter((x) => x !== g.id);
+      }
+      return { name: g.name, archived: archive };
+    },
+  },
+  /** Bring back an archived group with the newest version of its tools. */
+  restoreEvaluatorGroup: {
+    roles: HR,
+    run(db, { id }) {
+      const g = find(db.evaluatorGroups || [], id, 'Evaluator group');
+      if (g.active !== false) fail('This group is not archived.', 409);
+      g.active = true;
+      const newest = new Map();
+      for (const i of db.instruments.filter((x) => x.group === g.id && !x.status)) { const k = [i.targetType, i.dept || '', i.variant || ''].join('|'); if ((newest.get(k)?.version || 0) < (i.version || 1)) newest.set(k, i); }
+      for (const i of newest.values()) i.active = true;
+      return { name: g.name };
     },
   },
   /**
@@ -404,7 +471,7 @@ export const actions = {
         if (people.some((u) => !['TP', 'NTP'].includes(u.role))) fail('Only teaching and non-teaching personnel can be put in an evaluator group.');
         if (!positions.length && !people.length) fail('Choose who belongs to this group: everyone with a position, or chosen people.');
         db.evaluatorGroups.push({ id: gid, name: label, builtIn: false, active: true, targetTypes: [tt], ...(positions.length && { positions }) });
-        for (const u of people) u.evaluatorGroupIds = [...groupsOf(db, u).filter((x) => x !== gid), gid];
+        for (const u of people) u.evaluatorGroupIds = [...evaluatorGroups(u).filter((x) => x !== gid), gid];
       }
       ratingPair(db, tt, gid);
       if (config.components.some((c) => c.group === gid)) fail(`${groupName(db, gid)} already counts in this rating. Change its percentage instead.`, 409);
@@ -520,6 +587,7 @@ export const actions = {
       let duplicates = 0, existingStudents = 0, rowsRead = 0;
       const warnings = [];
       const listDept = dept ? find(db.departments, dept, 'Department') : null; // where new teachers (and so their classes) go
+      if (listDept && (listDept.kind === 'office' || listDept.active === false)) fail(`${listDept.name} has no classes.`);
       if (csv.length > 2000000) fail('The class list is too long. Import it in parts (for example one department at a time).');
       const errors = [];
       const fresh = []; // new student accounts, password hashed at the end
@@ -647,7 +715,7 @@ export const actions = {
     run(db, { periodId }) {
       const p = period(db, periodId);
       if (p.status !== 'open') fail('This period is already closed.', 409);
-      const flagged = runThresholdCheck(db, p.id); // FR11/FR12: exclude classes below half + 1, notify everyone concerned
+      const flagged = runThresholdCheck(db, p.id); // FR11/FR12: leave out classes without enough answers, notify everyone concerned
       p.status = 'closed';
       p.rules ||= clone(db.rules);
       p.policy ||= currentPolicy(db); // the policy this period is computed with from now on
@@ -743,8 +811,8 @@ export const actions = {
     roles: ['HR', 'TP'],
     run(db, { targetId, periodId, areas, actions, reviewBy }, user) {
       const t = account(db, targetId), p = period(db, periodId);
-      if (!isEvaluatee(t)) fail(`${t.name} has no evaluation results.`);
-      mayPlanFor(user, t);
+      if (!isEvaluatee(t) && !p.people?.[t.id]) fail(`${t.name} has no evaluation results.`);
+      mayPlanFor(db, user, t, p.id);
       if (!stageAtLeast(p, 'faculty')) fail('Make a plan after the results of this period are released to faculty.', 409);
       db.plans ||= [];
       if (db.plans.some((x) => x.targetId === t.id && x.periodId === p.id && x.status === 'open')) fail(`${t.name} already has an open plan for ${p.name}. Change that one instead.`, 409);
@@ -759,7 +827,7 @@ export const actions = {
     roles: ['HR', 'TP'],
     run(db, { id, areas, actions, reviewBy }, user) {
       const plan = planRec(db, id), t = account(db, plan.targetId);
-      mayPlanFor(user, t);
+      mayPlanFor(db, user, t, plan.periodId);
       if (plan.status !== 'open') fail('This plan is closed.', 409);
       Object.assign(plan, planFields({ areas, actions, reviewBy }));
       if (plan.acknowledgedAt) { plan.acknowledgedAt = null; notify(db, { key: `dpu|${plan.id}|${Date.now()}`, userId: t.id, kind: 'release', text: `${user.name} changed your development plan. Please read it again under My results.` }); }
@@ -781,7 +849,7 @@ export const actions = {
     roles: ['HR', 'TP'],
     run(db, { id, outcome, note }, user) {
       const plan = planRec(db, id), t = account(db, plan.targetId);
-      mayPlanFor(user, t);
+      mayPlanFor(db, user, t, plan.periodId);
       if (plan.status !== 'open') fail('This plan is already closed.', 409);
       if (!Object.hasOwn(PLAN_OUTCOMES, outcome)) fail('Choose how the plan ended.');
       Object.assign(plan, { status: 'closed', outcome, closeNote: typeof note === 'string' ? note.trim().slice(0, 1000) : '', closedAt: new Date().toISOString(), closedBy: user.name });
@@ -795,8 +863,8 @@ export const actions = {
       const p = period(db, periodId);
       if (!stageAtLeast(p, 'faculty')) fail('Results can be shared only after they are released to faculty.', 409);
       const t = account(db, targetId);
-      if (!isEvaluatee(t)) fail(`${t.name} has no evaluation results.`);
-      const heads = resultHeads(db, t.dept).filter((h) => h.id !== t.id);
+      if (!isEvaluatee(t) && !p.people?.[t.id]) fail(`${t.name} has no evaluation results.`);
+      const heads = resultHeads(db, personIn(db, p.id, t).dept).filter((h) => h.id !== t.id);
       if (!heads.length) fail(`${t.name}'s department has no dean or principal account to receive the results.`, 409);
       const o = text(office, 'Requesting office', 120);
       for (const h of heads) {
@@ -1095,7 +1163,7 @@ export const actions = {
     roles: HR,
     run(db, { id, targetType: tt, dept, config }, user) {
       db.formulas ||= [];
-      const clean = cleanFormula(config, currentPolicy(db), (db.evaluatorGroups || []).filter((g) => g.active !== false).map((g) => g.id));
+      const clean = cleanFormula(config, (db.evaluatorGroups || []).filter((g) => g.active !== false).map((g) => g.id));
       if (id) {
         const f = formulaRec(db, id);
         if (!['draft', 'rejected'].includes(f.status)) fail('Only a draft can be edited. Make a new version instead.', 409);
@@ -1187,7 +1255,7 @@ export const actions = {
       // so results already collected are never computed differently without notice
       let applied = 0, kept = 0;
       for (const p of db.periods.filter((x) => x.status === 'open')) {
-        const inCat = (t) => { const u = userById(db, t.targetId); return targetType(db, u) === f.targetType && (!f.dept || u?.dept === f.dept); };
+        const inCat = (t) => { const u = userById(db, t.targetId); const who = personIn(db, p.id, u); return who.type === f.targetType && (!f.dept || who.dept === f.dept); };
         if (db.tasks.some((t) => t.periodId === p.id && t.response && inCat(t))) { kept++; continue; }
         if (!formulaEffectiveOn(f, p.startDate || now)) { kept++; continue; }
         p.formulas = { ...(p.formulas || {}), [f.key]: snap };
@@ -1200,8 +1268,8 @@ export const actions = {
 
   /* ---------- HR: evaluation policy (threshold, rating bands, rounding, approvals) ---------- */
   /**
-   * Save a new policy version. A reason is required, every version is kept, closed periods keep the
-   * version they were computed with, and open periods follow the change (like the group weights, NFR8).
+   * Save a new policy version. A reason is required, every version is kept, and a period keeps the version it has
+   * once it is closed or somebody answered in it.
    */
   setPolicy: {
     roles: HR,
@@ -1211,8 +1279,9 @@ export const actions = {
       const bands = Array.isArray(p.bands) ? p.bands.map((b, i) => number(b, ['Outstanding', 'Satisfactory', 'Fair'][i] + ' starts at', 1, 4)) : fail('Enter the rating bands.');
       if (bands.length !== 3 || !(bands[0] > bands[1] && bands[1] > bands[2])) fail('The rating bands must go down: Outstanding > Satisfactory > Fair.');
       const next = {
-        participationPercent: number(p.participationPercent, 'Participation %', 1, 100),
-        participationPlusOne: !!p.participationPlusOne,
+        participationRule: ['more', 'atleast', 'none'].includes(p.participationRule) ? p.participationRule : fail('Choose when a class counts.'),
+        participationPercent: number(p.participationPercent, 'Participation %', 1, p.participationRule === 'more' ? 99 : 100),
+        participationMin: Math.round(number(p.participationMin ?? 1, 'Minimum number of answers', 1, 50)),
         bands,
         lowItem: number(p.lowItem, 'Low item cutoff', 1, 4),
         decimals: number(p.decimals, 'Decimal places', 0, 4),
@@ -1229,8 +1298,12 @@ export const actions = {
       db.policies ||= [];
       const version = (db.policies.at(-1)?.version || 0) + 1;
       db.policies.push({ version, policy: next, at: new Date().toISOString(), byId: user.id, byName: user.name, reason: why });
-      for (const per of db.periods.filter((x) => x.status === 'open')) per.policy = { ...clone(next), version };
-      return { version, changed: changed.map((k) => ({ field: k, from: before[k], to: next[k] })) };
+      // an open period somebody already answered in keeps its rules; the change starts with the next period
+      let applied = 0, kept = 0;
+      for (const per of db.periods.filter((x) => x.status === 'open')) {
+        if (db.tasks.some((t) => t.periodId === per.id && t.response)) { per.policy ||= before; kept++; } else { per.policy = { ...clone(next), version }; applied++; }
+      }
+      return { version, applied, kept, changed: changed.map((k) => ({ field: k, from: before[k], to: next[k] })) };
     },
   },
 
@@ -1280,7 +1353,7 @@ export const actions = {
     run(db, { name, kind }) {
       const n = text(name, 'Department name', 120);
       if (db.departments.some((d) => d.name.toLowerCase() === n.toLowerCase())) fail('A department with this name already exists.', 409);
-      const d = { id: uid('d'), name: n, kind: kind === 'basic' ? 'basic' : 'college' };
+      const d = { id: uid('d'), name: n, kind: Object.hasOwn(DEPT_KINDS, kind) ? kind : 'college' };
       db.departments.push(d);
       return { id: d.id };
     },
@@ -1295,17 +1368,50 @@ export const actions = {
         if (db.users.some((u) => u.position === 'ci' && u.dept === d.id) && !isNursingDept({ id: d.id, name: n })) fail('Clinical Instructors work in this department, so its name must stay a Nursing department.', 409);
         d.name = n;
       }
-      if (kind !== undefined) d.kind = kind === 'basic' ? 'basic' : 'college';
+      if (kind !== undefined && kind !== d.kind) {
+        if (evaluatedNow(db, db.users.filter((u) => u.dept === d.id).map((u) => u.id))) fail('People in this department were already evaluated in an open period, so its type can\'t change until it is closed.', 409);
+        if (!Object.hasOwn(DEPT_KINDS, kind)) fail('Choose the type of department.');
+        if (kind === 'office' && (db.users.some((u) => u.dept === d.id && u.role !== 'NTP') || db.sections.some((s) => s.dept === d.id))) fail(`${d.name} has students, teachers or classes, so it can't be an office.`, 409);
+        d.kind = kind;
+      }
     },
   },
   deleteDepartment: {
     roles: HR,
     run(db, { deptId }) {
       const d = find(db.departments, deptId, 'Department');
-      if (db.users.some((u) => u.dept === d.id) || db.sections.some((s) => s.dept === d.id) || db.instruments.some((i) => i.dept === d.id))
-        fail('People, classes or forms still belong to this department, so it can\'t be deleted.', 409);
+      const keep = deptKeep(db, d.id); // (a period made for it must keep naming it: an empty list means all departments)
+      if (keep.length) fail(`${d.name} can't be deleted: it is still used by ${keep.join(', ')}. Move its people, or deactivate it instead.`, 409);
       db.departments = db.departments.filter((x) => x.id !== d.id);
-      for (const p of db.periods) if (p.depts) p.depts = p.depts.filter((x) => x !== d.id);
+    },
+  },
+  /** A deactivated department is not offered any more; its old records stay. */
+  setDepartmentActive: {
+    roles: HR,
+    run(db, { deptId, active }) {
+      const d = find(db.departments, deptId, 'Department');
+      if (active === true) { delete d.active; return; }
+      const n = db.users.filter((u) => u.dept === d.id && u.active !== false).length;
+      if (n) fail(`${n} active account(s) still belong to ${d.name}. Move or deactivate them first.`, 409);
+      d.active = false;
+    },
+  },
+  /** Move every account and class of a department to another one (between periods). Closed periods keep the old department. */
+  moveDepartment: {
+    roles: HR,
+    run(db, { from, to }) {
+      const a = find(db.departments, from, 'Department'), b = find(db.departments, to, 'Department');
+      if (a.id === b.id) fail('Choose another department.');
+      if (b.active === false) fail(`${b.name} is deactivated.`, 409);
+      const people = db.users.filter((u) => u.dept === a.id), ids = new Set(people.map((u) => u.id));
+      const open = new Set(db.periods.filter((p) => p.status === 'open').map((p) => p.id));
+      if (db.tasks.some((t) => open.has(t.periodId) && ids.has(t.targetId))) fail(`People in ${a.name} have evaluations in an open period. Move them after it is closed.`, 409);
+      if (b.kind === 'office' && people.some((u) => u.role !== 'NTP')) fail(`${b.name} is an office, but ${a.name} has students or teachers.`, 409);
+      if (people.some((u) => u.position === 'ci') && !isNursingDept(b)) fail('Clinical Instructors work only in a Nursing department.', 409);
+      let classes = 0;
+      for (const u of people) u.dept = b.id;
+      for (const s of db.sections) if (s.dept === a.id) { s.dept = b.id; classes++; }
+      return { people: people.length, classes, from: a.name, to: b.name };
     },
   },
 
@@ -1339,7 +1445,10 @@ export const actions = {
 export function describeAction(name, args, db, result) {
   if (name === 'changePassword') return 'Changed own password';
   // before → after values, so every rule change can be traced
-  if (name === 'setPolicy' && result?.changed) return `policy version ${result.version}: ${result.changed.map((c) => `${c.field} ${JSON.stringify(c.from)} → ${JSON.stringify(c.to)}`).join('; ')} · reason: ${args.reason}`;
+  if (name === 'setPolicy' && result?.changed) return `policy version ${result.version}: ${result.changed.map((c) => `${c.field} ${JSON.stringify(c.from)} → ${JSON.stringify(c.to)}`).join('; ')} · reason: ${args.reason}${result.kept ? ' · open periods with answers keep their rules; it starts with the next period' : ''}`;
+  if (name === 'moveDepartment') return `${result?.people} account(s) and ${result?.classes} class(es): ${result?.from} → ${result?.to}`;
+  if (name === 'setDepartmentActive') return `${db.departments.find((d) => d.id === args.deptId)?.name}: ${args.active ? 'reactivated' : 'deactivated'}`;
+  if (['updateEvaluatorGroup', 'deleteEvaluatorGroup', 'restoreEvaluatorGroup'].includes(name)) return `evaluator group: ${result?.name}${result?.archived ? ' (archived)' : ''}`;
   if (name === 'addGroupWithFormula') return `${TARGET_TYPES[args.targetType]} ← ${result?.name} (formula draft v${result?.version})`;
   if (name === 'discardForm') return `discarded: ${result?.discarded}`;
   if (name === 'useForm') { const i = db.instruments.find((x) => x.id === args.instrumentId); return `tool: ${i ? toolName(db, i) : ''} v${result?.version} · ${result?.scheduled ? 'starts with the next evaluation period' : 'in use'}`; }

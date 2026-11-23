@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useApp } from '../lib/store';
-import { STAGES, taskStatus, sectionStats, userById, computeAll, canSeeAll, THRESHOLD, hasFinal, pendingApprovals, groupName, participationForecast } from '../lib/logic';
+import { STAGES, taskStatus, sectionStats, userById, computeAll, canSeeAll, policyFor, hasRule, ruleMark, hasFinal, pendingApprovals, groupName, participationForecast } from '../lib/logic';
 import { cyclePeriod, cycleSteps, nextStep } from '../lib/cycle';
 import { ApprovalPanel } from './Reports';
 import { Card, Stat, Stats, Meter, Badge, Empty, PeriodPicker, Icon, useNav, fmt, pct, dueText, daysUntil, ForecastBadge } from '../ui';
@@ -58,7 +58,7 @@ export function HROverview() {
   const done = status.filter((s) => s === 'completed').length;
   const overdue = status.filter((s) => s === 'overdue').length;
   const classes = open.flatMap((p) => db.sections.map((s) => ({ p, st: sectionStats(db, p.id, s.id) }))).filter((x) => x.st.required);
-  const low = classes.filter((x) => x.st.belowHalf).sort((a, b) => a.st.rate - b.st.rate);
+  const low = classes.filter((x) => x.st.belowHalf && hasRule(policyFor(db, x.p.id))).sort((a, b) => a.st.rate - b.st.rate);
   const active = db.users.filter((u) => u.active);
   const waiting = active.filter((u) => u.mustChangePassword).length;
 
@@ -97,12 +97,12 @@ export function HROverview() {
         </Card>
 
         <Card title="Classes needing attention" actions={<button className="ghost" onClick={() => go('monitor')}>See all</button>}>
-          {low.length === 0 ? <Empty title="Every class meets the 50%-plus-one rule" /> : (
+          {low.length === 0 ? <Empty title="No class needs more answers" /> : (
             <ul className="plain-list">
               {low.slice(0, 6).map(({ p, st }) => (
                 <li key={p.id + st.section.id}>
                   <div><b>{st.section.code}</b> <span className="muted">· {userById(db, st.section.facultyId)?.name}{open.length > 1 ? ` · ${p.name}` : ''}</span></div>
-                  <div className="meter-row"><Meter value={st.rate} mark={THRESHOLD} /><span>{st.responded}/{st.required} <span className="muted">needs {st.needed}</span></span></div>
+                  <div className="meter-row"><Meter value={st.rate} mark={ruleMark(policyFor(db, p.id))} tone="bad" /><span>{st.responded}/{st.required} <span className="muted">needs {st.needed}</span></span></div>
                   <ForecastBadge fc={participationForecast(db, p.id, st.section.id)} deadline={p.deadline} />
                 </li>
               ))}
@@ -147,8 +147,8 @@ export function VpOverview() {
   const secs = db.sections.map((s) => sectionStats(db, pid, s.id)).filter((s) => s.required);
   const invalid = secs.filter((s) => !s.valid).length;
   const depts = db.departments.map((d) => {
-    const list = complete.filter((r) => r.target.dept === d.id);
-    return { d, avg: avg(list), n: list.length, total: all.filter((r) => r.target.dept === d.id).length };
+    const list = complete.filter((r) => r.dept === d.id);
+    return { d, avg: avg(list), n: list.length, total: all.filter((r) => r.dept === d.id).length };
   });
 
   return (
@@ -164,7 +164,7 @@ export function VpOverview() {
       <Stats>
         <Stat icon="star" label="Average final score" value={fmt(avg(complete))} sub="out of 4" tone="good" />
         <Stat icon="users" label="Personnel with a final score" value={`${complete.length} / ${all.length}`} sub={all.length - complete.length ? `${all.length - complete.length} without a score yet` : 'All have a final score'} />
-        <Stat icon="chart" label="Class sections excluded" value={`${invalid} / ${secs.length}`} sub="fewer than half of the class + 1 answered" tone={invalid ? 'warn' : ''} />
+        <Stat icon="chart" label="Class sections excluded" value={`${invalid} / ${secs.length}`} sub="not enough students answered" tone={invalid ? 'warn' : ''} />
         <Stat icon="calendar" label="Periods released to you" value={periods.length} />
       </Stats>
       <Card title="Average final score by department" actions={<><button className="ghost" onClick={() => go('analytics')}>Analytics</button><button onClick={() => go('reports')}>Full reports</button></>}>

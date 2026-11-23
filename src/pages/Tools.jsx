@@ -2,7 +2,7 @@
 // A tool in use is never edited directly: HR changes a draft, checks it, then uses it (server/actions.js).
 import { useEffect, useMemo, useState } from 'react';
 import { useApp } from '../lib/store';
-import { TARGET_TYPES, CLASS_TYPES, deptName, groupName, effectiveWeights, sameTool, toolName, toolsOfPeriod, toolParts, toolProblems, toolStatus } from '../lib/logic';
+import { TARGET_TYPES, CLASS_TYPES, activeDepts, deptName, groupName, effectiveWeights, sameTool, toolName, toolsOfPeriod, toolParts, toolProblems, toolStatus } from '../lib/logic';
 import { Card, Select, Badge, SaveInput, Empty, newestFirst, usePages, useNavArgs, ask } from '../ui';
 import { QuestionList } from './Tasks';
 
@@ -123,7 +123,7 @@ function NewTool({ onOpen }) {
           <label className="inline">Rated by <Select value={f.group} onChange={set('group')}>{groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}</Select></label>
         </div>
         <div className="row">
-          <label className="inline">For <Select value={f.dept} onChange={set('dept')}><option value="">All departments</option>{db.departments.map((d) => <option key={d.id} value={d.id}>Only {d.name}</option>)}</Select></label>
+          <label className="inline">For <Select value={f.dept} onChange={set('dept')}><option value="">All departments</option>{activeDepts(db).map((d) => <option key={d.id} value={d.id}>Only {d.name}</option>)}</Select></label>
           <label className="inline">Type of class <Select value={f.variant} onChange={set('variant')}>{Object.entries(CLASS_TYPES).map(([k, l]) => <option key={k} value={k}>{k ? l : 'Any / lecture'}</option>)}</Select></label>
           <button disabled={!f.name.trim()} onClick={async () => { const r = await act('createForm', f); if (r) onOpen(r.id); }}>Create draft</button>
         </div>

@@ -65,7 +65,6 @@ export function defaultFormula(weights = {}, policy = {}) {
     expression: '',
     missing: policy.missingGroup === 'incomplete' ? 'INVALIDATE' : 'REWEIGHT',
     minGroups: 1,
-    participation: { percent: policy.participationPercent ?? 50, plusOne: policy.participationPlusOne !== false },
     rounding: { decimals: policy.decimals ?? 2, method: 'HALF_UP' },
   };
 }
@@ -119,10 +118,6 @@ export function validateFormula(f, { allowedGroups = null, groupNames = {} } = {
   if (f.effectiveFrom && !validDate(f.effectiveFrom)) errs.push('Effective-from date must be a valid calendar date.');
   if (f.effectiveUntil && !validDate(f.effectiveUntil)) errs.push('Effective-until date must be a valid calendar date.');
   if (f.effectiveFrom && f.effectiveUntil && f.effectiveUntil < f.effectiveFrom) errs.push('Effective-until date must be on or after the effective-from date.');
-  const participation = f.participation || {};
-  const participationPercent = Number(participation.percent);
-  if (!Number.isFinite(participationPercent) || participationPercent < 1 || participationPercent > 100) errs.push('Student participation must be from 1% to 100%.');
-  if (typeof participation.plusOne !== 'boolean') errs.push('Choose whether to require one extra student response.');
   const mg = Number(f.minGroups ?? 1);
   if (!Number.isInteger(mg) || mg < 1 || mg > Math.max(1, comps.length)) errs.push('The minimum number of groups must be between 1 and the number of groups.');
   return errs;

@@ -6,6 +6,7 @@ import { HROverview, VpOverview } from './pages/Overview';
 import Tasks from './pages/Tasks';
 import { Periods, Assignments, Monitor, Classes, AuditLog } from './pages/HR';
 import Tools from './pages/Tools';
+import Departments from './pages/Departments';
 import Reports, { DeptResults } from './pages/Reports';
 import Analytics from './pages/Analytics';
 import Policy from './pages/Policy';
@@ -104,7 +105,7 @@ function Login() {
 }
 
 // [key, label, icon, page, subtitle]
-function navFor(user) {
+function navFor(user, db) {
   const n = [];
   if (user.role === 'HR') {
     n.push(
@@ -115,7 +116,8 @@ function navFor(user) {
       ['monitor', 'Response progress', 'chart', <Monitor />, 'See which classes and departments have responded'],
       ['reports', 'View & print results', 'report', <Reports />, 'Read, print, or share results for a completed term'],
       ['analytics', 'Patterns in results', 'trend', <Analytics />, 'Compare scores and find areas that may need support'],
-      ['accounts', 'People & sign-in', 'users', <Accounts />, 'Manage accounts, passwords, and departments'],
+      ['departments', 'Departments & offices', 'list', <Departments />, 'Add, rename, deactivate or move departments and offices'],
+      ['accounts', 'People & sign-in', 'users', <Accounts />, 'Manage accounts and passwords'],
       ['forms', 'Evaluation tools', 'form', <Tools />, 'See every evaluation tool, and prepare a new version when HRMC approves a change'],
       ['formulas', 'Scoring & calculation', 'scale', <Formulas />, 'Set evaluator percentages and the final-score method in one place'],
       ['policy', 'Evaluation rules', 'form', <Policy />, 'Change participation, rating, and release rules'],
@@ -133,7 +135,7 @@ function navFor(user) {
     if (user.position !== 'ci') n.push(['tasks', 'My evaluations', 'check', <Tasks />, 'The people you are asked to evaluate']);
     if (['dean', 'chair', 'principal', 'aprincipal'].includes(user.position)) n.push(['monitor', 'Department progress', 'chart', <Monitor deptOnly />, 'How many evaluations are done in your department']);
     if (user.position === 'dean' || user.position === 'principal') n.push(['dept', 'Department results', 'report', <DeptResults />, 'Your department results, item by item']);
-    if (isTeacher(user) || user.position === 'dean' || user.role === 'NTP') n.push(['results', 'My results', 'star', <MyResults />, 'Your evaluation results and your classes\' response progress']);
+    if (isTeacher(user) || user.position === 'dean' || user.role === 'NTP' || db.periods.some((p) => p.people?.[user.id])) n.push(['results', 'My results', 'star', <MyResults />, 'Your evaluation results and your classes\' response progress']);
   }
   n.push(
     ['notifs', 'Notifications', 'bell', <Notifications pages={n.map((x) => x[0])} />, 'Reminders and updates sent to you. Click one to open it'],
@@ -146,7 +148,7 @@ function navFor(user) {
 // Notifications and My account stay at the bottom.
 const HR_NAV_SECTIONS = [
   { label: '', keys: ['home'] },
-  { label: 'Prepare', keys: ['forms', 'formulas', 'policy', 'accounts', 'classes'] },
+  { label: 'Prepare', keys: ['forms', 'formulas', 'policy', 'departments', 'accounts', 'classes'] },
   { label: 'Run an evaluation', keys: ['periods', 'assign', 'monitor'] },
   { label: 'Results', keys: ['reports', 'analytics'] },
   { label: 'Records', keys: ['audit'] },
@@ -191,7 +193,7 @@ function Shell() {
   if (!user) return <Login />;
   if (user.mustChangePassword) return <ForcedPasswordChange />;
   if (!db) return <div className="login-loading">{error || 'Loading…'}</div>;
-  const nav = navFor(user);
+  const nav = navFor(user, db);
   const navSections = user.role === 'HR'
     ? HR_NAV_SECTIONS.map((section) => ({ ...section, items: section.keys.map((k) => nav.find((x) => x[0] === k)).filter(Boolean) })).filter((section) => section.items.length)
     : [{ label: '', items: nav }];

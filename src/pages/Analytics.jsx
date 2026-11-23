@@ -4,7 +4,7 @@ import { useMemo, useState } from 'react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer, BarChart, Bar, Legend } from 'recharts';
 import { useApp } from '../lib/store';
 import {
-  computeAll, canSeeAll, hasFinal, itemStats, sectionStats, targetsOf, policyFor, TARGET_TYPES, deptName, groupName,
+  computeAll, canSeeAll, hasFinal, itemStats, sectionStats, targetsOf, targetsInDept, countedSections, personIn, policyFor, ruleWords, TARGET_TYPES, deptName, groupName,
   formOfTask, itemCategory, interpretation, commentParts, cronbachAlpha, alphaLabel,
 } from '../lib/logic';
 import { Card, PeriodPicker, Select, Badge, fmt, pct } from '../ui';
@@ -25,10 +25,10 @@ function Source({ children }) {
   );
 }
 
-/** The evaluations that count for a period (students only from classes that reached half + 1). */
+/** The evaluations that count for a period (students only from classes that counted). */
 function countedTasks(db, periodId, dept) {
-  const people = new Set(targetsOf(db).filter((u) => dept === 'ALL' || u.dept === dept).map((u) => u.id));
-  const valid = new Set(db.sections.map((s) => sectionStats(db, periodId, s.id)).filter((s) => s.valid).map((s) => s.section.id));
+  const people = new Set((dept === 'ALL' ? targetsOf(db, periodId) : targetsInDept(db, periodId, dept)).map((u) => u.id));
+  const valid = countedSections(db, periodId);
   return db.tasks.filter((t) => t.periodId === periodId && t.response && !t.response.redacted && people.has(t.targetId) && (t.group !== 'ST' || valid.has(t.sectionId)));
 }
 
@@ -61,7 +61,7 @@ function categoryMeans(db, periodId, dept) {
 function comparability(db, a, b) {
   const notes = [];
   const pa = policyFor(db, a.id), pb = policyFor(db, b.id);
-  for (const [k, label] of [['bands', 'rating bands'], ['participationPercent', 'participation rule'], ['participationPlusOne', 'participation rule (plus one)'], ['decimals', 'rounding'], ['missingGroup', 'missing-group rule']]) {
+  for (const [k, label] of [['bands', 'rating bands'], ['participationRule', 'participation rule'], ['participationPercent', 'participation rule'], ['participationMin', 'participation rule'], ['decimals', 'rounding'], ['missingGroup', 'missing-group rule']]) {
     if (JSON.stringify(pa[k]) !== JSON.stringify(pb[k])) notes.push(`different ${label}`);
   }
   if (JSON.stringify(a.rules) !== JSON.stringify(b.rules)) notes.push('different group weights');
@@ -94,7 +94,7 @@ function PeriodCompare({ db, periods, data, dept }) {
   if (periods.length < 2) return null;
   const A = periods.find((p) => p.id === aSel) || periods.at(-2);
   const B = periods.find((p) => p.id === bSel) || periods.at(-1);
-  const inDept = (r) => dept === 'ALL' || r.target.dept === dept;
+  const inDept = (r) => dept === 'ALL' || r.dept === dept;
   const before = new Map((data[A.id] || []).filter(inDept).map((r) => [r.targetId, r]));
   const rows = (data[B.id] || []).filter(inDept).filter((r) => before.has(r.targetId))
     .map((r) => ({ r, a: before.get(r.targetId).final, b: r.final, d: +(r.final - before.get(r.targetId).final).toFixed(2) }))
@@ -116,7 +116,7 @@ function PeriodCompare({ db, periods, data, dept }) {
           <table>
             <thead><tr><th>Name</th><th>Type</th><th>Department</th><th>{A.name}</th><th>{B.name}</th><th>Change</th></tr></thead>
             <tbody>{rows.map(({ r, a, b, d }) => (
-              <tr key={r.targetId}><td>{r.target.name}</td><td>{TARGET_TYPES[r.type]}</td><td>{deptName(db, r.target.dept)}</td><td>{fmt(a)}</td><td>{fmt(b)}</td>
+              <tr key={r.targetId}><td>{r.target.name}</td><td>{TARGET_TYPES[r.type]}</td><td>{deptName(db, r.dept)}</td><td>{fmt(a)}</td><td>{fmt(b)}</td>
                 <td>{d > 0 ? <Badge kind="completed">▲ {d.toFixed(2)}</Badge> : d < 0 ? <Badge kind="overdue">▼ {Math.abs(d).toFixed(2)}</Badge> : <span className="muted">no change</span>}</td></tr>
             ))}</tbody>
           </table>
@@ -147,7 +147,7 @@ export default function Analytics() {
 
   const period = periods.find((p) => p.id === pid);
   const pol = policyFor(db, pid);
-  const inDept = (r) => dept === 'ALL' || r.target.dept === dept;
+  const inDept = (r) => dept === 'ALL' || r.dept === dept;
   const depts = db.departments.filter((d) => dept === 'ALL' || d.id === dept);
   const now = (data[pid] || []).filter(inDept);
   const text = (id) => db.criteria.find((c) => c.id === id)?.text || id;
@@ -164,7 +164,7 @@ export default function Analytics() {
   // rating distribution per department (with the period's bands)
   const bands = ['Outstanding', 'Satisfactory', 'Fair', 'Poor'];
   const distribution = db.departments.map((d) => {
-    const rs = (data[pid] || []).filter((r) => r.target.dept === d.id);
+    const rs = (data[pid] || []).filter((r) => r.dept === d.id);
     const row = { department: short(d.name), total: rs.length };
     for (const b of bands) row[b] = rs.filter((r) => interpretation(r.final, false, pol) === b || (b === 'Outstanding' && interpretation(r.final, true, pol) === 'Excellent') || (b === 'Satisfactory' && interpretation(r.final, true, pol) === 'Good' && String(r.type).startsWith('NTP'))).length;
     return row;
@@ -172,7 +172,7 @@ export default function Analytics() {
 
   // participation per department
   const participation = depts.map((d) => {
-    const st = db.sections.filter((s) => s.dept === d.id).map((s) => sectionStats(db, pid, s.id)).filter((s) => s.required);
+    const st = db.sections.filter((s) => personIn(db, pid, db.users.find((u) => u.id === s.facultyId)).dept === d.id).map((s) => sectionStats(db, pid, s.id)).filter((s) => s.required);
     const enrolled = st.reduce((a, s) => a + s.required, 0), answered = st.reduce((a, s) => a + s.responded, 0);
     return { department: short(d.name), classes: st.length, counted: st.filter((s) => s.valid).length, excluded: st.filter((s) => !s.valid).length, enrolled, answered, rate: enrolled ? answered / enrolled : null };
   }).filter((r) => r.classes);
@@ -180,8 +180,8 @@ export default function Analytics() {
   // department comparison
   const compare = db.departments.map((d) => ({
     department: short(d.name),
-    'Average final rating': avg((data[pid] || []).filter((r) => r.target.dept === d.id).map((r) => r.final)),
-    people: (data[pid] || []).filter((r) => r.target.dept === d.id).length,
+    'Average final rating': avg((data[pid] || []).filter((r) => r.dept === d.id).map((r) => r.final)),
+    people: (data[pid] || []).filter((r) => r.dept === d.id).length,
   })).filter((r) => r.people);
 
   // category strengths and weaknesses
@@ -270,7 +270,7 @@ export default function Analytics() {
       </Card>
 
       <Card title="Participation">
-        <p className="muted">Students' response rate and classes left out because fewer than {pol.participationPercent}%{pol.participationPlusOne ? ' + 1' : ''} answered ({period?.name}).</p>
+        <p className="muted">Students' response rate and classes left out because not enough answered ({period?.name}: {ruleWords(pol)}).</p>
         {participation.length === 0 ? <p className="muted">No class lists for this selection.</p> : (
           <table><thead><tr><th>Department</th><th>Classes</th><th>Counted</th><th>Excluded</th><th>Students answered</th><th>Response rate</th></tr></thead>
             <tbody>{participation.map((r) => <tr key={r.department}><td>{r.department}</td><td>{r.classes}</td><td>{r.counted}</td><td>{r.excluded ? <Badge kind="overdue">{r.excluded}</Badge> : 0}</td><td>{r.answered} of {r.enrolled}</td><td>{r.rate == null ? '—' : pct(r.rate)}</td></tr>)}</tbody></table>

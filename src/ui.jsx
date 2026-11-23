@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState } from 'react';
-import { LOW_ITEM, forecastText } from './lib/logic';
+import { LOW_ITEM, forecastText, hasRule, neededResponses, ruleWords } from './lib/logic';
 
 /** go('reports') switches the page (provided by the app shell). */
 export const NavContext = createContext(() => {});
@@ -83,7 +83,7 @@ export function Stat({ label, value, sub, icon, tone = '' }) {
 }
 export const Stats = ({ children }) => <div className="stats">{children}</div>;
 
-/** A horizontal bar. value 0..1. mark: optional line (e.g. the 50% rule). */
+/** A horizontal bar. value 0..1. mark: optional line (e.g. the participation rule). */
 export function Meter({ value, mark, tone }) {
   const v = Math.max(0, Math.min(1, value || 0));
   const t = tone || (mark != null ? (v >= mark ? 'good' : 'bad') : '');
@@ -105,13 +105,16 @@ export function Empty({ icon = 'check', title, children }) {
   );
 }
 
-export function RuleNote() {
+/** The participation rule of a policy, in plain words. */
+export function RuleNote({ policy }) {
   return (
     <div className="note">
-      <b>How the 50%-plus-one rule works.</b> A class's student evaluation counts only if at least <b>half of the
-      class plus one</b> student answer it (for example, 26 of 50, or 6 of 10). If fewer answer, that class is left
-      out of the teacher's result, and the teacher, the department heads and HR are notified. Internship, practicum
-      and field trip subjects are not evaluated.
+      {hasRule(policy) ? <>
+        <b>When a class counts.</b> A class's student evaluation counts only if <b>{ruleWords(policy)}</b> answers it (for
+        example, {neededResponses(50, policy)} of 50, or {neededResponses(10, policy)} of 10). If fewer answer, that class is left out of the teacher's
+        result, and the teacher, the department heads and HR are notified.
+      </> : <><b>When a class counts.</b> There is no participation rule: a class counts when <b>{ruleWords(policy)}</b> answered.</>}
+      {' '}Internship, practicum and field trip subjects are not evaluated.
     </div>
   );
 }

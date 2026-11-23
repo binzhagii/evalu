@@ -1,7 +1,7 @@
 // Core rules of evalU, taken from the thesis manuscript (Chapter 3, Tables 6, 8 and 9).
 // Shared by the server (server/*.js) and the browser pages.
 //
-// - FR11  a class counts only if at least half of the class PLUS ONE answered (50 students -> 26)
+// - FR11  a class counts only if enough of it answered: more than 50% to start with (50 students -> 26); HR can change or remove the rule
 // - FR13  qualifying subjects and several program chairs are averaged; an evaluator group with no
 //         valid result is removed from the denominator (no dean -> computed over 60%); 2 decimals
 // - Table 6  College faculty 40/40/20, Basic Education 40/20/20/20, Non-teaching: head <-> staff
@@ -11,7 +11,6 @@
 // Anything the manuscript does not give (e.g. weights for evaluating Deans) stays blank (null)
 // until HR enters it; no score is invented.
 
-export const THRESHOLD = 0.5;           // the line drawn on progress bars (the rule itself is half PLUS ONE)
 export const LOW_ITEM = 3.0;            // FR19: items averaging below "Satisfactory" (UB's 4-point scale) are flagged
 export { MAX_RATING, SCALES, CLASS_TYPES } from './ubForms.js';
 export { cronbachAlpha, alphaLabel, confidenceLabel } from './stats.js';
@@ -27,8 +26,9 @@ export { METHODS, AGGREGATIONS, MISSING_RULES, ROUNDING_METHODS, roundBy, parseE
  * version with a reason, so a closed period is always computed with the rules it was evaluated under.
  */
 export const DEFAULT_POLICY = Object.freeze({
-  participationPercent: 50,  // FR11: a class counts when this % of the class answered ...
-  participationPlusOne: true, // ... plus one (UB: "half of the class plus one"); false = at least that %
+  participationRule: 'more', // FR11: a class counts when 'more' than / 'atleast' this % of the class answered, or 'none' (no rule)
+  participationPercent: 50,  // "more than 50%" is UB's "half of the class plus one" (the same number for every class size)
+  participationMin: 1,       // with no rule: the answers a class needs at least
   bands: [3.51, 3.0, 2.5],    // lowest score for Outstanding / Satisfactory / Fair; below = Poor
   lowItem: 3.0,               // FR19: items averaging below this are flagged
   decimals: 2,                // FR13: final ratings are rounded to this many decimals
@@ -37,12 +37,19 @@ export const DEFAULT_POLICY = Object.freeze({
   approvalMode: 'all',        // FR17: 'all' VPs must approve, 'any' one VP is enough, or 'count' = at least approvalCount
   approvalCount: 1,
 });
+/** A saved policy with every field; the "plus one" of earlier versions is read as "more than". */
+export function fullPolicy(saved) {
+  const p = { ...DEFAULT_POLICY, ...(saved || {}) };
+  if (saved && !saved.participationRule && 'participationPlusOne' in saved) p.participationRule = saved.participationPlusOne === false ? 'atleast' : 'more';
+  delete p.participationPlusOne;
+  return p;
+}
 /** The policy in force now (the newest version HR saved). */
-export const currentPolicy = (db) => ({ ...DEFAULT_POLICY, ...(db?.policies?.at(-1)?.policy || {}), version: db?.policies?.at(-1)?.version || 0 });
+export const currentPolicy = (db) => ({ ...fullPolicy(db?.policies?.at(-1)?.policy), version: db?.policies?.at(-1)?.version || 0 });
 /** The policy of a period: the version it was created/closed with (NFR8), else the current one. */
 export const policyFor = (db, periodId) => {
   const p = periodId && db?.periods?.find((x) => x.id === periodId);
-  return p?.policy ? { ...DEFAULT_POLICY, ...p.policy } : currentPolicy(db);
+  return p?.policy ? fullPolicy(p.policy) : currentPolicy(db);
 };
 /** Round to the policy's number of decimals (2 by default). */
 export const roundTo = (x, d = 2) => (x == null ? null : Math.round((x + Number.EPSILON) * 10 ** d) / 10 ** d);
@@ -73,11 +80,25 @@ export const INSTITUTION_DOMAIN = 'ubaguio.edu';
 export const isInstitutionalEmail = (e) =>
   typeof e === 'string' && /^[a-z0-9._%+-]+@([a-z0-9-]+\.)*ubaguio\.edu$/i.test(e.trim());
 
-/** FR11: responses needed for a class to count: half of the class plus one (by default; HR can change the policy). */
+/* ---------- FR11: the participation rule in words, so every screen says what HR set ---------- */
+export const PARTICIPATION_RULES = { more: 'More than', atleast: 'At least', none: 'No participation rule' };
+/** Is there a participation rule (a share of the class that must answer)? */
+export const hasRule = (policy) => policy?.participationRule !== 'none';
+/** "more than 50% of the class", "at least 60% of the class", "at least 3 students". */
+export function ruleWords(policy = DEFAULT_POLICY) {
+  if (hasRule(policy)) return `${policy.participationRule === 'atleast' ? 'at least' : 'more than'} ${policy.participationPercent ?? 50}% of the class`;
+  const n = Math.max(1, Number(policy.participationMin) || 1);
+  return n === 1 ? 'at least one student' : `at least ${n} students`;
+}
+/** Where the rule's line is drawn on a progress bar (nothing when there is no rule). */
+export const ruleMark = (policy) => (hasRule(policy) ? Math.min(1, (policy.participationPercent ?? 50) / 100) : undefined);
+
+/** FR11: responses needed for a class to count (the policy's participation rule). */
 export function neededResponses(enrolled, policy = DEFAULT_POLICY) {
   if (!enrolled) return 0;
-  const p = Number(policy.participationPercent ?? 50);
-  const n = policy.participationPlusOne === false ? Math.ceil((enrolled * p) / 100) : Math.floor((enrolled * p) / 100) + 1;
+  const share = (enrolled * Number(policy.participationPercent ?? 50)) / 100;
+  const n = !hasRule(policy) ? Math.round(Number(policy.participationMin) || 1)
+    : (policy.participationRule ?? (policy.participationPlusOne === false ? 'atleast' : 'more')) === 'atleast' ? Math.ceil(share - 1e-9) : Math.floor(share + 1e-9) + 1;
   return Math.min(enrolled, Math.max(1, n));
 }
 
@@ -103,6 +124,31 @@ export const UB_DEPARTMENTS = [
   { id: 'GS', name: 'Graduate School', kind: 'college' },
   { id: 'BE', name: 'Basic Education', kind: 'basic' },
 ];
+/** The type of a department: schools have classes; an office has a head and staff who evaluate each other. */
+export const DEPT_KINDS = { college: 'College', basic: 'Basic Education', office: 'Office' };
+export const activeDepts = (db) => db.departments.filter((d) => d.active !== false);
+/** Departments with classes, teachers and students. */
+export const schoolDepts = (db) => activeDepts(db).filter((d) => d.kind !== 'office');
+export const officeDepts = (db) => activeDepts(db).filter((d) => d.kind === 'office');
+/** What is missing in a department, so nobody is left without an evaluation unnoticed. */
+export function deptWarnings(db, d) {
+  const here = db.users.filter((u) => u.active !== false && u.dept === d.id);
+  const has = (...positions) => here.some((u) => positions.includes(u.position));
+  if (d.kind === 'office') return !here.length ? [] : !has('head') ? ['No office head: its staff get no evaluation.'] : !has('staff', 'secretary') ? ['No staff: the office head gets no evaluation.'] : [];
+  if (!has('faculty', 'ci')) return [];
+  return d.kind === 'basic' ? (has('principal') ? [] : ['No principal.']) : has('dean') ? [] : ['No dean.'];
+}
+/** Why a department can't be deleted (empty = it can): what still uses it. */
+export function deptKeep(db, id) {
+  const out = [];
+  if (db.users.some((u) => u.dept === id)) out.push('people');
+  if (db.sections.some((s) => s.dept === id)) out.push('classes');
+  if (db.instruments.some((i) => i.dept === id)) out.push('evaluation tools');
+  if ((db.formulas || []).some((f) => f.dept === id)) out.push('a formula');
+  if (db.periods.some((p) => p.depts?.includes(id))) out.push('an evaluation period for it');
+  if (db.periods.some((p) => Object.values(p.people || {}).some((x) => x.dept === id))) out.push('old results');
+  return out;
+}
 /** The UB departments that are not in the system yet (matched by id or name). */
 export const missingUbDepartments = (db) =>
   UB_DEPARTMENTS.filter((d) => !db.departments.some((x) => x.id === d.id || x.name.toLowerCase() === d.name.toLowerCase()));
@@ -205,6 +251,14 @@ export function targetType(db, u) {
   if (u.role === 'NTP') return u.position === 'head' ? 'NTP_HEAD' : 'NTP_STAFF';
   return null;
 }
+/**
+ * A person's category and department in a period: { type, dept }. A closed period remembers them (period.people, set
+ * when it is closed), so moving or promoting somebody later never changes a rating they already have.
+ */
+export function personIn(db, periodId, u) {
+  const kept = periodId && u && periodById(db, periodId)?.people?.[u.id];
+  return kept || { type: targetType(db, u), dept: u?.dept ?? null };
+}
 /** People who get evaluation results of their own (faculty, Clinical Instructors, deans, non-teaching personnel). */
 export const isEvaluatee = (u) => (u.role === 'TP' && ['faculty', 'ci', 'dean'].includes(u.position)) || u.role === 'NTP';
 
@@ -268,7 +322,9 @@ export function taskVariant(db, task) {
 /** The form a not-yet-submitted task is answered on. */
 export function formForTask(db, task) {
   const tg = userById(db, task.targetId);
-  return tg ? instrumentFor(db, targetType(db, tg), task.group, tg.dept, taskVariant(db, task)) : null;
+  if (!tg) return null;
+  const who = personIn(db, task.periodId, tg);
+  return instrumentFor(db, who.type, task.group, who.dept, taskVariant(db, task));
 }
 /** The form a task was (or will be) answered on: the version stored with a submitted response. */
 export const formOfTask = (db, task) =>
@@ -379,7 +435,7 @@ export function sectionStats(db, periodId, sectionId, participation = null) {
   const tasks = db.tasks.filter((t) => t.periodId === periodId && t.sectionId === sectionId && t.group === 'ST');
   const required = tasks.length;
   const done = tasks.filter((t) => t.response);
-  const needed = neededResponses(required, { ...policyFor(db, periodId), ...(participation || {}) });
+  const needed = neededResponses(required, { ...policyFor(db, periodId), ...(participation || (sec && participationFor(db, periodId, sec)) || {}) });
   const rate = required ? done.length / required : 0;
   const valid = required > 0 && done.length >= needed;
   const score = valid ? mean(done.map((t) => responseScore(t.response))) : null;
@@ -421,7 +477,7 @@ export const formGroups = (db, tt, { scheduled = false, drafts = false } = {}) =
   return (s === 'in-use' && i.items?.length > 0) || (s === 'scheduled' && (scheduled || drafts)) || (s === 'draft' && drafts);
 }).map((i) => i.group))];
 /** The evaluator groups of a person's rating in a period: the groups in the formula used for their category and department. */
-export const ratingGroups = (db, periodId, u) => [...new Set(formulaFor(db, periodId, targetType(db, u), u.dept).components.map((c) => c.group))];
+export const ratingGroups = (db, periodId, u) => { const who = personIn(db, periodId, u); return [...new Set(formulaFor(db, periodId, who.type, who.dept).components.map((c) => c.group))]; };
 const median = (a) => { if (!a.length) return null; const s = [...a].sort((x, y) => x - y); const m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
 
 /**
@@ -430,17 +486,14 @@ const median = (a) => { if (!a.length) return null; const s = [...a].sort((x, y)
  */
 export function computeTarget(db, periodId, targetId, opts = {}) {
   const target = userById(db, targetId);
-  const tt = targetType(db, target);
-  const f = opts.formula || formulaFor(db, periodId, tt, target?.dept);
+  const { type: tt, dept } = personIn(db, periodId, target);
+  const f = opts.formula || formulaFor(db, periodId, tt, dept);
   const comps = f.components || [];
   const groups = {};
   const sections = [];
   const m = methodOf(f.method, f.methodVersion ?? 1);
   const policy = policyFor(db, periodId);
-  const participation = {
-    participationPercent: f.participation?.percent ?? policy.participationPercent,
-    participationPlusOne: f.participation?.plusOne ?? policy.participationPlusOne,
-  };
+  const participation = participationRuleOf(f, policy);
   const shown = (c) => (m?.usesWeights ? c.weight : m?.equalShares ? +(100 / comps.length).toFixed(2) : null);
   for (const c of comps) {
     const g = c.group;
@@ -482,7 +535,7 @@ export function computeTarget(db, periodId, targetId, opts = {}) {
     }
   }
   return {
-    targetId, target, type: tt, groups, sections, final: r.final, status: r.status, missing: r.missing, missingW, basis: r.basis, total, margin,
+    targetId, target, type: tt, dept, groups, sections, final: r.final, status: r.status, missing: r.missing, missingW, basis: r.basis, total, margin,
     // the whole formula version is kept with the result, so it can be recomputed exactly later
     formula: { id: f.id || null, key: f.key || tt, name: f.name, version: f.version ?? 0, method: f.method, methodVersion: f.methodVersion ?? 1, components: comps.map((c) => ({ group: c.group, weight: c.weight ?? null, aggregation: c.aggregation, transform: c.transform || '' })), expression: f.expression || '', missing: f.missing, minGroups: f.minGroups ?? 1, participation: f.participation || null, effectiveFrom: f.effectiveFrom || '', effectiveUntil: f.effectiveUntil || '', rounding: f.rounding },
     breakdown: r.breakdown, steps: r.steps, how: r.how,
@@ -491,12 +544,34 @@ export function computeTarget(db, periodId, targetId, opts = {}) {
 /** A result that has a final score (complete, or re-weighted because a group is missing). */
 export const hasFinal = (r) => r.final != null;
 
-export function targetsOf(db) {
-  return db.users.filter((u) => targetType(db, u));
+/** Everyone who is evaluated; for a closed period, those who were evaluated then. */
+export function targetsOf(db, periodId = null) {
+  const kept = periodId && periodById(db, periodId)?.people;
+  return db.users.filter((u) => (kept ? kept[u.id] : targetType(db, u)));
 }
+/**
+ * Where an evaluator group counts now: { categories, list }. list says it in words: formulas in use or being prepared,
+ * starting formulas, and open periods.
+ */
+export function groupUse(db, id) {
+  const has = (f) => f?.components?.some((c) => c.group === id);
+  const categories = Object.keys(TARGET_TYPES).filter((tt) => has(formulaFor(db, null, tt, null)) || (db.formulas || []).some((f) => f.targetType === tt && f.status === 'active' && has(f.config)));
+  const list = categories.map((tt) => TARGET_TYPES[tt]);
+  for (const f of db.formulas || []) if (['draft', 'pending', 'rejected', 'approved', 'scheduled'].includes(f.status) && has(f.config)) list.push(`a formula being prepared for ${TARGET_TYPES[f.targetType]}`);
+  for (const p of db.periods.filter((x) => x.status === 'open')) if (Object.keys(TARGET_TYPES).some((tt) => has(formulaFor(db, p.id, tt, null))) || Object.values(p.formulas || {}).some(has)) list.push(p.name);
+  return { categories, list: [...new Set(list)] };
+}
+/** Did an evaluator group ever count or rate? Then it is archived, not deleted. */
+export const groupUsedBefore = (db, id) => db.tasks.some((t) => t.group === id)
+  || db.periods.some((p) => Object.values(p.formulas || {}).some((f) => f.components?.some((c) => c.group === id)) || Object.values(p.rules || {}).some((r) => id in r))
+  || (db.formulas || []).some((f) => f.status === 'archived' && f.config.components.some((c) => c.group === id));
+/** The people of one department in a period (as they were then). */
+export const targetsInDept = (db, periodId, dept) => targetsOf(db, periodId).filter((u) => personIn(db, periodId, u).dept === dept);
+/** The class sections whose student evaluation counts in a period. */
+export const countedSections = (db, periodId) => new Set(db.sections.map((s) => sectionStats(db, periodId, s.id, participationFor(db, periodId, s))).filter((s) => s.valid).map((s) => s.section.id));
 
 export function computeAll(db, periodId) {
-  return targetsOf(db).map((u) => computeTarget(db, periodId, u.id));
+  return targetsOf(db, periodId).map((u) => computeTarget(db, periodId, u.id));
 }
 
 /**
@@ -507,6 +582,8 @@ export function computeAll(db, periodId) {
 export function storeResults(db, p) {
   const at = new Date().toISOString();
   db.results = (db.results || []).filter((r) => r.periodId !== p.id);
+  // the category and department each person had in this period (a reopened period keeps the ones it has)
+  p.people = { ...Object.fromEntries(targetsOf(db).map((u) => [u.id, { type: targetType(db, u), dept: u.dept ?? null }])), ...(p.people || {}) };
   for (const r of computeAll(db, p.id)) {
     const rec = r.formula.id && (db.formulas || []).find((f) => f.id === r.formula.id);
     db.results.push({ periodId: p.id, targetId: r.targetId, data: {
@@ -546,14 +623,15 @@ export function expectedAssignments(db, periodId) {
   const p = periodById(db, periodId);
   const out = [];
   for (const t of targetsOf(db).filter(active)) {
-    if (!periodCovers(p, t.dept)) continue;
+    const dept = personIn(db, periodId, t).dept;
+    if (!periodCovers(p, dept)) continue;
     // only the groups that count in this person's formula (a department's own formula included) get tasks
     for (const g of ratingGroups(db, periodId, t)) {
       if (g === 'ST') {
         for (const sec of db.sections.filter((s) => s.facultyId === t.id && !isExemptSection(s)))
           for (const sid of sec.studentIds.filter((id) => active(userById(db, id)))) out.push({ evaluatorId: sid, targetId: t.id, group: g, sectionId: sec.id });
       } else {
-        for (const e of db.users.filter((u) => active(u) && u.dept === t.dept && u.id !== t.id && groupsOf(db, u).includes(g)))
+        for (const e of db.users.filter((u) => active(u) && u.dept === dept && u.id !== t.id && groupsOf(db, u).includes(g)))
           out.push({ evaluatorId: e.id, targetId: t.id, group: g, sectionId: null });
       }
     }
@@ -618,25 +696,27 @@ const fmtDate = (d) => new Date(d + 'T00:00:00').toLocaleDateString('en-US', { m
 
 // ---------- FR11 / FR12: participation threshold + notifying the parties concerned ----------
 /**
- * Notifies the faculty member, the department heads and HR about every class at or below half.
+ * Notifies the faculty member, the department heads and HR about every class without enough answers.
  * final = false: progress warning while the period is open (once a day).
  * final = true:  the period was closed and these classes are excluded (once).
  * Returns the number of classes below the threshold.
  */
-/** The participation rule for a class: its teacher's formula's own rule if it has one, else the period's policy. */
+/** The rule a formula is computed with: the period's policy. A formula used before the rule was set in one place keeps its own. */
+const participationRuleOf = (f, policy) => (f.participation
+  ? { participationRule: f.participation.plusOne === false ? 'atleast' : 'more', participationPercent: f.participation.percent }
+  : { participationRule: policy.participationRule, participationPercent: policy.participationPercent, participationMin: policy.participationMin });
+/** The participation rule for a class in a period. */
 export function participationFor(db, periodId, section) {
-  const target = userById(db, section.facultyId);
-  const formula = formulaFor(db, periodId, targetType(db, target), target?.dept);
-  const pol = policyFor(db, periodId);
-  return {
-    participationPercent: formula.participation?.percent ?? pol.participationPercent,
-    participationPlusOne: formula.participation?.plusOne ?? pol.participationPlusOne,
-  };
+  const who = personIn(db, periodId, userById(db, section.facultyId));
+  const formula = formulaFor(db, periodId, who.type, who.dept);
+  return participationRuleOf(formula, policyFor(db, periodId));
 }
 function participationNotices(draft, periodId, final) {
   const p = periodById(draft, periodId);
   const day = today();
-  const low = draft.sections.map((s) => sectionStats(draft, periodId, s.id, participationFor(draft, periodId, s))).filter((st) => st.required && !st.valid);
+  const words = ruleWords(policyFor(draft, periodId));
+  // no participation rule: no class is left out, so there is nothing to warn about
+  const low = draft.sections.filter((s) => hasRule(participationFor(draft, periodId, s))).map((s) => sectionStats(draft, periodId, s.id)).filter((st) => st.required && !st.valid);
   const kind = final ? 'invalidated' : 'participation';
   const tag = final ? `thr|${periodId}` : `part|${periodId}|${day}`;
   const line = (st) => `${st.section.code} (${st.section.subject}) – ${userById(draft, st.section.facultyId)?.name}: ${st.responded} of ${st.required} answered, ${st.needed} needed`;
@@ -645,8 +725,8 @@ function participationNotices(draft, periodId, final) {
     notify(draft, {
       key: final ? `thr|${periodId}|${s.id}` : `${tag}|${s.id}`, userId: s.facultyId, kind,
       text: final
-        ? `Student evaluation for ${s.code} (${s.subject}) in ${p.name} is excluded from your result: only ${st.responded} of ${st.required} students answered, and at least ${st.needed} (half of the class plus one) were needed.`
-        : `Only ${st.responded} of ${st.required} students in ${s.code} (${s.subject}) have answered the evaluation for ${p.name}. At least ${st.needed} (half of the class plus one) are needed by ${fmtDate(p.deadline)}, or this class won't count. Please remind your students.`,
+        ? `Student evaluation for ${s.code} (${s.subject}) in ${p.name} is excluded from your result: only ${st.responded} of ${st.required} students answered, and ${st.needed} (${words}) were needed.`
+        : `Only ${st.responded} of ${st.required} students in ${s.code} (${s.subject}) have answered the evaluation for ${p.name}. ${st.needed} (${words}) are needed by ${fmtDate(p.deadline)}, or this class won't count. Please remind your students.`,
     });
   }
   const byDept = {};
@@ -655,7 +735,7 @@ function participationNotices(draft, periodId, final) {
     for (const h of deptHeads(draft, dept)) {
       notify(draft, {
         key: `${tag}|dept|${dept}|${h.id}`, userId: h.id, kind,
-        text: `${final ? `${p.name} was closed. These classes in your department are excluded` : `${plural(list.length, 'class', 'classes')} in your department ${list.length === 1 ? 'does' : 'do'} not have enough answers yet for ${p.name} (half of the class plus one)`}: ${list.map(line).join('; ')}.`,
+        text: `${final ? `${p.name} was closed. These classes in your department are excluded` : `${plural(list.length, 'class', 'classes')} in your department ${list.length === 1 ? 'does' : 'do'} not have enough answers yet for ${p.name} (${words})`}: ${list.map(line).join('; ')}.`,
       });
     }
   }
@@ -663,7 +743,7 @@ function participationNotices(draft, periodId, final) {
     for (const h of hrUsers(draft)) {
       notify(draft, {
         key: `${tag}|hr|${h.id}`, userId: h.id, kind,
-        text: `${p.name}: ${plural(low.length, 'class', 'classes')} ${final ? (low.length === 1 ? 'was excluded because' : 'were excluded because') : (low.length === 1 ? 'does not have enough answers yet:' : 'do not have enough answers yet:')} fewer than half of the class plus one answered. ${low.slice(0, 5).map(line).join('; ')}${low.length > 5 ? `; and ${low.length - 5} more` : ''}.`,
+        text: `${p.name}: ${plural(low.length, 'class', 'classes')} ${final ? (low.length === 1 ? 'was excluded:' : 'were excluded:') : (low.length === 1 ? 'does not have enough answers yet:' : 'do not have enough answers yet:')} ${words} must answer. ${low.slice(0, 5).map(line).join('; ')}${low.length > 5 ? `; and ${low.length - 5} more` : ''}.`,
       });
     }
   }
@@ -732,7 +812,7 @@ export function sendReminders(draft, periodId) {
 // ---------- participation forecast (early warning) ----------
 const DAY_MS = 86400000;
 /**
- * Will this class reach half + 1 by the deadline at its current pace?
+ * Will enough of this class answer by the deadline at its current pace?
  * pace = answers so far / days since the period opened; projected = answers so far + pace x days left.
  * Returns null for a class with no evaluation in an open period. status: reached | on-track | at-risk | too-early
  * (the first 2 days give too little to go on).
@@ -743,7 +823,8 @@ export function participationForecast(db, periodId, sectionId, now = Date.now())
   const start = p?.startDate ? Date.parse(p.startDate + 'T00:00:00') : p?.openedAt ? Date.parse(p.openedAt) : null;
   if (!p || p.status !== 'open' || start == null) return null;
   const sec = db.sections.find((x) => x.id === sectionId);
-  const st = sectionStats(db, periodId, sectionId, sec && participationFor(db, periodId, sec));
+  if (sec && !hasRule(participationFor(db, periodId, sec))) return null; // no rule, nothing to reach
+  const st = sectionStats(db, periodId, sectionId);
   if (!st.required || isExemptSection(st.section)) return null;
   const elapsed = (now - start) / DAY_MS;
   const left = Math.max(0, (new Date(p.deadline + 'T23:59:59').getTime() - now) / DAY_MS);
@@ -777,11 +858,11 @@ export function forecastWarnings(draft, periodId, now = Date.now()) {
   for (const f of risky) (byDept[f.section.dept] ||= []).push(f);
   for (const [dept, list] of Object.entries(byDept)) {
     const ids = list.map((f) => f.section.id).sort().join(',');
-    for (const h of deptHeads(draft, dept)) if (notify(draft, { key: `fcd|${periodId}|${dept}|${h.id}|${ids}`, userId: h.id, kind: 'participation', text: `Early warning for ${p.name}: at their current pace, ${plural(list.length, 'class', 'classes')} in your department may not reach half + 1 by ${fmtDate(p.deadline)}: ${list.map(line).join('; ')}.` })) sent++;
+    for (const h of deptHeads(draft, dept)) if (notify(draft, { key: `fcd|${periodId}|${dept}|${h.id}|${ids}`, userId: h.id, kind: 'participation', text: `Early warning for ${p.name}: at their current pace, ${plural(list.length, 'class', 'classes')} in your department may not have enough answers by ${fmtDate(p.deadline)}: ${list.map(line).join('; ')}.` })) sent++;
   }
   if (risky.length) {
     const ids = risky.map((f) => f.section.id).sort().join(',');
-    for (const h of hrUsers(draft)) if (notify(draft, { key: `fch|${periodId}|${h.id}|${ids}`, userId: h.id, kind: 'participation', text: `Early warning for ${p.name}: at their current pace, ${plural(risky.length, 'class', 'classes')} may not reach half + 1 by ${fmtDate(p.deadline)}: ${risky.slice(0, 5).map(line).join('; ')}${risky.length > 5 ? `; and ${risky.length - 5} more` : ''}. See Response progress.` })) sent++;
+    for (const h of hrUsers(draft)) if (notify(draft, { key: `fch|${periodId}|${h.id}|${ids}`, userId: h.id, kind: 'participation', text: `Early warning for ${p.name}: at their current pace, ${plural(risky.length, 'class', 'classes')} may not have enough answers by ${fmtDate(p.deadline)}: ${risky.slice(0, 5).map(line).join('; ')}${risky.length > 5 ? `; and ${risky.length - 5} more` : ''}. See Response progress.` })) sent++;
   }
   return sent;
 }
@@ -814,7 +895,7 @@ export function canSeeAll(user, period) {
 }
 /** NFR6: own results only after Vice President approval and release to faculty. */
 export function canSeeOwn(user, period) {
-  return stageAtLeast(period, 'faculty') && isEvaluatee(user);
+  return stageAtLeast(period, 'faculty') && (isEvaluatee(user) || !!period.people?.[user.id]); // also someone who has another position now
 }
 /** FR16: deans/principals see their department's results once released to faculty. */
 export function canSeeDept(user, period) {

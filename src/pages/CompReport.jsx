@@ -6,7 +6,7 @@
 import { useState } from 'react';
 import { useApp } from '../lib/store';
 import {
-  computeTarget, deptName, groupName, interpretation, bandTable, policyFor, DEFAULT_POLICY, round2, targetsOf, targetType,
+  computeTarget, deptName, groupName, interpretation, bandTable, policyFor, ruleWords, DEFAULT_POLICY, round2, targetsOf, personIn,
   formOfTask, itemStats, itemCategory, responseScore, commentParts,
 } from '../lib/logic';
 import { Select, PrintButton, Empty } from '../ui';
@@ -41,7 +41,7 @@ const PERSON = { COLLEGE_FACULTY: 'Instructor', BASICED_TEACHER: 'Teacher', CI: 
 const ROMAN = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII'];
 const two = (x) => (x == null ? '—' : round2(x).toFixed(2));
 const mean = (a) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : null);
-const schoolOf = (db, u) => (u.dept ? deptName(db, u.dept) : 'Non-teaching').replace(/\s*\([A-Z]+\)$/, '').toUpperCase();
+const schoolOf = (db, res) => (res.dept ? deptName(db, res.dept) : 'Non-teaching').replace(/\s*\([A-Z]+\)$/, '').toUpperCase();
 
 /** A comment shown word for word; the two-box comments of supervisors are labelled. */
 export function CommentText({ c }) {
@@ -73,7 +73,7 @@ export function CompSheet({ res, period, ctrl, db }) {
       <div className="comp-ctrl">CTRL# <span>{ctrl}</span></div>
       <div className="comp-who">
         <span><b>{PERSON[res.type]}:</b> <u>{res.target.name}</u></span>
-        <span><b>School:</b> <u className="comp-school">{schoolOf(db, res.target)}</u></span>
+        <span><b>School:</b> <u className="comp-school">{schoolOf(db, res)}</u></span>
       </div>
       <table className="comp-table">
         <thead><tr>{groups.map(([g]) => <th key={g}>{columnFor(res.type, g, db)}</th>)}<th className="comp-final">FINAL RATING</th><th>RATING INTERPRETATION</th></tr></thead>
@@ -99,7 +99,7 @@ export function evalSheetsOf(db, periodId, res) {
   const out = [];
   for (const g of Object.keys(res.groups)) {
     if (g === 'ST') {
-      // students: one sheet per class that counted (half of the class + 1 answered)
+      // students: one sheet per class that counted (enough students answered)
       for (const s of res.sections.filter((x) => x.valid)) out.push({ group: g, section: s.section, tasks: answered.filter((t) => t.group === g && t.sectionId === s.section.id) });
     } else out.push({ group: g, section: null, tasks: answered.filter((t) => t.group === g) });
   }
@@ -129,7 +129,7 @@ export function EvalSheet({ db, period, res, sheet }) {
     ['Employee ID', res.target.username || (user?.id === res.targetId ? user.username : '')],
     ['Name', res.target.name.toUpperCase()],
     ...(sheet.section ? [['Subject', sheet.section.subject], ['Section', sheet.section.code]] : []),
-    ['Department', schoolOf(db, res.target)],
+    ['Department', schoolOf(db, res)],
     ['Respondents', sheet.tasks.length],
   ];
   return (
@@ -223,8 +223,8 @@ export function UbPrints({ periodId }) {
   const [kind, setKind] = useState('teach');
   const [who, setWho] = useState('');
   const [perPage, setPerPage] = useState('1');
-  const people = targetsOf(db)
-    .filter((u) => kindOf(targetType(db, u)) === kind && (!dept || u.dept === dept))
+  const people = targetsOf(db, periodId)
+    .filter((u) => { const who = personIn(db, periodId, u); return kindOf(who.type) === kind && (!dept || who.dept === dept); })
     .sort((a, b) => a.name.localeCompare(b.name));
   const results = people.filter((u) => !who || u.id === who).map((u) => computeTarget(db, periodId, u.id))
     .filter((r) => Object.values(r.groups).some((g) => (what === 'comp' ? g.required : g.responded > 0)));
@@ -243,7 +243,7 @@ export function UbPrints({ periodId }) {
       <p className="muted no-print">
         These follow UB's printed HRMC forms. <b>Comprehensive report</b>: the average from each evaluator group, the final rating and the interpretation (CTRL# follows the A to Z order).
         {' '}<b>Performance evaluation</b>: one sheet per evaluator group, and per class for students, with the summary by category and the average of every question.
-        {' '}<b>Verbatim</b>: the written comments. Only classes where at least half of the class + 1 answered are included.
+        {' '}<b>Verbatim</b>: the written comments. Only the classes that counted ({ruleWords(policyFor(db, periodId))} answered) are included.
       </p>
       {!results.length
         ? <Empty icon="list" title="Nobody to show">No one here has answered evaluations in this period. Change the filters above.</Empty>

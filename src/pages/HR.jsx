@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useApp } from '../lib/store';
 import {
   STAGES, STAGE_LABEL, taskStatus, userById, sectionStats, targetsOf, deptName, groupName,
-  groupsOf, isExemptSection, isTeacher, pendingApprovals, periodCovers, CLASS_TYPES, approvalRuleText, policyFor, participationForecast,
+  groupsOf, isExemptSection, isTeacher, pendingApprovals, periodCovers, CLASS_TYPES, approvalRuleText, policyFor, currentPolicy, activeDepts, schoolDepts, hasRule, ruleWords, ruleMark, participationForecast,
   SEMESTERS, localDay, periodName, samePeriod, schoolYearNow,
 } from '../lib/logic';
 
@@ -51,7 +51,7 @@ export function Periods() {
   return (
     <>
       <div className="note"><b>Use this page for the three main dates:</b> create the semester's period, close it after the deadline, then send results to the VPs and release them to faculty.</div>
-      <RuleNote />
+      <RuleNote policy={db.periods.some((p) => p.status === 'open') ? policyFor(db, db.periods.findLast((p) => p.status === 'open').id) : currentPolicy(db)} />
       {msg && <div className="note">{msg}</div>}
       <Card title="Evaluation periods">
         <table>
@@ -69,10 +69,10 @@ export function Periods() {
                   <td><Badge kind={p.status === 'open' ? 'pending' : 'completed'}>{p.status}</Badge></td>
                   <td>{STAGE_LABEL[p.releaseStage]}{p.releaseStage === 'dir' && <><br /><span className="muted">{waiting.length ? `Waiting for approval (${approvalRuleText(db, p)}): ${waiting.map((u) => u.name).join(', ')}` : 'Enough VPs approved'}</span></>}
                     {p.rejections?.length > 0 && p.releaseStage === 'hr' && <><br /><Badge kind="overdue">returned by {p.rejections.at(-1).name}</Badge> <span className="muted small">"{p.rejections.at(-1).reason}"</span></>}
-                    <br /><span className="muted small">Rules: {policyFor(db, p.id).version ? `version ${policyFor(db, p.id).version}` : "UB's starting rules"}{p.status === 'open' ? ' (changes apply)' : ' (locked)'}</span></td>
+                    <br /><span className="muted small">Rules: {policyFor(db, p.id).version ? `version ${policyFor(db, p.id).version}` : "UB's starting rules"}{p.status === 'open' ? (db.tasks.some((t) => t.periodId === p.id && t.response) ? ' (kept: people already answered)' : ' (changes apply until someone answers)') : ' (locked)'}</span></td>
                   <td className="row">
-                    {p.status === 'open' && <button onClick={async () => { if (await ask(`Close ${p.name}?`, 'Classes where fewer than half of the class plus one answered will be excluded, and everyone concerned is notified.', { ok: 'Close period' })) run('closePeriod', p.id, (r) => `${p.name} closed. ${r.flagged} class(es) were excluded (below half + 1); the faculty, department heads and HR were notified.`); }}>Close period</button>}
-                    {p.status === 'open' && <button className="ghost" onClick={async () => (await ask('Send participation alerts?', 'Teachers and department heads of classes below half + 1 are notified now.', { ok: 'Send alerts' })) && run('checkThreshold', p.id, (r) => (r.flagged ? `${r.flagged} class(es) are at or below half. The faculty, their department heads and HR were notified.` : 'Every class has enough responses so far.'))}>Send participation alerts</button>}
+                    {p.status === 'open' && <button onClick={async () => { if (await ask(`Close ${p.name}?`, hasRule(policyFor(db, p.id)) ? `Classes are left out when they do not reach the rule (${ruleWords(policyFor(db, p.id))} must answer), and everyone concerned is notified.` : 'There is no participation rule, so no class is left out for low participation.', { ok: 'Close period' })) run('closePeriod', p.id, (r) => `${p.name} closed. ${r.flagged} class(es) were left out (not enough answers); the faculty, department heads and HR were notified.`); }}>Close period</button>}
+                    {p.status === 'open' && hasRule(policyFor(db, p.id)) && <button className="ghost" onClick={async () => (await ask('Send participation alerts?', 'Teachers and department heads of classes without enough answers are notified now.', { ok: 'Send alerts' })) && run('checkThreshold', p.id, (r) => (r.flagged ? `${r.flagged} class(es) do not have enough answers yet. The faculty, their department heads and HR were notified.` : 'Every class has enough responses so far.'))}>Send participation alerts</button>}
                     {p.status === 'closed' && p.releaseStage === 'hr' && <button className="ghost" onClick={async () => (await ask(`Reopen ${p.name}?`, 'Evaluators can answer again until you close it.', { ok: 'Reopen' })) && run('reopenPeriod', p.id)}>Reopen</button>}
                     {nextStage && p.status === 'closed' && nextStage === 'dir' && <button onClick={async () => (await ask('Send results to the VPs?', `The results of ${p.name} go to the VPs for review and approval. They will be notified.`, { ok: 'Send to VPs' })) && run('releaseNext', p.id, 'Results sent to the VPs for review and approval. They were notified.')}>Send to VPs for approval</button>}
                     {nextStage === 'faculty' && <button disabled={waiting.length > 0} title={waiting.length ? 'Every VP must approve first' : ''} onClick={async () => (await ask('Release results to faculty?', `Every person will see their own results for ${p.name} and be notified.`, { ok: 'Release to faculty' })) && run('releaseNext', p.id, 'Results released to faculty. Each person was notified.')}>Release to faculty</button>}
@@ -110,7 +110,7 @@ export function Periods() {
             <Select value="" onChange={(v) => { if (v === '__all') setDepts([]); else if (v) toggle(v); }}>
               <option value="">{depts.length ? '+ Add another department…' : 'All departments'}</option>
               {depts.length > 0 && <option value="__all">All departments (clear the list)</option>}
-              {db.departments.filter((d) => !depts.includes(d.id)).map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+              {activeDepts(db).filter((d) => !depts.includes(d.id)).map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
             </Select></label>
           {depts.map((id) => (
             <span key={id} className="tag">{deptName(db, id)}
@@ -261,7 +261,7 @@ export function Classes() {
         <p className="muted">Classes that don't exist yet are created. <b>Teachers and students who don't have an account yet get one automatically</b> in the department you choose. A student's first password is their <b>student ID</b>; a teacher's is the part of their email before the @ (for example <code>jdelacruz</code>). Everyone must change it when they first sign in. People who already have an account are just added to the class. Rows with a problem are listed and skipped.</p>
         <div className="row">
           <label className="inline">Department of this list
-            <Select value={listDept} onChange={setListDept}><option value="">Choose…</option>{db.departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</Select></label>
+            <Select value={listDept} onChange={setListDept}><option value="">Choose…</option>{schoolDepts(db).map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</Select></label>
         </div>
         <div className="row">
           <label className="file-pick"><input type="file" accept=".csv,.txt,text/csv" onChange={async (e) => { const file = e.target.files?.[0]; if (file) { setCsv(await file.text()); setOut(null); } e.target.value = ''; }} />Choose CSV file…</label>
@@ -329,7 +329,7 @@ export function Monitor({ deptOnly }) {
   const depts = db.departments.filter((d) => !deptOnly || d.id === user.dept);
   return (
     <>
-      <RuleNote />
+      <RuleNote policy={open.length ? policyFor(db, open.at(-1).id) : currentPolicy(db)} />
       {open.length === 0 && <Card><Empty icon="calendar" title="No evaluation period is open" /></Card>}
       {open.map((p) => {
         const pt = db.tasks.filter((t) => t.periodId === p.id);
@@ -357,7 +357,7 @@ export function Monitor({ deptOnly }) {
   );
 }
 
-/** Participation forecast summary: how many classes may not reach half + 1 by the deadline at their current pace. */
+/** Participation forecast summary: how many classes may not have enough answers by the deadline at their current pace. */
 function EarlyWarning({ period: p, secs }) {
   const { db } = useApp();
   const fcs = secs.map((s) => participationForecast(db, p.id, s.id)).filter(Boolean);
@@ -366,14 +366,14 @@ function EarlyWarning({ period: p, secs }) {
   const by = new Date(p.deadline + 'T00:00:00').toLocaleDateString(undefined, { month: 'long', day: 'numeric' });
   return (
     <div className={`note ${risk ? 'warn' : 'ok'}`}>
-      <b>Forecast for {by}:</b> {risk ? `${risk} class${risk > 1 ? 'es' : ''} may not reach half + 1 at the current pace` : 'every class is on track or already has enough answers'}{track ? ` · ${track} on track` : ''} · {fcs.filter((f) => f.status === 'reached').length} already have enough.
+      <b>Forecast for {by}:</b> {risk ? `${risk} class${risk > 1 ? 'es' : ''} may not have enough answers at the current pace` : 'every class is on track or already has enough answers'}{track ? ` · ${track} on track` : ''} · {fcs.filter((f) => f.status === 'reached').length} already have enough.
       {risk > 0 && ' Teachers and department heads of the classes at risk were warned. Choose "Only classes at risk" below to see them.'}
-      <details className="source"><summary>How the forecast works</summary><p>Pace = answers so far ÷ days since the period opened. Expected by the deadline = answers so far + pace × days left. A class is "at risk" when that is below half of the class plus one. The first 2 days are too early to tell. It assumes students keep answering at the same pace; reminders and class time with the QR code usually raise it.</p></details>
+      <details className="source"><summary>How the forecast works</summary><p>Pace = answers so far ÷ days since the period opened. Expected by the deadline = answers so far + pace × days left. A class is "at risk" when that is below the number of answers it needs. The first 2 days are too early to tell. It assumes students keep answering at the same pace; reminders and class time with the QR code usually raise it.</p></details>
     </div>
   );
 }
 
-/** Response rate of each class in a period, a page at a time; "below half + 1" classes can be shown alone. */
+/** Response rate of each class in a period, a page at a time; the classes without enough answers can be shown alone. */
 function ClassProgress({ title, period: p, secs }) {
   const { db } = useApp();
   const [only, setOnly] = useState('');
@@ -391,7 +391,7 @@ function ClassProgress({ title, period: p, secs }) {
   return (
             <Card title={`${title} (${shown.length})`}>
               <div className="row">
-                <Select value={only} onChange={setOnly}><option value="">All classes</option><option value="low">Only classes below half + 1</option><option value="ok">Only classes with enough responses</option><option value="risk">Only classes at risk (forecast)</option></Select>
+                <Select value={only} onChange={setOnly}><option value="">All classes</option><option value="low">Only classes without enough answers</option><option value="ok">Only classes with enough responses</option><option value="risk">Only classes at risk (forecast)</option></Select>
                 {depts.length > 1 && <Select value={dept} onChange={setDept}><option value="">All departments</option>{depts.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</Select>}
               </div>
               <table>
@@ -399,8 +399,8 @@ function ClassProgress({ title, period: p, secs }) {
                 <tbody>{rows.map((s) => {
                   if (isExemptSection(s)) return <tr key={s.id}><td>{s.code} – {s.subject}</td><td>{userById(db, s.facultyId)?.name}</td><td colSpan={2} className="muted">—</td><td><Badge kind="muted">not evaluated (practicum/internship/field trip)</Badge></td><td /></tr>;
                   const st = sectionStats(db, p.id, s.id);
-                  return <tr key={s.id}><td>{s.code} – {s.subject}</td><td>{userById(db, s.facultyId)?.name}</td><td><div className="meter-row"><Meter value={st.rate} mark={0.5} /><span>{st.responded}/{st.required} <span className="muted">needs {st.needed}</span></span></div></td><td>{pct(st.rate)}</td>
-                    <td>{!st.required ? <span className="muted">no tasks yet</span> : st.belowHalf ? <Badge kind="overdue">below half + 1 – would be excluded</Badge> : <Badge kind="completed">enough responses</Badge>}</td>
+                  return <tr key={s.id}><td>{s.code} – {s.subject}</td><td>{userById(db, s.facultyId)?.name}</td><td><div className="meter-row"><Meter value={st.rate} mark={ruleMark(policyFor(db, p.id))} tone={st.valid ? 'good' : 'bad'} /><span>{st.responded}/{st.required} <span className="muted">needs {st.needed}</span></span></div></td><td>{pct(st.rate)}</td>
+                    <td>{!st.required ? <span className="muted">no tasks yet</span> : st.belowHalf ? <Badge kind="overdue">{hasRule(policyFor(db, p.id)) ? 'not enough answers – would be left out' : `needs ${st.needed - st.responded} more to have a score`}</Badge> : <Badge kind="completed">enough responses</Badge>}</td>
                     <td><ForecastBadge fc={participationForecast(db, p.id, s.id)} deadline={p.deadline} /></td></tr>;
                 })}</tbody>
               </table>

@@ -10,13 +10,14 @@ import {
 import { Card, Select, Badge, ask, useNavArgs } from '../ui';
 import { AddGroup, BothLevels, Overview, TryIt, formulaNow } from './FormulaParts';
 import FormulaApprovals from './FormulaApprovals';
+import EvaluatorGroups from './EvaluatorGroups';
 
 const STATUS = { draft: ['pending', 'Not sent yet'], pending: ['info', 'Waiting for VP'], approved: ['completed', 'Approved, ready to use'], scheduled: ['info', 'Starts next period'], active: ['completed', 'In use'], archived: ['muted', 'Old version'], rejected: ['overdue', 'Returned by VP'] };
 const day = (iso) => (iso ? new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : '');
 const short = (txt) => txt.split(':')[0];
 
 /** The settings, in plain words. Technical settings are under "More options". */
-function FormulaForm({ f, setF, groups, groupNames, readOnly }) {
+function FormulaForm({ f, setF, groups, groupNames, readOnly, onEditGroup }) {
   const set = (k, v) => setF({ ...f, [k]: v });
   const setComp = (i, k, v) => set('components', f.components.map((c, j) => (j === i ? { ...c, [k]: v } : c)));
   const unused = groups.filter((g) => !f.components.some((c) => c.group === g));
@@ -32,7 +33,7 @@ function FormulaForm({ f, setF, groups, groupNames, readOnly }) {
             <tr key={c.group}>
               <td><b>{groupNames[c.group] || c.group}</b></td>
               {weighted && <td><input type="number" min="0" max="100" step="5" className="tiny" aria-label={`${groupNames[c.group] || c.group} percentage`} disabled={readOnly} value={c.weight ?? ''} onChange={(e) => setComp(i, 'weight', e.target.value === '' ? null : Number(e.target.value))} /> %</td>}
-              {!readOnly && <td><button className="ghost" onClick={() => set('components', f.components.filter((_, j) => j !== i))}>Remove</button></td>}
+              {!readOnly && <td><span className="row" style={{ margin: 0 }}><button className="ghost" onClick={() => onEditGroup(c.group)}>Edit group</button><button className="ghost" onClick={() => set('components', f.components.filter((_, j) => j !== i))}>Remove</button></span></td>}
             </tr>
           ))}
           {weighted && <tr className="cat-total"><td>Total</td><td><b>{+total.toFixed(2)}%</b> {Math.abs(total - 100) > 1e-9 && <Badge kind="overdue">must be 100%</Badge>}</td>{!readOnly && <td />}</tr>}
@@ -61,10 +62,7 @@ function FormulaForm({ f, setF, groups, groupNames, readOnly }) {
         <div className="row">
           <label className="inline">Give a final rating only when at least <input type="number" min="1" max={Math.max(1, f.components.length)} className="tiny" disabled={readOnly} value={f.minGroups} onChange={(e) => set('minGroups', Number(e.target.value))} /> group(s) have a rating</label>
         </div>
-        <div className="row">
-          <label className="inline">Students: require at least <input type="number" min="1" max="100" className="tiny" disabled={readOnly} value={f.participation?.percent ?? 50} onChange={(e) => set('participation', { ...f.participation, percent: Number(e.target.value) })} /> % of each class to respond</label>
-          <label className="inline"><input type="checkbox" disabled={readOnly} checked={f.participation?.plusOne ?? true} onChange={(e) => set('participation', { ...f.participation, plusOne: e.target.checked })} /> require one extra response</label>
-        </div>
+        <p>How many students of a class must answer is set once for everyone, under <b>Evaluation rules</b>.</p>
         {f.components.map((c, i) => (
           <div key={c.group} className="row">
             <label className="inline">{groupNames[c.group] || c.group}: combine their evaluations by <Select disabled={readOnly} value={c.aggregation} onChange={(v) => setComp(i, 'aggregation', v)}>
@@ -95,6 +93,7 @@ export default function Formulas() {
   const baseline = formulaNow(db, tt, dept || null); // a department without its own formula uses the one for all departments
   const [f, setF] = useState(null);
   const [msg, setMsg] = useState('');
+  const [editGroup, setEditGroup] = useState(null); // the evaluator group being edited
   const [adding, setAdding] = useState(false); // the "Add evaluator group" screen
   const editable = isHR && working && ['draft', 'rejected'].includes(working.status);
   const editor = useRef(null);
@@ -154,7 +153,7 @@ export default function Formulas() {
       <Card title={`Rating formula: ${who}`} actions={<span className="row" style={{ margin: 0 }}>
         <Select value={dept} onChange={(v) => pick(tt, v)} aria-label="Department">
           <option value="">All departments</option>
-          {db.departments.filter((d) => isHR || deptKeys.includes(d.id)).map((d) => <option key={d.id} value={d.id}>Only {d.name}</option>)}
+          {db.departments.filter((d) => (isHR && d.active !== false) || deptKeys.includes(d.id)).map((d) => <option key={d.id} value={d.id}>Only {d.name}</option>)}
         </Select>
       </span>}>
         <p className="muted">{isHR ? 'To give one department its own formula, choose it at the top right, then click Change formula.' : 'This is what counts now. Old results never change.'}</p>
@@ -176,7 +175,7 @@ export default function Formulas() {
           {working.status === 'scheduled' && <div className="note">Approved by {working.meta.approvedBy}. It starts when HR creates the next evaluation period. Until then, {who} keep the formula in use now.</div>}
           {editable && working.config.method !== 'WEIGHTED_AVERAGE' && <div className="note">This draft used another way of combining scores. It now uses percentages: check them, then save.</div>}
           <div className="fx-now"><b className="fx-sentence">{words(f)}</b></div>
-          <FormulaForm f={f} setF={setF} groups={groups} groupNames={names} readOnly={!editable} />
+          <FormulaForm f={f} setF={setF} groups={groups} groupNames={names} readOnly={!editable} onEditGroup={setEditGroup} />
           {errs.length > 0 && editable && <div className="note warn"><b>Before sending, fix:</b><ul>{errs.map((e) => <li key={e}>{e}</li>)}</ul></div>}
           <TryIt key={working.id + f.method} db={db} tt={tt} dept={dept || null} draft={f} baseline={baseline} />
           <div className="row fx-actions">
@@ -190,6 +189,7 @@ export default function Formulas() {
         </Card>
       )}
 
+      {isHR && <EvaluatorGroups editing={editGroup} setEditing={setEditGroup} />}
       <BothLevels formula={baseline} tt={tt} dept={dept || null} />
       <Card title="Past formulas">
         {versions.length === 0 ? <p className="muted">No saved formula yet. {who} uses the starting formula shown above.</p> : (

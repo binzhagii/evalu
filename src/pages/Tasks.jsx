@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { takeScannedClass } from './ClassQr';
 import { useApp } from '../lib/store';
-import { taskStatus, userById, formForTask, periodById, itemCategory, ratingWords, MAX_RATING, targetType, hasPlanBoxes, commentParts, packComment, groupName } from '../lib/logic';
+import { taskStatus, userById, formForTask, periodById, itemCategory, ratingWords, MAX_RATING, targetType, hasPlanBoxes, commentParts, packComment, groupName, policyFor, hasRule, ruleWords, neededResponses } from '../lib/logic';
 import { Card, Badge, Avatar, Stat, Stats, Meter, Empty, Icon, dueText, pct } from '../ui';
 
 const MAX_COMMENT = 2000; // the server refuses longer comments
@@ -41,7 +41,7 @@ export default function Tasks() {
     <>
       {done && <div className="note ok"><Icon name="check" size={16} /> {done}</div>}
       {scanWarn && <div className="note warn">{scanWarn}</div>}
-      {user.role === 'ST' && <StudentRuleNote />}
+      {user.role === 'ST' && <StudentRuleNote policy={policyFor(db, mine[0].periodId)} />}
       <Stats>
         <Stat icon="list" label="To do" value={todo.length} sub={todo.length ? dueText(nextDue) : 'All done'} tone={todo.length ? '' : 'good'} />
         <Stat icon="check" label="Submitted" value={finished.length} sub={`${pct(finished.length / mine.length)} of your evaluations`} tone="good" />
@@ -67,9 +67,9 @@ export default function Tasks() {
 }
 
 /** IC6: students are told why every answer matters. */
-function StudentRuleNote() {
+function StudentRuleNote({ policy }) {
   return (
-    <div className="note"><Icon name="alert" size={16} /> <b>Your answer counts for your whole class.</b> A class's evaluation is used only if <b>more than half of the class (half plus one)</b> answers it. For example, in a class of 40, at least 21 students must answer. Your name is never shown to your teacher.</div>
+    <div className="note"><Icon name="alert" size={16} /> <b>Your answer counts for your whole class.</b> {hasRule(policy) ? <>A class's evaluation is used only if <b>{ruleWords(policy)}</b> answers it. For example, in a class of 40, at least {neededResponses(40, policy)} students must answer.</> : 'Every answer is used.'} Your name is never shown to your teacher.</div>
   );
 }
 
@@ -187,7 +187,7 @@ function EvalForm({ taskId, onClose, onDone }) {
         <div className="meter-row"><span>{answered} of {ins.items.length} answered</span><Meter value={answered / ins.items.length} tone="brand" /></div>
         <p className="muted">Rate each statement from <b>{MAX_RATING} (highest)</b> to <b>1 (lowest)</b>, like on the paper form. Your answers are private: the person you evaluate never sees your name.</p>
         <div className="scale-key">{ratingWords(ins).map((w, i) => <span key={w}><b>{i + 1}</b> {w}</span>).reverse()}</div>
-        {task.group === 'ST' && <p className="muted">This class's evaluation counts only if more than half of the class (half plus one) answers.</p>}
+        {task.group === 'ST' && hasRule(policyFor(db, task.periodId)) && <p className="muted">This class's evaluation counts only if {ruleWords(policyFor(db, task.periodId))} answers.</p>}
       </Card>
 
       {errors.length > 0 && <div className="note warn"><Icon name="alert" size={16} /> {errors.length} item(s) are not answered yet. They are marked in red below. Your other answers are kept.</div>}

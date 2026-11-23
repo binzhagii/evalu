@@ -1,7 +1,7 @@
 // The evaluation cycle: what HR does each semester, in order, and what is already done (from the real data).
 // Also where a notification leads. Used by the Overview and Notifications pages.
 import {
-  TARGET_TYPES, computeAll, currentPolicy, expectedAssignments, formulaFor, hasFinal, isEvaluatee, isExemptSection, methodOf, needsPlan,
+  TARGET_TYPES, activeDepts, computeAll, deptWarnings, currentPolicy, expectedAssignments, formulaFor, hasFinal, isEvaluatee, isExemptSection, methodOf, needsPlan,
   participationForecast, pendingApprovals, periodCovers, plural, policyFor, stageAtLeast, targetType, toolName, toolProblems, toolStatus,
 } from './logic.js';
 
@@ -29,6 +29,7 @@ export function cycleSteps(db, p) {
   const version = currentPolicy(db).version;
   const classes = db.sections.filter((s) => !isExemptSection(s) && (!p || periodCovers(p, s.dept)));
   const empty = classes.filter((s) => !s.studentIds.length);
+  const heads = activeDepts(db).filter((d) => (!p || periodCovers(p, d.id)) && deptWarnings(db, d).length);
 
   const tasks = p ? db.tasks.filter((t) => t.periodId === p.id) : [];
   const have = new Set(tasks.map((t) => `${t.evaluatorId}|${t.targetId}|${t.group}|${t.sectionId || ''}`));
@@ -36,7 +37,7 @@ export function cycleSteps(db, p) {
   const answered = tasks.filter((t) => t.response).length;
   const risk = open ? classes.filter((s) => participationForecast(db, p.id, s.id)?.status === 'at-risk').length : 0;
 
-  const results = closed ? computeAll(db, p.id).filter((r) => periodCovers(p, r.target.dept)) : [];
+  const results = closed ? computeAll(db, p.id).filter((r) => periodCovers(p, r.dept)) : [];
   const rated = results.filter(hasFinal).length;
   const sent = !!p && stageAtLeast(p, 'dir'), released = !!p && stageAtLeast(p, 'faculty');
   const vps = sent && !released ? pendingApprovals(db, p) : [];
@@ -52,7 +53,7 @@ export function cycleSteps(db, p) {
       unset.length ? `Percentages not set: ${unset.map((t) => TARGET_TYPES[t]).join(', ')}` : `Every category has its percentages${waitingVp ? ` · ${plural(waitingVp, 'formula')} waiting for the VP` : ''}`),
     S('rules', 'Prepare', 'Check the evaluation rules', 'policy', 'Evaluation rules', null, version ? `Rules version ${version}. Change them only when HRMC changes its policy.` : "UB's starting rules. Change them only when HRMC changes its policy."),
     S('classes', 'Prepare', 'Add the classes, students and staff', 'classes', 'Classes & students', classes.length > 0 && !empty.length,
-      !classes.length ? 'No class yet. Import the class list from the Registrar or ARC.' : empty.length ? `${plural(empty.length, 'class has', 'classes have')} no students: ${empty.slice(0, 4).map((s) => s.code).join(', ')}${empty.length > 4 ? '…' : ''}` : `${plural(classes.length, 'class', 'classes')}. Check that they are this semester's.`),
+      !classes.length ? 'No class yet. Import the class list from the Registrar or ARC.' : empty.length ? `${plural(empty.length, 'class has', 'classes have')} no students: ${empty.slice(0, 4).map((s) => s.code).join(', ')}${empty.length > 4 ? '…' : ''}` : `${plural(classes.length, 'class', 'classes')}. Check that they are this semester's.${heads.length ? ` ${plural(heads.length, 'department')} without a dean, principal or office head: ${heads.slice(0, 3).map((d) => d.name).join(', ')}${heads.length > 3 ? '…' : ''}.` : ''}`),
     S('period', 'Run', 'Create the evaluation period', 'periods', 'Dates & release', !!p, p ? p.name : 'Choose the school year, semester and dates.'),
     S('tasks', 'Run', 'Create the evaluation tasks', 'assign', 'Evaluation tasks', tasks.length > 0 && !missing,
       !p ? 'evalU prepares who evaluates whom.' : !tasks.length ? 'Not created yet.' : missing ? `${tasks.length} created · ${plural(missing, 'evaluation')} more to create` : `${tasks.length} created`),

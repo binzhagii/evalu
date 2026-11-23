@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useApp } from '../lib/store';
 import {
   TARGET_TYPES, CLASS_TYPES, POSITIONS, activeFormula, currentPolicy, defaultFormula, deptName, formGroups, formulaSnapshot, groupName, groupsOf,
-  canSeeAll, computeFinal, computeTarget, howInWords, targetsOf, methodOf, targetType, toolName, toolParts, toolProblems, toolStatus,
+  canSeeAll, computeFinal, computeTarget, howInWords, targetsOf, personIn, methodOf, targetType, toolName, toolParts, toolProblems, toolStatus,
 } from '../lib/logic';
 import { Card, Select, Badge, Icon, useNav, fmt } from '../ui';
 
@@ -42,7 +42,7 @@ function TryItReady({ db, tt, dept, draft, baseline }) {
   const closed = db.periods.filter((p) => p.status === 'closed' && canSeeAll(user, p)); // a VP sees only the periods sent to them
   const [pid, setPid] = useState(closed.at(-1)?.id || '');
   const [showList, setShowList] = useState(false);
-  const people = targetsOf(db).filter((u) => targetType(db, u) === tt && (!dept || u.dept === dept));
+  const people = targetsOf(db, pid).filter((u) => { const who = personIn(db, pid, u); return who.type === tt && (!dept || who.dept === dept); });
   const real = useMemo(() => (pid ? people.map((u) => ({ u, now: computeTarget(db, pid, u.id).final, next: computeTarget(db, pid, u.id, { formula: draft }).final }))
     .filter((r) => r.now != null || r.next != null) : []), [db, pid, draft]); // eslint-disable-line react-hooks/exhaustive-deps
   const changed = real.filter((r) => r.now !== r.next);

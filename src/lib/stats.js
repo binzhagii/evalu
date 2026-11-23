@@ -3,7 +3,7 @@
 // A teacher's student rating comes from the students who answered, not from the whole class. If other
 // students had answered, the average would be a little different. The 95% margin of error says how much:
 // "3.52 ± 0.08" means the rating of the whole class would very likely be between 3.44 and 3.60.
-// Because a class is small and at least half of it answers, the finite population correction is applied
+// Because a class is small and a large part of it answers, the finite population correction is applied
 // (when every student answers there is no sampling error at all).
 // Cronbach's alpha tells whether the questions of a form measure the same thing consistently.
 // Used by the result cards, the stored results and Analytics; the same code runs in the browser and the server.

@@ -2,7 +2,7 @@
 // read and confirmed by the person, and checked against the next term's rating and the same areas.
 import { useState } from 'react';
 import { useApp } from '../lib/store';
-import { computeAll, categoryAverages, needsPlan, planProgress, planStatus, PLAN_OUTCOMES, policyFor, interpretation, userById, stageAtLeast, isResultHead, TARGET_TYPES, localDay } from '../lib/logic';
+import { computeAll, categoryAverages, needsPlan, planProgress, planStatus, PLAN_OUTCOMES, policyFor, personIn, interpretation, userById, stageAtLeast, isResultHead, TARGET_TYPES, localDay } from '../lib/logic';
 import { Card, Badge, Select, Empty, fmt, ask } from '../ui';
 
 const day = (iso) => new Date(iso.length === 10 ? `${iso}T00:00:00` : iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
@@ -107,11 +107,12 @@ export function FollowUp({ periodId, dept = null }) {
   const canManage = user.role === 'HR' || isResultHead(user);
   const pol = policyFor(db, periodId);
   const released = period && stageAtLeast(period, 'faculty');
-  const inScope = (id) => !dept || userById(db, id)?.dept === dept;
+  // a dean follows the people of the department: now, or when they were rated
+  const inScope = (id, pid = periodId) => !dept || userById(db, id)?.dept === dept || personIn(db, pid, userById(db, id)).dept === dept;
   const low = released ? computeAll(db, periodId).filter((r) => inScope(r.targetId) && r.targetId !== user.id && needsPlan(r, pol)) : [];
   const hasPlan = (id) => (db.plans || []).some((p) => p.targetId === id && p.periodId === periodId);
   const todo = low.filter((r) => !hasPlan(r.targetId));
-  const plans = (db.plans || []).filter((p) => inScope(p.targetId)).sort((a, b) => (a.status === b.status ? b.createdAt.localeCompare(a.createdAt) : a.status === 'open' ? -1 : 1));
+  const plans = (db.plans || []).filter((p) => inScope(p.targetId, p.periodId)).sort((a, b) => (a.status === b.status ? b.createdAt.localeCompare(a.createdAt) : a.status === 'open' ? -1 : 1));
   return (
     <Card title="Development follow-up">
       <p className="muted">For everyone rated Fair or Poor, the {dept ? 'dean or principal' : 'dean, principal or HR'} agrees a plan with them. The person confirms reading it, and when the next term's results are released evalU shows whether the rating and the same areas improved.</p>

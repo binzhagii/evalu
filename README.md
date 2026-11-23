@@ -109,14 +109,14 @@ Your home page. It shows:
 - **What to do**: the whole process in order (prepare, run, results, follow up), checked from the real data of the period, with the next step on top.
 - **Responses received**: how many evaluations in open periods are done.
 - **Overdue evaluations**: how many are past the deadline.
-- **Classes below half + 1**: classes where fewer than half of the class plus one have answered. These classes would be excluded if the period closed now.
+- **Classes needing more answers**: classes that have not reached the participation rule. They would be left out if the period closed now.
 - **Active accounts**, and how many people haven't signed in yet.
 - Each open period with progress bars for each evaluator group, the classes that need attention, and who can see the results of each period.
 
 #### Periods & release
 - **Create a period**: choose the school year (the current one or any later one), the semester (1st or 2nd) and the dates. The same semester can be created again only for departments it does not cover yet. Tick departments to open the evaluation for only those departments (none ticked = all). Then generate the tasks under Assignments.
 - **Send participation alerts** while a period is open: the teacher, the department heads and HR are told which classes are at or below half.
-- **Close a period** when the deadline has passed. Classes where fewer than half of the class plus one answered are excluded, and the teacher, department heads and HR are notified.
+- **Close a period** when the deadline has passed. Classes that did not reach the participation rule are left out, and the teacher, department heads and HR are notified.
 - **Release results** one step at a time: **HR only → VPs → Faculty**. After you send results to the VPs, **every VP must click "Approve"** before the *Release to faculty* button works.
 - **Reset simulated data** puts all the sample data back. It erases every change, so use it only while testing.
 
@@ -167,7 +167,8 @@ This is the single HR page for both evaluator percentages and the final-score me
 
 #### Accounts
 - **Add account**: enter a username, full name, role, position and department (students also choose their classes). The app shows a **temporary password once**, so write it down and give it to the person privately.
-- **Evaluator groups and roles**: HR can add evaluator groups (for example, Department Head), choose which evaluatee categories they apply to, and assign those groups to staff accounts. System access roles such as HR and VP remain fixed.
+- **Evaluator groups** are under **Scoring & calculation**: add, rename, change the members, and delete (a group used before is archived, so old results stay). The percentages must total 100%. System access roles such as HR and VP remain fixed.
+- **Departments & offices** (its own page): add, rename, deactivate, move everyone to another one, and delete. An **Office** (for example the Registrar) has a head and staff who evaluate each other. A closed period remembers the department and category each person had, so moving somebody later never changes a released rating; its results stay with the dean of that department.
 - **Edit**: change someone's name, role, department or classes.
 - **Reset password**: gives the person a new temporary password and signs them out everywhere.
 - **Deactivate**: the person can't sign in any more and gets no new tasks. Their past evaluations stay in the reports. **Reactivate** undoes this.
@@ -179,7 +180,7 @@ This is the single HR page for both evaluator percentages and the final-score me
 - **Scoring & calculation** (HR) / **Formula approvals** (VP): one page for evaluator percentages and the final-rating method. HR gives every category its own percentages, and configures evaluator groups, aggregation, missing-group handling, minimum groups, student participation, per-group score transformations, rounding, effective dates and department-only formulas, then previews and tests the result. The engine runs a formula stored as data, so evalU does not depend on one institutional formula. Methods are versioned plug-in modules (`src/lib/methods/`): weighted average, simple average, geometric mean, harmonic mean or a safe custom expression; adding a fundamentally new method still requires a developer to add a module, while a changed algorithm gets a new immutable method version. Each formula and computed result stores both its policy-formula version and algorithm version, so an implementation update cannot silently change historical calculations. Formula versions go draft → VP approval → activation → archived; approved versions never change, each period keeps its version, and closing a period stores every result with its formula version, parameters, approval and breakdown. "Check old ratings" recomputes every stored result with its own versions. Every result shows "How this rating was computed".
 - **QR code per class** (Class lists for HR, My results for teachers): a printable card; students scan it in class and, after signing in, that class's evaluation opens directly.
 - **Comment analysis**: comments are tagged positive / negative / mixed / neutral, marked as suggestions, and sorted by topic, with summaries in Reports and Analytics. Built-in English and Filipino word lists; nothing leaves evalU.
-- **Policy & rules**: the participation rule, rating bands, rounding, low-item cutoff, missing-group rule, minimum students before comments are shown, and how many VPs must approve. Every change needs a reason and is kept as a version; closed periods keep the version they were computed with.
+- **Evaluation rules**: the participation rule (more than / at least a percentage, or no rule with a minimum number of answers), rating bands, rounding, low-item cutoff, missing-group rule, minimum students before comments are shown, and how many VPs must approve. Every change needs a reason and is kept as a version; a period keeps its rules once somebody answered in it, so a change then starts with the next period.
 - **Audit log**: before → after values for rule changes, a SHA-256 hash chain with **Check for tampering**, and **Download for Excel** (CSV).
 - **How sure the results are**: every final rating shows its 95% margin of error (Student's t, with the finite population correction for the class size; 0 when everyone answered), a confidence level, and a warning when the range crosses a band limit (e.g. "could be Satisfactory or Outstanding"). Analytics shows the reliability of each form (Cronbach's alpha).
 - **Participation forecast (early warning)**: from each class's answering pace since the period opened, evalU predicts whether it will reach half + 1 by the deadline (reached / on track / at risk) on Progress, the Overview and the teacher's My results, and warns the teacher, the department heads and HR once a day while a class is at risk.
@@ -272,7 +273,7 @@ To start over afterwards, sign in as HR and click **Reset simulated data** under
 ## How scores are calculated
 
 1. Each evaluation gets a weighted average of its ratings (1–4), using the form's category and item weights.
-2. **Students**: a class counts only if **at least half of the class plus one** answered (26 of 50). Qualifying classes are averaged. Several program chairs are averaged too.
+2. **Students**: a class counts only if it reached the **participation rule**: more than 50% of the class to start with (26 of 50, the same as half plus one). HR can change the percentage, use "at least", or remove the rule (Evaluation rules). Qualifying classes are averaged. Several program chairs are averaged too.
 3. The groups (Students, Dean, Program Chair…) are combined with the **rating formula** in force for that period (set by HR under Scoring & calculation; no formula is built into the program).
 4. If a group has **no valid result**, its weight is **removed from the denominator** (no dean → computed over 60%).
 5. The final score is **rounded to two decimal places**.

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { useApp } from '../lib/store';
-import { computeTarget, canSeeOwn, sectionStats, STAGE_LABEL, THRESHOLD, isExemptSection, participationForecast, forecastText } from '../lib/logic';
+import { computeTarget, canSeeOwn, sectionStats, STAGE_LABEL, policyFor, currentPolicy, hasRule, ruleWords, ruleMark, isExemptSection, participationForecast, forecastText } from '../lib/logic';
 import { linkFor } from '../lib/cycle';
 import { Card, Badge, Meter, Empty, Icon, RuleNote, useNav } from '../ui';
 import { ResultCard, PastRecords } from './Reports';
@@ -10,7 +10,7 @@ import { MyPlans } from './Plans';
 import { CompSheet, EvalSheet, VerbatimSheet, evalSheetsOf } from './CompReport';
 
 const KIND = {
-  invalidated: { icon: 'alert', tone: 'bad', title: 'Class excluded (below half + 1)' },
+  invalidated: { icon: 'alert', tone: 'bad', title: 'Class left out (not enough answers)' },
   participation: { icon: 'chart', tone: 'warn', title: 'Low participation' },
   release: { icon: 'report', tone: '', title: 'Results' },
   overdue: { icon: 'clock', tone: 'bad', title: 'Overdue' },
@@ -109,7 +109,7 @@ export function MyResults() {
     <>
       {myClasses.length > 0 && open.length > 0 && (
         <div className="no-print"><Card title="Student response progress for my classes">
-          <p className="muted">At least half of the class plus one must answer, or that class is left out of your result. Tip: show the class QR code in class so students can answer on their phones right away.</p>
+          <p className="muted">{hasRule(policyFor(db, open.at(-1).id)) ? `${ruleWords(policyFor(db, open.at(-1).id)).replace(/^./, (x) => x.toUpperCase())} must answer, or that class is left out of your result. ` : ''}Tip: show the class QR code in class so students can answer on their phones right away.</p>
           {open.flatMap((p) => myClasses.map((s) => {
             const st = sectionStats(db, p.id, s.id);
             const fc = participationForecast(db, p.id, s.id);
@@ -117,7 +117,7 @@ export function MyResults() {
               <div key={p.id + s.id}>
               <div className="meter-row big">
                 <span><b>{s.code}</b> <span className="muted">{s.subject}{open.length > 1 ? ` · ${p.name}` : ''}</span></span>
-                <Meter value={st.rate} mark={THRESHOLD} />
+                <Meter value={st.rate} mark={ruleMark(policyFor(db, p.id))} tone={st.valid ? 'good' : 'bad'} />
                 <b>{st.responded}/{st.required}</b>
                 {!st.required ? <span className="muted">no tasks yet</span> : st.belowHalf ? <Badge kind="overdue">needs {st.needed - st.responded} more</Badge> : <Badge kind="completed">enough responses</Badge>}
                 <QrButton sections={[s]} label="Show QR code" />
@@ -137,7 +137,7 @@ export function MyResults() {
       ))}
       {hidden.length > 0 && <p className="muted no-print">Not yet released to you: {hidden.map((p) => `${p.name} (${STAGE_LABEL[p.releaseStage]})`).join('; ')}.</p>}
       {mine.length > 0 && <div className="no-print"><Card title="Earlier records (before evalU)"><PastRecords userId={user.id} /></Card></div>}
-      <details className="note no-print"><summary>How scores are calculated</summary><RuleNote /><p>Your final score combines each evaluator group's average using the weights set by HR. If a group has no valid result (for example, the dean did not evaluate), its weight is removed and the score is computed over the remaining groups. The final score is rounded to two decimal places.</p></details>
+      <details className="note no-print"><summary>How scores are calculated</summary><RuleNote policy={open.length ? policyFor(db, open.at(-1).id) : currentPolicy(db)} /><p>Your final score combines each evaluator group's average using the weights set by HR. If a group has no valid result (for example, the dean did not evaluate), its weight is removed and the score is computed over the remaining groups. The final score is rounded to two decimal places.</p></details>
     </>
   );
 }

@@ -139,13 +139,14 @@ CREATE TABLE IF NOT EXISTS sessions (
   };
   addCols('users', { active: 'INTEGER NOT NULL DEFAULT 1', must_change_password: 'INTEGER NOT NULL DEFAULT 0', email: 'TEXT', temp_password: 'TEXT' }); // temp_password: encrypted, only until the person sets their own
   addCols('users', { evaluator_group_ids: 'TEXT' });
+  addCols('departments', { active: 'INTEGER NOT NULL DEFAULT 1' }); // 0 = deactivated: not offered any more, kept for old records
   addCols('instrument_items', { category: 'TEXT' });
   addCols('criteria', { levels: 'TEXT' });        // JSON: own words for ratings 1..4 (e.g. "One program outreach" ... "More than three")
   addCols('sections', { class_type: 'TEXT' });    // lecture (NULL), lab, skills, clin-dent, clin-pt, clin-mt
   addCols('instruments', { variant: 'TEXT' });    // the type of class this form is for; NULL = standard
   addCols('instruments', { status: 'TEXT' });     // draft | scheduled; NULL = in use (active 1) or old (active 0)
   addCols('evaluator_groups', { positions: 'TEXT', target_types: 'TEXT' }); // JSON: positions that belong to it automatically; categories it was made for
-  addCols('periods', { start_date: 'TEXT', rules: 'TEXT', depts: 'TEXT', approvals: 'TEXT', last_auto: 'TEXT', policy: 'TEXT', rejections: 'TEXT', formulas: 'TEXT', opened_at: 'TEXT', last_forecast: 'TEXT' }); // policy: the version in force for the period; rejections: VP returns with reasons
+  addCols('periods', { start_date: 'TEXT', rules: 'TEXT', depts: 'TEXT', approvals: 'TEXT', last_auto: 'TEXT', policy: 'TEXT', rejections: 'TEXT', formulas: 'TEXT', opened_at: 'TEXT', last_forecast: 'TEXT', people: 'TEXT' }); // people: category and department of each person when the period was closed · // policy: the version in force for the period; rejections: VP returns with reasons
   addCols('responses', { instrument_id: 'TEXT' });
   addCols('audit_log', { prev_hash: 'TEXT', hash: 'TEXT' }); // tamper-evident chain (see addAudit)
   // Forms used to allow only one per pairing (UNIQUE). Versions need several, so rebuild that table once.
@@ -166,7 +167,7 @@ CREATE TABLE IF NOT EXISTS sessions (
 // ---------- how each table maps to the in-memory object ----------
 // Listed parent-first. Rows are kept in insertion order (rowid), like the old arrays.
 const TABLES = [
-  { name: 'departments', key: ['id'], rows: (db) => db.departments.map((d) => ({ id: d.id, name: d.name, kind: d.kind })) },
+  { name: 'departments', key: ['id'], rows: (db) => db.departments.map((d) => ({ id: d.id, name: d.name, kind: d.kind, active: d.active === false ? 0 : 1 })) },
   { name: 'evaluator_groups', key: ['id'], rows: (db) => (db.evaluatorGroups || []).map((g) => ({ id: g.id, name: g.name, built_in: g.builtIn ? 1 : 0, active: g.active === false ? 0 : 1, positions: g.positions?.length ? JSON.stringify(g.positions) : null, target_types: g.targetTypes?.length ? JSON.stringify(g.targetTypes) : null })) },
   { name: 'users', key: ['id'], rows: (db) => db.users.map((u) => ({ id: u.id, username: u.username, name: u.name, role: u.role, position: u.position ?? null, dept: u.dept ?? null, evaluator_group_ids: Array.isArray(u.evaluatorGroupIds) ? JSON.stringify(u.evaluatorGroupIds) : null, email: u.email ?? null, password_hash: u.passwordHash, active: u.active === false ? 0 : 1, must_change_password: u.mustChangePassword ? 1 : 0, temp_password: u.tempPassword ? JSON.stringify(u.tempPassword) : null })) },
   { name: 'sections', key: ['id'], rows: (db) => db.sections.map((s) => ({ id: s.id, code: s.code, subject: s.subject, faculty_id: s.facultyId, dept: s.dept, class_type: s.classType || null })) },
@@ -175,7 +176,7 @@ const TABLES = [
   { name: 'instruments', key: ['id'], rows: (db) => db.instruments.map((i) => ({ id: i.id, name: i.name, target_type: i.targetType, evaluator_group: i.group, dept: i.dept ?? null, version: i.version ?? 1, active: i.active === false ? 0 : 1, categories: i.categories && Object.keys(i.categories).length ? JSON.stringify(i.categories) : null, variant: i.variant || null, status: i.status || null })) },
   { name: 'instrument_items', key: ['instrument_id', 'criterion_id'], rows: (db) => db.instruments.flatMap((i) => i.items.map((it) => ({ instrument_id: i.id, criterion_id: it.criterionId, weight: it.weight, category: it.category || null }))) },
   { name: 'group_weights', key: ['target_type', 'evaluator_group'], rows: (db) => Object.entries(db.rules).flatMap(([tt, r]) => Object.entries(r).map(([g, w]) => ({ target_type: tt, evaluator_group: g, weight: w }))) },
-  { name: 'periods', key: ['id'], rows: (db) => db.periods.map((p) => ({ id: p.id, name: p.name, start_date: p.startDate ?? null, deadline: p.deadline, status: p.status, release_stage: p.releaseStage, threshold_checked: p.thresholdChecked ? 1 : 0, rules: p.rules ? JSON.stringify(p.rules) : null, depts: p.depts?.length ? JSON.stringify(p.depts) : null, approvals: p.approvals?.length ? JSON.stringify(p.approvals) : null, last_auto: p.lastAuto ?? null, policy: p.policy ? JSON.stringify(p.policy) : null, rejections: p.rejections?.length ? JSON.stringify(p.rejections) : null, formulas: p.formulas && Object.keys(p.formulas).length ? JSON.stringify(p.formulas) : null, opened_at: p.openedAt ?? null, last_forecast: p.lastForecast ?? null })) },
+  { name: 'periods', key: ['id'], rows: (db) => db.periods.map((p) => ({ id: p.id, name: p.name, start_date: p.startDate ?? null, deadline: p.deadline, status: p.status, release_stage: p.releaseStage, threshold_checked: p.thresholdChecked ? 1 : 0, rules: p.rules ? JSON.stringify(p.rules) : null, depts: p.depts?.length ? JSON.stringify(p.depts) : null, approvals: p.approvals?.length ? JSON.stringify(p.approvals) : null, last_auto: p.lastAuto ?? null, policy: p.policy ? JSON.stringify(p.policy) : null, rejections: p.rejections?.length ? JSON.stringify(p.rejections) : null, formulas: p.formulas && Object.keys(p.formulas).length ? JSON.stringify(p.formulas) : null, opened_at: p.openedAt ?? null, last_forecast: p.lastForecast ?? null, people: p.people ? JSON.stringify(p.people) : null })) },
   { name: 'formulas', key: ['id'], rows: (db) => (db.formulas || []).map((f) => ({ id: f.id, key: f.key, target_type: f.targetType, dept: f.dept ?? null, version: f.version, status: f.status, config: JSON.stringify(f.config), meta: JSON.stringify(f.meta || {}) })) },
   { name: 'tasks', key: ['id'], rows: (db) => db.tasks.map((t) => ({ id: t.id, period_id: t.periodId, evaluator_id: t.evaluatorId, target_id: t.targetId, evaluator_group: t.group, section_id: t.sectionId, draft: t.draft ? JSON.stringify(t.draft) : null })) },
   { name: 'results', key: ['period_id', 'target_id'], rows: (db) => (db.results || []).map((r) => ({ period_id: r.periodId, target_id: r.targetId, data: JSON.stringify(r.data) })) },
@@ -192,7 +193,7 @@ const all = (q, ...a) => sql.prepare(q).all(...a);
 
 function readFromTables() {
   const db = { version: 1 };
-  db.departments = all('SELECT id, name, kind FROM departments ORDER BY rowid');
+  db.departments = all('SELECT id, name, kind, active FROM departments ORDER BY rowid').map((d) => ({ id: d.id, name: d.name, kind: d.kind, ...(!d.active && { active: false }) }));
   db.evaluatorGroups = all('SELECT * FROM evaluator_groups ORDER BY rowid').map((g) => ({ id: g.id, name: g.name, builtIn: !!g.built_in, active: !!g.active, ...(g.positions && { positions: JSON.parse(g.positions) }), ...(g.target_types && { targetTypes: JSON.parse(g.target_types) }) }));
   // password hashes stay on the server: view.js never sends them to the browser
   db.users = all('SELECT * FROM users ORDER BY rowid').map((u) => ({
@@ -215,7 +216,7 @@ function readFromTables() {
   db.periods = all('SELECT * FROM periods ORDER BY rowid').map((p) => ({ id: p.id, name: p.name, startDate: p.start_date, deadline: p.deadline, status: p.status, releaseStage: p.release_stage, thresholdChecked: !!p.threshold_checked,
     rules: p.rules ? JSON.parse(p.rules) : null, depts: p.depts ? JSON.parse(p.depts) : null, approvals: p.approvals ? JSON.parse(p.approvals) : [], lastAuto: p.last_auto,
     policy: p.policy ? JSON.parse(p.policy) : null, rejections: p.rejections ? JSON.parse(p.rejections) : [], formulas: p.formulas ? JSON.parse(p.formulas) : null,
-    openedAt: p.opened_at ?? null, lastForecast: p.last_forecast ?? null,
+    openedAt: p.opened_at ?? null, lastForecast: p.last_forecast ?? null, ...(p.people && { people: JSON.parse(p.people) }),
   }));
   const answers = {};
   for (const a of all('SELECT * FROM answers ORDER BY rowid')) {

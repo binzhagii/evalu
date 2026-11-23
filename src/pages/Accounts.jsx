@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useApp } from '../lib/store';
-import { ROLES, POSITIONS, TARGET_TYPES, needsDept, deptName, missingUbDepartments, isNursingDept, nursingDepts, evaluatorGroups, groupsOf, formulaFor, defaultEvaluatorGroups, groupName } from '../lib/logic';
-import { Card, Select, Badge, Avatar, Empty, SaveInput, newestFirst, usePages, ask } from '../ui';
+import { ROLES, POSITIONS, needsDept, deptName, isNursingDept, nursingDepts, activeDepts, schoolDepts, evaluatorGroups, defaultEvaluatorGroups } from '../lib/logic';
+import { Card, Select, Badge, Avatar, Empty, newestFirst, usePages, ask } from '../ui';
 
 /* ---------------- change your own password ---------------- */
 export function PasswordForm({ onDone, submitLabel = 'Change password', askCurrent = true }) {
@@ -94,7 +94,8 @@ function AccountForm({ initial, onSave, onCancel, saveLabel }) {
   // Clinical Instructors are only in the School of Nursing
   const chosenDept = db.departments.find((d) => d.id === f.dept);
   const positions = Object.entries(POSITIONS[f.role]).filter(([k]) => k !== 'ci' || !chosenDept || isNursingDept(chosenDept) || f.position === 'ci');
-  const deptChoices = f.position === 'ci' ? nursingDepts(db) : db.departments;
+  // offices have only non-teaching personnel; a deactivated department stays for someone already in it
+  const deptChoices = (f.position === 'ci' ? nursingDepts(db) : f.role === 'NTP' ? activeDepts(db) : schoolDepts(db)).concat(chosenDept?.active === false ? [chosenDept] : []);
   const setPosition = (v) => setF((x) => {
     const keep = v !== 'ci' || isNursingDept(db.departments.find((d) => d.id === x.dept));
     const currentDefaults = defaultEvaluatorGroups(x.role, x.position);
@@ -126,7 +127,7 @@ function AccountForm({ initial, onSave, onCancel, saveLabel }) {
         )}
       </div>
       {f.position === 'ci' && <p className="muted">Clinical Instructors are only in the School of Nursing, so only Nursing students evaluate them.</p>}
-      {f.position === 'ci' && !nursingDepts(db).length && <div className="note warn">Add the School of Nursing under Departments first.</div>}
+      {f.position === 'ci' && !nursingDepts(db).length && <div className="note warn">Add the School of Nursing under Departments & offices first.</div>}
       {['TP', 'NTP'].includes(f.role) && (
         <div className="row">
           <span className="muted">Evaluation role(s):</span>
@@ -167,98 +168,6 @@ function TempPasswordNote({ info, onClose }) {
         <button className="ghost" onClick={onClose}>Done</button>
       </span>
     </div>
-  );
-}
-
-/** HR adds, renames and removes departments. The type decides which weights a teacher's result uses. */
-function Departments() {
-  const { db, act } = useApp();
-  const [name, setName] = useState('');
-  const [kind, setKind] = useState('college');
-  const [msg, setMsg] = useState('');
-  const people = (id) => db.users.filter((u) => u.dept === id).length;
-  const inUse = (id) => people(id) > 0 || db.sections.some((s) => s.dept === id) || db.instruments.some((i) => i.dept === id);
-  const add = async () => {
-    setMsg('');
-    if (!name.trim()) return setMsg('Type the department name first.');
-    if (await act('addDepartment', { name, kind })) { setMsg(`${name.trim()} added.`); setName(''); }
-  };
-  return (
-    <Card title={`Departments (${db.departments.length})`}>
-      {db.departments.length === 0 && <div className="note warn"><b>Add your departments first.</b> Every student, teacher and staff member belongs to one.</div>}
-      {missingUbDepartments(db).length > 0 && (
-        <div className="row">
-          <button className="ghost" onClick={async () => { setMsg(''); const r = await act('addUbDepartments'); if (r) setMsg(`${r.added} University of Baguio department(s) added.`); }}>
-            Add the {missingUbDepartments(db).length} missing UB department(s)
-          </button>
-          <span className="muted">{missingUbDepartments(db).map((d) => d.id).join(', ')}</span>
-        </div>
-      )}
-      <div className="row">
-        <input className="wide" placeholder="Department name, e.g. School of Nursing" value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && add()} />
-        <Select value={kind} onChange={setKind}><option value="college">College</option><option value="basic">Basic Education</option></Select>
-        <button onClick={add}>Add department</button>
-      </div>
-      {msg && <div className="note">{msg}</div>}
-      {db.departments.length > 0 && (
-        <table>
-          <thead><tr><th>Department</th><th>Type</th><th>People</th><th /></tr></thead>
-          <tbody>{newestFirst(db.departments).map((d) => (
-            <tr key={d.id}>
-              <td><SaveInput className="wide" value={d.name} onSave={(v) => act('updateDepartment', { deptId: d.id, name: v })} /></td>
-              <td><Select value={d.kind} onChange={(v) => act('updateDepartment', { deptId: d.id, kind: v })}><option value="college">College</option><option value="basic">Basic Education</option></Select></td>
-              <td>{people(d.id)}</td>
-              <td><button className="ghost" disabled={inUse(d.id)} title={inUse(d.id) ? 'People, classes or forms still belong to this department' : ''}
-                onClick={async () => { if (await ask(`Delete ${d.name}?`, 'This department is removed from the list.', { ok: 'Delete department', danger: true })) act('deleteDepartment', { deptId: d.id }); }}>Delete</button></td>
-            </tr>
-          ))}</tbody>
-        </table>
-      )}
-      <p className="muted">Click a name to rename it. Department type supplies the starting evaluator groups and weights; HR can configure the approved scoring under Scoring &amp; calculation.</p>
-    </Card>
-  );
-}
-
-function EvaluatorGroups() {
-  const { db, act } = useApp();
-  const [name, setName] = useState('');
-  const [targetTypes, setTargetTypes] = useState([]);
-  const [msg, setMsg] = useState('');
-  const toggle = (id) => setTargetTypes((xs) => xs.includes(id) ? xs.filter((x) => x !== id) : [...xs, id]);
-  const add = async () => {
-    setMsg('');
-    if (!name.trim()) return setMsg('Enter a name for the evaluator group.');
-    if (!targetTypes.length) return setMsg('Choose at least one evaluated category.');
-    const result = await act('addEvaluatorGroup', { name, targetTypes });
-    if (result) { setMsg(`${result.name} added. Next: assign staff to it in their accounts below, then make its tool under Evaluation tools and put it in a formula under Scoring & calculation.`); setName(''); setTargetTypes([]); }
-  };
-  // the categories whose formula counts this group now
-  const targetsFor = (id) => Object.keys(TARGET_TYPES).filter((tt) => formulaFor(db, null, tt).components.some((c) => c.group === id));
-  const membersFor = (id) => db.users.filter((u) => groupsOf(db, u).includes(id)).length;
-  return (
-    <Card title="Evaluator groups and roles">
-      <p className="muted">Who belongs to each evaluator group, and whom it rates now. To add a new rater with its tool and percentages in one step, use <b>Scoring &amp; calculation → Add evaluator group</b>. System access roles such as HR and VP remain fixed.</p>
-      <table>
-        <thead><tr><th>Evaluator group</th><th>Evaluates</th><th>Assigned accounts</th><th>Type</th></tr></thead>
-        <tbody>{(db.evaluatorGroups || []).map((g) => (
-          <tr key={g.id}>
-            <td><b>{groupName(db, g.id)}</b><div className="muted small">{g.id}</div></td>
-            <td>{targetsFor(g.id).map((tt) => TARGET_TYPES[tt]).join(', ') || '—'}</td>
-            <td>{membersFor(g.id)}</td>
-            <td>{g.builtIn ? 'Built in' : 'HR configured'}{g.positions?.length > 0 && <div className="muted small">everyone with the position: {g.positions.map((p) => POSITIONS.TP[p] || POSITIONS.NTP[p] || p).join(', ')}</div>}</td>
-          </tr>
-        ))}</tbody>
-      </table>
-      <div className="row">
-        <input className="wide" placeholder="New evaluator role, e.g. Department Head" value={name} onChange={(e) => setName(e.target.value)} />
-        <button onClick={add}>Add evaluator group</button>
-      </div>
-      <div className="row">
-        <span className="muted">This group evaluates:</span>
-        {Object.entries(TARGET_TYPES).map(([id, label]) => <label key={id} className="inline"><input type="checkbox" checked={targetTypes.includes(id)} onChange={() => toggle(id)} /> {label}</label>)}
-      </div>
-      {msg && <div className="note">{msg}</div>}
-    </Card>
   );
 }
 
@@ -305,8 +214,6 @@ export function Accounts() {
       <div className="note">
         <b>Most student and teacher accounts are created when you import a class list.</b> Use this page for one person at a time, or to update a name, reset a password, or manage departments. New accounts get a temporary password that must be changed at first sign-in.
       </div>
-      <Departments />
-      <EvaluatorGroups />
 
       {temp && <TempPasswordNote info={temp} onClose={() => setTemp(null)} />}
       {msg && <div className="note">{msg}</div>}
