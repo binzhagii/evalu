@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { useApp } from '../lib/store';
 import { computeTarget, canSeeOwn, sectionStats, STAGE_LABEL, THRESHOLD, isExemptSection, participationForecast, forecastText } from '../lib/logic';
-import { Card, Badge, Meter, Empty, Icon, RuleNote } from '../ui';
+import { linkFor } from '../lib/cycle';
+import { Card, Badge, Meter, Empty, Icon, RuleNote, useNav } from '../ui';
 import { ResultCard, PastRecords } from './Reports';
 import { QrButton } from './ClassQr';
 import { MyPlans } from './Plans';
@@ -24,8 +25,13 @@ function ago(at) {
   return new Date(at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-export function Notifications() {
+export function Notifications({ pages = [] }) {
   const { db, user, act } = useApp();
+  const go = useNav();
+  const open = async (n, link) => {
+    if (!n.read) await act('markNotificationRead', { id: n.id });
+    if (link) go(link.page, link.args);
+  };
   const mine = db.notifications.filter((n) => n.userId === user.id).sort((a, b) => b.at.localeCompare(a.at));
   const unread = mine.filter((n) => !n.read).length;
   return (
@@ -33,14 +39,18 @@ export function Notifications() {
       {mine.length === 0 ? <Empty icon="bell" title="No notifications yet">Reminders and updates about your evaluations will appear here.</Empty> : (
         <ul className="notifs">
           {mine.map((n) => {
-            const k = KIND[n.kind] || { icon: 'bell', tone: '', title: n.kind };
+            const k = String(n.key).startsWith('fx|') ? { icon: 'scale', tone: '', title: 'Rating formula' } : KIND[n.kind] || { icon: 'bell', tone: '', title: n.kind };
+            const link = linkFor(n, db, user, pages);
             return (
               <li key={n.id} className={n.read ? '' : 'unread'}>
-                <span className={`n-icon ${k.tone}`}><Icon name={k.icon} size={18} /></span>
-                <div>
-                  <div className="n-title"><b>{k.title}</b><span className="muted">{ago(n.at)}</span></div>
-                  <div>{n.text}</div>
-                </div>
+                <button type="button" className="n-open" onClick={() => open(n, link)}>
+                  <span className={`n-icon ${k.tone}`}><Icon name={k.icon} size={18} /></span>
+                  <span className="n-body">
+                    <span className="n-title"><b>{k.title}</b><span className="muted">{ago(n.at)}</span></span>
+                    <span>{n.text}</span>
+                  </span>
+                  {link && <Icon name="arrow" size={16} />}
+                </button>
               </li>
             );
           })}

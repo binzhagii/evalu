@@ -4,6 +4,9 @@ import { LOW_ITEM, forecastText } from './lib/logic';
 /** go('reports') switches the page (provided by the app shell). */
 export const NavContext = createContext(() => {});
 export const useNav = () => useContext(NavContext);
+/** What the page was opened with, e.g. { periodId } from a notification (empty when opened from the menu). */
+export const NavArgsContext = createContext({});
+export const useNavArgs = () => useContext(NavArgsContext);
 
 export const fmt = (n) => (n == null ? '—' : Number(n).toFixed(2));
 export const pct = (n) => `${Math.round(n * 100)}%`;

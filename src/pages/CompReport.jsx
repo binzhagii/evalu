@@ -11,7 +11,7 @@ import {
 } from '../lib/logic';
 import { Select, PrintButton, Empty } from '../ui';
 
-/** "AY 2025-26 Term 1" -> { years: "2025-2026", term: "First Semester", short: "1st Semester" }. */
+/** "AY 2025-26 Term 1" or "AY 2025-2026 1st Semester" -> { years: "2025-2026", term: "First Semester", short: "1st Semester" }. */
 export function termParts(name = '') {
   const y = name.match(/(\d{4})\s*-\s*(\d{2,4})/);
   const years = y ? `${y[1]}-${y[2].length === 2 ? y[1].slice(0, 2) + y[2] : y[2]}` : '';

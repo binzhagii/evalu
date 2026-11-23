@@ -416,7 +416,7 @@ try {
   });
   await tc('TC-68', 'Fix DEF-01: comment limit', 'Submit with a 2,001-character comment, then 2,000', ['HTTP 400 with the limit in the message', 'HTTP 200'], async () => {
     // an open test period that has already started (a new one may be refused by the formula effective dates)
-    const today = new Date().toISOString().slice(0, 10);
+    const today = L.today();
     const per = (await call('/api/data', { cookie: hr })).data.periods.find((p) => p.status === 'open' && /(validation)/.test(p.name) && (!p.startDate || p.startDate <= today) && p.deadline >= today);
     if (!per) return ['no open test period'];
     await act(hr, 'generateTasks', { periodId: per.id });
@@ -575,6 +575,41 @@ try {
     // sameAsCountingTasks: the same numbers counted straight from the tasks, not by the function being tested
     return { first: `${a.v}, ${a.n.answered} answered`, beforeTasks: of(b), second: of(c), draftListed, sameAsCountingTasks: a.n.answered === answered && a.n.waiting === 0 && c.n.waiting === total };
   });
+  /* ---------------- Part I: semesters, notifications, the process steps ---------------- */
+  const CY = await import('../src/lib/cycle.js');
+  await tc('TC-87', 'School year and semester', 'Names read as the same semester; SIT and SBAA in one semester; SIT twice; all departments on top; a year far ahead; a summer name from before', { sameName: true, sit: true, sbaa: true, sitAgain: false, all: false, year2150: true, summer: 3, printed: 2 }, async () => {
+    const x = lab(), make = async (name, depts) => (await x.run('createPeriod', { name, deadline: '2199-01-01', startsOn: '2030-01-01', depts })).ok;
+    return { sameName: JSON.stringify(L.semesterOf('AY 2026-27 Term 1')) === JSON.stringify(L.semesterOf(L.periodName(2026, 1))), sit: await make(L.periodName(2031, 1), ['A']), sbaa: await make(L.periodName(2031, 1), ['B']), sitAgain: await make('AY 2031-32 Term 1', ['A']), all: await make(L.periodName(2031, 1), []), year2150: await make(L.periodName(2150, 2), []), summer: L.semesterOf('AY 2024-25 Summer').sem, printed: L.semesterOf(L.periodName(2031, 2)).sem };
+  });
+  await tc('TC-88', 'Local date', 'A day at 00:30 and 23:30 on this computer', ['2026-11-24', '2026-11-24'], () => [0, 23].map((h) => L.localDay(new Date(2026, 10, 24, h, 30))));
+  await tc('TC-89', 'Notifications', 'Where each kind leads; opening one marks only that one; another person cannot', { hr: ['periods', 'assign', 'monitor', 'reports', 'formulas'], dean: ['monitor', 'dept', 'dept'], teacher: ['results', 'results', 'tasks'], vp: ['reports', 'formulas'], unknown: null, onlyOne: true, other: 404 }, async () => {
+    const d = buildSeed(); d.formulas = [{ id: 'f1', targetType: 'CI', dept: null }];
+    const go = (key, user, pages) => CY.linkFor({ key }, d, user, pages)?.page ?? null;
+    const HRP = ['home', 'periods', 'assign', 'monitor', 'reports', 'formulas'], DN = ['tasks', 'monitor', 'dept', 'results'], TE = ['tasks', 'results'], VP = ['home', 'reports', 'formulas'];
+    const dean = d.users.find((u) => u.id === 'dean_a'), te = d.users.find((u) => u.id === 'fac_a1'), me = d.users.find((u) => u.id === 'hr'), v = d.users.find((u) => u.id === 'vp');
+    const mine = (await call('/api/data', { cookie: hr })).data.notifications.filter((n) => !n.read);
+    await act(hr, 'markNotificationRead', { id: mine[0].id });
+    const after = (await call('/api/data', { cookie: hr })).data.notifications;
+    return {
+      hr: [go('appr|p3|vp|hr', me, HRP), go('remhr|p4|hr|2026-01-01', me, HRP), go('part|p4|2026-01-01|hr|hr', me, HRP), go('thr|p3|hr|hr', me, HRP), go('fx|f1|ok|hr', me, HRP)],
+      dean: [go('remdept|p4|A|dean_a|2026-01-01', dean, DN), go('rel|p1|head|dean_a', dean, DN), go('rq|p1|fac_a1|dean_a|1', dean, DN)],
+      teacher: [go('rel|p1|fac|fac_a1', te, TE), go('thr|p3|sec1', te, TE), go('rem|p4|fac_a1|2026-01-01', te, TE)],
+      vp: [go('rel|p3|dir|vp|1', v, VP), go('fx|f1|sub|vp', v, VP)], unknown: go('zzz|1', te, TE),
+      onlyOne: after.find((n) => n.id === mine[0].id).read && mine.slice(1).every((m) => !after.find((n) => n.id === m.id).read),
+      other: (await act(fac, 'markNotificationRead', { id: mine[1].id })).status,
+    };
+  });
+  await tc('TC-90', 'Process steps', 'The next step: Dean percentages not set; set; a tool broken; period open; closed; sent to the VPs; approved; released', ['scoring', 'monitor', 'tools', 'monitor', 'review', 'approve', 'release', 'plans or finished'], async () => {
+    const x = lab(), next = () => CY.nextStep(CY.cycleSteps(x.db, x.db.periods.find((p) => p.id === 'p4')))?.key;
+    const out = [next()];
+    await x.activate('DEAN', null, [{ group: 'CHAIR', weight: 40 }, { group: 'SEC', weight: 20 }, { group: 'FAC', weight: 40 }]); out.push(next());
+    const t = x.tool(), w0 = { ...t.categories }; t.categories['Research and Extension'] = null; out.push(next()); t.categories = w0; out.push(next());
+    await x.run('closePeriod', { periodId: 'p4' }); out.push(next());
+    await x.run('releaseNext', { periodId: 'p4' }); out.push(next());
+    await x.run('approveRelease', { periodId: 'p4' }, VPU); out.push(next());
+    await x.run('releaseNext', { periodId: 'p4' }); out.push(['plans', undefined].includes(next()) ? 'plans or finished' : next());
+    return out;
+  });
 } finally {
   server.close();
 }
@@ -591,7 +626,7 @@ const md = [
   '',
   'Each case runs automatically (`npm run test:validation`). "Actual" is measured during this run, not written by hand.',
   'Part A checks the computation rules on controlled data; Part B runs the real server, database and access control;',
-  'Part C checks the formula engine and its approval and versions; Part D the comment analysis; Part E the computation modules (plug-ins), the effective period and the reproducibility of stored results; Part F HR-configurable evaluator groups and access control; Part H evaluation tool drafts and checks, and adding an evaluator group; Part G the margin of error, form reliability, participation forecast, development follow-up and the fixes from the 20 Nov 2026 test.',
+  'Part C checks the formula engine and its approval and versions; Part D the comment analysis; Part E the computation modules (plug-ins), the effective period and the reproducibility of stored results; Part F HR-configurable evaluator groups and access control; Part H evaluation tool drafts and checks, and adding an evaluator group; Part I semesters, notifications and the process steps; Part G the margin of error, form reliability, participation forecast, development follow-up and the fixes from the 20 Nov 2026 test.',
   '',
   '| ID | Requirement | Scenario | Expected | Actual | Result |',
   '|---|---|---|---|---|---|',

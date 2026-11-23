@@ -6,7 +6,7 @@ import {
   GROUPS, TARGET_TYPES, STAGES, ROLES, POSITIONS, needsDept, uid, userById, periodById, targetType, defaultEvaluatorGroups, groupName,
   instrumentFor, formForTask, effectiveWeights, generateTasks, runThresholdCheck, participationAlerts, sendReminders,
   isInstitutionalEmail, INSTITUTION_DOMAIN, notify, directors, pendingApprovals, resultHeads, hrUsers, isEvaluatee, isTeacher, isNursingDept, stageAtLeast, isResultHead, PLAN_OUTCOMES, UB_DEPARTMENTS, missingUbDepartments, MAX_RATING, CLASS_TYPES,
-  groupsOf, ratingGroups, toolStatus, sameTool, toolParts, toolProblems, toolSwitchMixes, toolName, defaultFormula, asPercentages,
+  groupsOf, ratingGroups, toolStatus, sameTool, toolParts, toolProblems, toolSwitchMixes, toolName, defaultFormula, asPercentages, today, samePeriod, deptName,
   currentPolicy, formulaKey, activeFormula, formulaSnapshot, formGroups, validateFormula, storeResults, methodOf, commentParts, METHODS, AGGREGATIONS, MISSING_RULES, ROUNDING_METHODS,
 } from '../src/lib/logic.js';
 import { HttpError } from './http.js';
@@ -288,6 +288,14 @@ export const actions = {
         submittedAt: new Date().toISOString(),
       };
       t.draft = null;
+    },
+  },
+  /** Opening one notification marks only that one as read. */
+  markNotificationRead: {
+    roles: ANYONE, audit: false,
+    run(db, { id }, user) {
+      const n = db.notifications.find((x) => x.id === id && x.userId === user.id) || fail('Notification not found.', 404);
+      n.read = true;
     },
   },
   markNotificationsRead: {
@@ -589,9 +597,11 @@ export const actions = {
     roles: HR,
     run(db, { name, deadline, startsOn, depts }, user) {
       const list = Array.isArray(depts) ? [...new Set(depts)].map((d) => find(db.departments, d, 'Department').id) : [];
-      const startDate = date(startsOn || new Date().toISOString().slice(0, 10));
+      const startDate = date(startsOn || today());
       const endDate = date(deadline);
       if (startDate > endDate) fail('The evaluation period must start on or before its deadline.');
+      const same = samePeriod(db, text(name, 'Period name', 120), list);
+      if (same) fail(`${same.name} already covers ${!same.depts?.length ? 'all departments' : !list.length ? 'some departments' : same.depts.filter((d) => list.includes(d)).map((d) => deptName(db, d)).join(', ')}.`, 409);
       const started = (db.formulas || []).filter((f) => f.status === 'scheduled' && formulaEffectiveOn(f, startDate));
       for (const f of started) putInUse(db, f, user, 'activated (scheduled for this new period)');
       const expired = (db.formulas || []).filter((f) => f.status === 'active' && !formulaEffectiveOn(f, startDate));
@@ -1064,7 +1074,7 @@ export const actions = {
     run(db, { targetType: tt, group, weight }) {
       if (!(tt in db.rules) || !(group in db.rules[tt])) fail('Unknown evaluated role or evaluator group.');
       const af = activeFormula(db, tt);
-      if (af) fail(`${TARGET_TYPES[tt]} is computed with the formula "${af.config.name}" version ${af.version}. Change it under Rating formula (a new version needs approval).`, 409);
+      if (af) fail(`${TARGET_TYPES[tt]} is computed with the formula "${af.config.name}" version ${af.version}. Change it under Scoring & calculation (a new version needs approval).`, 409);
       const w = weight === null || weight === '' ? null : number(weight, 'Weight', 0, 100);
       const from = db.rules[tt][group];
       db.rules[tt][group] = w;
@@ -1135,7 +1145,7 @@ export const actions = {
       if (f.status !== 'pending') fail('This formula is not waiting for approval.', 409);
       f.status = 'approved'; f.meta.approvedBy = user.name; f.meta.approvedAt = new Date().toISOString();
       logFormula(f, user, 'approved', typeof note === 'string' ? note.slice(0, 300) : '');
-      for (const h of hrUsers(db)) notify(db, { key: `fx|${f.id}|ok|${h.id}`, userId: h.id, kind: 'release', text: `${user.name} approved the formula ${f.config.name} (version ${f.version}). You can activate it under Rating formula.` });
+      for (const h of hrUsers(db)) notify(db, { key: `fx|${f.id}|ok|${h.id}`, userId: h.id, kind: 'release', text: `${user.name} approved the formula ${f.config.name} (version ${f.version}). You can start using it under Scoring & calculation.` });
     },
   },
   rejectFormula: {
@@ -1168,9 +1178,9 @@ export const actions = {
         return { version: f.version, scheduled: true };
       }
       if (when !== 'now') fail('Choose when the formula starts.');
-      const today = new Date().toISOString().slice(0, 10);
-      if (f.config.effectiveFrom && f.config.effectiveFrom > today) fail('This formula starts in the future. Schedule it to start with a period on or after its effective-from date.', 409);
-      if (!formulaEffectiveOn(f, today)) fail('This formula is outside its effective dates.', 409);
+      const now = today();
+      if (f.config.effectiveFrom && f.config.effectiveFrom > now) fail('This formula starts in the future. Schedule it to start with a period on or after its effective-from date.', 409);
+      if (!formulaEffectiveOn(f, now)) fail('This formula is outside its effective dates.', 409);
       const snap = formulaSnapshot(f);
       const weights = putInUse(db, f, user);
       // open periods take the new version only while nobody in that category has been evaluated yet,
@@ -1179,7 +1189,7 @@ export const actions = {
       for (const p of db.periods.filter((x) => x.status === 'open')) {
         const inCat = (t) => { const u = userById(db, t.targetId); return targetType(db, u) === f.targetType && (!f.dept || u?.dept === f.dept); };
         if (db.tasks.some((t) => t.periodId === p.id && t.response && inCat(t))) { kept++; continue; }
-        if (!formulaEffectiveOn(f, p.startDate || new Date().toISOString().slice(0, 10))) { kept++; continue; }
+        if (!formulaEffectiveOn(f, p.startDate || now)) { kept++; continue; }
         p.formulas = { ...(p.formulas || {}), [f.key]: snap };
         if (!f.dept) { p.rules ||= clone(db.rules); p.rules[f.targetType] = clone(weights); }
         applied++;

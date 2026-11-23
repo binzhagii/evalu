@@ -3,17 +3,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useApp } from '../lib/store';
 import { TARGET_TYPES, CLASS_TYPES, deptName, groupName, effectiveWeights, sameTool, toolName, toolsOfPeriod, toolParts, toolProblems, toolStatus } from '../lib/logic';
-import { Card, Select, Badge, SaveInput, Empty, newestFirst, usePages, ask } from '../ui';
+import { Card, Select, Badge, SaveInput, Empty, newestFirst, usePages, useNavArgs, ask } from '../ui';
 import { QuestionList } from './Tasks';
 
 const STATUS = { 'in-use': ['completed', 'In use'], draft: ['pending', 'Draft'], scheduled: ['info', 'Starts next period'], old: ['muted', 'Old version'] };
 const VARIANT_ORDER = ['', 'lab', 'skills', 'clin-mt', 'clin-pt', 'clin-dent']; // the everyday tool first
 const STATUS_ORDER = ['draft', 'scheduled', 'in-use', 'old'];
-const TOOL_KEY = 'evalu-open-tool'; // another page (Scoring & calculation) asks for a tool to be opened
-export const openToolNext = (id) => { try { sessionStorage.setItem(TOOL_KEY, id); } catch { /* the list opens instead */ } };
-function takeOpenTool() {
-  try { const id = sessionStorage.getItem(TOOL_KEY); sessionStorage.removeItem(TOOL_KEY); return id; } catch { return null; }
-}
 
 const isUb = (i) => i.name.includes('(UB tool)');
 const raters = (db, i) => (i.group === 'ST' ? 'Students' : groupName(db, i.group));
@@ -31,7 +26,8 @@ const StatusOf = ({ i }) => <Badge kind={STATUS[toolStatus(i)][0]}>{STATUS[toolS
 
 export default function Tools() {
   const { db } = useApp();
-  const [open, setOpen] = useState(takeOpenTool);
+  const args = useNavArgs();
+  const [open, setOpen] = useState(args.toolId || null); // another page (Scoring & calculation) can ask for one tool
   const [filters, setFilters] = useState({ tt: '', grp: '', st: 'current', q: '', period: '' }); // kept while a tool is open
   const ins = db.instruments.find((i) => i.id === open);
   const go = (id) => { setOpen(id); window.scrollTo(0, 0); };

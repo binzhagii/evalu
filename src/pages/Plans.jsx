@@ -2,11 +2,11 @@
 // read and confirmed by the person, and checked against the next term's rating and the same areas.
 import { useState } from 'react';
 import { useApp } from '../lib/store';
-import { computeAll, categoryAverages, needsPlan, planProgress, planStatus, PLAN_OUTCOMES, policyFor, interpretation, userById, stageAtLeast, isResultHead, TARGET_TYPES } from '../lib/logic';
+import { computeAll, categoryAverages, needsPlan, planProgress, planStatus, PLAN_OUTCOMES, policyFor, interpretation, userById, stageAtLeast, isResultHead, TARGET_TYPES, localDay } from '../lib/logic';
 import { Card, Badge, Select, Empty, fmt, ask } from '../ui';
 
 const day = (iso) => new Date(iso.length === 10 ? `${iso}T00:00:00` : iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
-const inDays = (n) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10);
+const inDays = (n) => localDay(new Date(Date.now() + n * 86400000));
 
 /** Make or change a plan: the areas (lowest first; those below the low line are ticked), what will be done, the review date. */
 export function PlanForm({ targetId, period, plan, onDone }) {

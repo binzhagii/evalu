@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useApp } from '../lib/store';
 import { STAGES, taskStatus, sectionStats, userById, computeAll, canSeeAll, THRESHOLD, hasFinal, pendingApprovals, groupName, participationForecast } from '../lib/logic';
+import { cyclePeriod, cycleSteps, nextStep } from '../lib/cycle';
 import { ApprovalPanel } from './Reports';
 import { Card, Stat, Stats, Meter, Badge, Empty, PeriodPicker, Icon, useNav, fmt, pct, dueText, daysUntil, ForecastBadge } from '../ui';
 
@@ -17,28 +18,32 @@ export function ReleaseSteps({ stage }) {
 }
 
 /* ---------------- HR ---------------- */
-/** What HR does each term, in order, with a button to the right page. Steps already done get a check. */
-function TermSteps({ db, open, tasks, go }) {
-  const steps = [
-    ['Create this term’s evaluation', 'Choose the school year, term, and closing date.', 'periods', 'Dates & release', open.length > 0],
-    ['Add classes and students', 'Import the class list from the Registrar or ARC.', 'classes', 'Classes & students', db.sections.length > 0],
-    ['Create evaluation tasks', 'evalU prepares the evaluations people need to complete.', 'assign', 'Evaluation tasks', tasks.length > 0],
-    ['Check responses', 'See who has responded and which classes need more answers.', 'monitor', 'Response progress'],
-    ['Close the evaluation', 'Do this after the deadline; classes with too few answers are left out.', 'periods', 'Dates & release'],
-    ['Share results in order', 'Send results to the VPs first, then release them to faculty.', 'periods', 'Dates & release'],
-    ['View or print reports', 'Choose the reports you need for this term.', 'reports', 'View & print results'],
-  ];
+/** What HR does each semester, in order. Every step is checked from the real data of the period; the next one stands out. */
+function CycleSteps({ db, go }) {
+  const [pidSel, setPid] = useState('');
+  const p = db.periods.find((x) => x.id === pidSel) || cyclePeriod(db);
+  const steps = useMemo(() => cycleSteps(db, p), [db, p]);
+  const next = nextStep(steps);
+  const groups = [...new Set(steps.map((s) => s.group))];
   return (
-    <Card title="Start here · each term, step by step">
-      <ol className="term-steps">
-        {steps.map(([title, what, page, label, done], i) => (
-          <li key={title} className={done ? 'done' : ''}>
-            <span className="term-n">{done ? <Icon name="check" size={14} /> : i + 1}</span>
-            <span><b>{title}</b><span className="muted small"> · {what}</span></span>
-            <button className="ghost" onClick={() => go(page)}>{label}</button>
-          </li>
-        ))}
-      </ol>
+    <Card title={`What to do${p ? `: ${p.name}` : ''}`} actions={db.periods.length > 1 && <PeriodPicker periods={db.periods} value={p?.id} onChange={setPid} />}>
+      {next
+        ? <div className="note"><b>Next: {next.title.charAt(0).toLowerCase() + next.title.slice(1)}.</b> {next.detail} <button className="link next-link" onClick={() => go(next.page)}>Open {next.label} →</button></div>
+        : <div className="note ok"><b>Everything is done for {p.name}.</b> For the next semester, start again from step 1, then create its period.</div>}
+      {groups.map((g) => (
+        <div key={g}>
+          <h4 className="term-group">{g}</h4>
+          <ol className="term-steps" start={steps.findIndex((s) => s.group === g) + 1}>
+            {steps.map((s, i) => s.group === g && (
+              <li key={s.key} className={s.done ? 'done' : s === next ? 'next' : ''} aria-current={s === next ? 'step' : undefined}>
+                <span className="term-n">{s.done ? <Icon name="check" size={14} /> : i + 1}</span>
+                <span><b>{s.title}</b><span className="muted small"> · {s.detail}</span></span>
+                <button className="ghost" onClick={() => go(s.page)}>{s.label}</button>
+              </li>
+            ))}
+          </ol>
+        </div>
+      ))}
     </Card>
   );
 }
@@ -59,8 +64,7 @@ export function HROverview() {
 
   return (
     <>
-      <div className="note"><b>Start with the checklist.</b> Follow it from top to bottom. You usually do not need to change questions, scoring, or rules unless UB’s policy changes.</div>
-      <TermSteps db={db} open={open} tasks={tasks} go={go} />
+      <CycleSteps db={db} go={go} />
 
       <Stats>
         <Stat icon="check" label="Responses received" value={tasks.length ? pct(done / tasks.length) : '—'} sub={`${done} of ${tasks.length} evaluations in open periods`} tone="good" />
@@ -71,7 +75,7 @@ export function HROverview() {
 
       <div className="grid-2">
         <Card title="Open evaluation periods" actions={<button className="ghost" onClick={() => go('periods')}>Manage</button>}>
-          {open.length === 0 ? <Empty icon="calendar" title="No period is open">Create one under Periods &amp; release.</Empty> : open.map((p) => {
+          {open.length === 0 ? <Empty icon="calendar" title="No period is open">Create one under Dates &amp; release.</Empty> : open.map((p) => {
             const pt = db.tasks.filter((t) => t.periodId === p.id);
             const byGroup = {};
             for (const t of pt) { const g = (byGroup[t.group] ||= { n: 0, done: 0 }); g.n++; if (t.response) g.done++; }
@@ -155,6 +159,7 @@ export function VpOverview() {
           <ApprovalPanel period={p} />
         </Card>
       ))}
+      {(db.formulas || []).some((f) => f.status === 'pending') && <div className="note"><b>{(db.formulas || []).filter((f) => f.status === 'pending').length} formula(s) waiting for your approval.</b> <button className="link" onClick={() => go('formulas')}>Open Formula approvals</button></div>}
       <div className="row between"><span className="muted">Showing results for</span><PeriodPicker periods={periods} value={pid} onChange={setPid} /></div>
       <Stats>
         <Stat icon="star" label="Average final score" value={fmt(avg(complete))} sub="out of 4" tone="good" />

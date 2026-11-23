@@ -3,6 +3,7 @@ import { useApp } from '../lib/store';
 import {
   STAGES, STAGE_LABEL, taskStatus, userById, sectionStats, targetsOf, deptName, groupName,
   groupsOf, isExemptSection, isTeacher, pendingApprovals, periodCovers, CLASS_TYPES, approvalRuleText, policyFor, participationForecast,
+  SEMESTERS, localDay, periodName, samePeriod, schoolYearNow,
 } from '../lib/logic';
 
 /** Types of class HR can pick for a section. A Clinical Instructor (Nursing) works in the clinical area or the skills lab. */
@@ -10,26 +11,16 @@ const classTypesFor = (teacher) => (teacher?.position === 'ci'
   ? [['', 'Clinical area (hospital, community clinic)'], ['skills', CLASS_TYPES.skills]]
   : Object.entries(CLASS_TYPES).filter(([k]) => k !== 'skills'));
 import { QrButton } from './ClassQr';
-import { Card, StatusBadge, RuleNote, PeriodPicker, Select, Badge, Meter, Empty, pct, newestFirst, usePages, ask, ForecastBadge } from '../ui';
+import { Card, StatusBadge, RuleNote, PeriodPicker, Select, Badge, Meter, Empty, pct, newestFirst, usePages, useNavArgs, ask, ForecastBadge } from '../ui';
 
 const scopeText = (db, p) => (p.depts?.length ? p.depts.map((d) => deptName(db, d)).join(', ') : 'All departments');
 
 /* ----- choices for a new period, so HR picks instead of typing ----- */
-const TERMS = ['Term 1', 'Term 2', 'Summer'];
 const OPEN_FOR = [[7, '1 week'], [14, '2 weeks'], [21, '3 weeks'], [28, '4 weeks'], [42, '6 weeks']];
-const isoIn = (days) => { const d = new Date(); d.setDate(d.getDate() + days); return d.toISOString().slice(0, 10); };
-/** The school year starts mid-year, so from June on it is "this year – next year". */
-function schoolYears() {
-  const d = new Date();
-  const y = d.getMonth() >= 5 ? d.getFullYear() : d.getFullYear() - 1;
-  return [y - 1, y, y + 1, y + 2].map((s) => `AY ${s}-${String(s + 1).slice(2)}`);
-}
-const periodExists = (db, ay, term) => db.periods.some((p) => p.name.startsWith(`${ay} ${term}`));
-/** The first Term 1 / Term 2 from this school year on that has no period yet. */
+const isoIn = (days) => { const d = new Date(); d.setDate(d.getDate() + days); return localDay(d); };
+/** The first semester from this school year on that has no period yet. */
 function nextTerm(db) {
-  const years = schoolYears().slice(1);
-  for (const ay of years) for (const term of ['Term 1', 'Term 2']) if (!periodExists(db, ay, term)) return { ay, term };
-  return { ay: years[0], term: 'Term 1' };
+  for (let year = schoolYearNow(); ; year++) for (const sem of [1, 2]) if (!samePeriod(db, periodName(year, sem))) return { year, sem };
 }
 
 /* ---------------- Evaluation periods + release (FR8, FR17) ---------------- */
@@ -41,23 +32,25 @@ export function Periods() {
   const [deadline, setDeadline] = useState(isoIn(21));
   const [depts, setDepts] = useState([]);
   const [msg, setMsg] = useState('');
-  const name = `${pick.ay} ${pick.term}`;
-  const exists = periodExists(db, pick.ay, pick.term);
+  const firstYear = schoolYearNow();
+  const yearOk = Number.isInteger(pick.year) && pick.year >= firstYear && pick.year <= 9998;
+  const name = periodName(pick.year, pick.sem);
+  const exists = samePeriod(db, name, depts); // the same semester for other departments is fine
+  const bad = !yearOk || exists || startDate > deadline;
   const add = async () => {
-    if (exists) return setMsg(`${name} already exists.`);
+    if (bad) return;
     const r = await act('createPeriod', { name, startsOn: startDate, deadline, depts });
     if (r) {
       setDepts([]); setStartDate(isoIn(0)); setMsg(`${name} created.${r.started?.length ? ` The new rating formula starts with this period: ${r.started.join(', ')}.` : ''} ${r.newTools?.length ? ` New tool version(s) in use: ${r.newTools.join(', ')}.` : ''}${r.waitingTools?.length ? ` Still waiting, because another open period uses the old version: ${r.waitingTools.join(', ')}.` : ''} Go to Evaluation tasks and click "Create evaluation tasks".`);
-      // suggest the following term next time
-      const ys = schoolYears();
-      setPick(pick.term === 'Term 1' ? { ay: pick.ay, term: 'Term 2' } : { ay: ys[Math.min(ys.indexOf(pick.ay) + 1, ys.length - 1)], term: 'Term 1' });
+      // suggest the following semester next time
+      setPick(pick.sem === 1 ? { year: pick.year, sem: 2 } : { year: pick.year + 1, sem: 1 });
     }
   };
   const run = async (action, periodId, done) => { setMsg(''); const r = await act(action, { periodId }); if (r) setMsg(typeof done === 'function' ? done(r) : done || ''); };
   const toggle = (d) => setDepts((x) => (x.includes(d) ? x.filter((y) => y !== d) : [...x, d]));
   return (
     <>
-      <div className="note"><b>Use this page for the three main dates:</b> create the term, close it after the deadline, then send results to the VPs and release them to faculty.</div>
+      <div className="note"><b>Use this page for the three main dates:</b> create the semester's period, close it after the deadline, then send results to the VPs and release them to faculty.</div>
       <RuleNote />
       {msg && <div className="note">{msg}</div>}
       <Card title="Evaluation periods">
@@ -96,9 +89,14 @@ export function Periods() {
       <Card title="New evaluation period">
         <div className="row">
           <label className="inline">School year
-            <Select value={pick.ay} onChange={(ay) => setPick({ ...pick, ay })}>{schoolYears().map((y) => <option key={y} value={y}>{y}</option>)}</Select></label>
-          <label className="inline">Term
-            <Select value={pick.term} onChange={(term) => setPick({ ...pick, term })}>{TERMS.map((t) => <option key={t} value={t}>{t}{periodExists(db, pick.ay, t) ? ' (already created)' : ''}</option>)}</Select></label>
+            <span className="year-pick">
+              <button type="button" className="ghost" aria-label="Earlier school year" disabled={pick.year <= firstYear} onClick={() => setPick({ ...pick, year: Math.max(firstYear, pick.year - 1) })}>−</button>
+              <input type="number" min={firstYear} step="1" aria-label="School year starts in" value={pick.year} onChange={(e) => setPick({ ...pick, year: e.target.value === '' ? '' : Number(e.target.value) })} />
+              <span>–</span><b>{yearOk ? pick.year + 1 : '…'}</b>
+              <button type="button" className="ghost" aria-label="Later school year" onClick={() => setPick({ ...pick, year: (yearOk ? pick.year : firstYear - 1) + 1 })}>+</button>
+            </span></label>
+          <label className="inline">Semester
+            <Select value={pick.sem} onChange={(v) => setPick({ ...pick, sem: Number(v) })}>{SEMESTERS.map((t, i) => <option key={t} value={i + 1}>{t}{yearOk && samePeriod(db, periodName(pick.year, i + 1), depts) ? ' (already created)' : ''}</option>)}</Select></label>
           <label className="inline">Open for
             <Select value={weeks} onChange={(v) => { const n = Number(v); setWeeks(n); if (n) setDeadline(isoIn(n)); }}>
               {OPEN_FOR.map(([d, l]) => <option key={d} value={d}>{l}</option>)}
@@ -120,8 +118,8 @@ export function Periods() {
             </span>
           ))}
         </div>
-        <p className={exists || startDate > deadline ? 'note warn' : 'muted'}>{exists ? <><b>{name}</b> already exists. Pick another term or school year.</> : startDate > deadline ? 'The start date must be on or before the deadline.' : <>This will create <b>{name}</b> for <b>{depts.length ? depts.map((d) => deptName(db, d)).join(', ') : 'all departments'}</b>, starting <b>{new Date(startDate + 'T00:00:00').toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}</b> and open until <b>{new Date(deadline + 'T00:00:00').toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}</b>.</>}</p>
-        <div className="row"><button onClick={add} disabled={exists || startDate > deadline}>Create {name}</button></div>
+        <p className={bad ? 'note warn' : 'muted'}>{!yearOk ? `Type a school year from ${firstYear} on.` : exists ? <><b>{exists.name}</b> already exists for {exists.depts?.length ? exists.depts.map((d) => deptName(db, d)).join(', ') : 'all departments'}. Pick another semester, school year or department.</> : startDate > deadline ? 'The start date must be on or before the deadline.' : <>This will create <b>{name}</b> for <b>{depts.length ? depts.map((d) => deptName(db, d)).join(', ') : 'all departments'}</b>, starting <b>{new Date(startDate + 'T00:00:00').toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}</b> and open until <b>{new Date(deadline + 'T00:00:00').toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}</b>.</>}</p>
+        <div className="row"><button onClick={add} disabled={!!bad}>Create {yearOk ? name : 'period'}</button></div>
         <p className="muted">You can open and close evaluations for one department at a time by creating a period for just that department. The current evaluator weights are saved with the period.</p>
       </Card>
       <details className="card advanced-panel">
@@ -146,7 +144,8 @@ export function Periods() {
 /* ---------------- Assignments / workflow (FR6, FR7, FR9, FR10) ---------------- */
 export function Assignments() {
   const { db, act } = useApp();
-  const [pidSel, setPid] = useState(db.periods[db.periods.length - 1]?.id);
+  const args = useNavArgs();
+  const [pidSel, setPid] = useState(args.periodId || db.periods[db.periods.length - 1]?.id);
   // the chosen period, or the newest one if none is chosen yet (or it was deleted)
   const pid = db.periods.some((p) => p.id === pidSel) ? pidSel : db.periods[db.periods.length - 1]?.id;
   const [msg, setMsg] = useState('');
@@ -162,7 +161,7 @@ export function Assignments() {
   const match = (t) => !s || userById(db, t.evaluatorId)?.name.toLowerCase().includes(s) || userById(db, t.targetId)?.name.toLowerCase().includes(s);
   const listed = newestFirst(tasks).filter((t) => (!grp || t.group === grp) && (!st || taskStatus(db, t) === st) && match(t));
   const { rows, bar } = usePages(listed, `${pid}|${s}|${grp}|${st}`);
-  if (!db.periods.length) return <Card><Empty icon="calendar" title="No evaluation period yet">Create one under Periods &amp; release first.</Empty></Card>;
+  if (!db.periods.length) return <Card><Empty icon="calendar" title="No evaluation period yet">Create one under Dates &amp; release first.</Empty></Card>;
 
   const addOne = async () => {
     setMsg('');
@@ -201,7 +200,7 @@ export function Assignments() {
           <Select value={st} onChange={setSt}><option value="">Any status</option><option value="pending">Pending</option><option value="completed">Completed</option><option value="overdue">Overdue</option></Select>
           <input placeholder="Search a name (optional)" value={q} onChange={(e) => setQ(e.target.value)} />
         </div>
-        {listed.length === 0 ? <Empty icon="list" title={tasks.length ? 'No tasks match' : 'No tasks yet'}>{tasks.length ? 'Change the filters above.' : 'Click "Generate tasks for period" above.'}</Empty> : <>
+        {listed.length === 0 ? <Empty icon="list" title={tasks.length ? 'No tasks match' : 'No tasks yet'}>{tasks.length ? 'Change the filters above.' : 'Click "Create evaluation tasks" above.'}</Empty> : <>
         <table>
           <thead><tr><th>Evaluator</th><th>As</th><th>Evaluates</th><th>Class</th><th>Status</th><th /></tr></thead>
           <tbody>
@@ -437,7 +436,7 @@ export function AuditLog() {
     const lines = [['When', 'Who', 'Action', 'Details', 'Hash'], ...list.map((r) => [r.at, r.user_name || 'System', AUDIT_LABEL[r.action] || r.action, r.detail || '', r.hash || ''])].map((x) => x.map(esc).join(','));
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([lines.join('\r\n')], { type: 'text/csv' }));
-    a.download = `evalU-audit-log-${new Date().toISOString().slice(0, 10)}.csv`; a.click();
+    a.download = `evalU-audit-log-${localDay()}.csv`; a.click();
   };
   const load = async () => {
     setErr('');

@@ -1,12 +1,12 @@
 # evalU validation test report
 
-Run: 2026-11-23T19:51:40.250Z · Node v22.22.0 · code version a03e02b · fresh test database with the sample data
+Run: 2026-11-23T19:58:02.396Z · Node v22.22.0 · code version de8828b · fresh test database with the sample data
 
-**Result: 86 of 86 test cases passed.**
+**Result: 90 of 90 test cases passed.**
 
 Each case runs automatically (`npm run test:validation`). "Actual" is measured during this run, not written by hand.
 Part A checks the computation rules on controlled data; Part B runs the real server, database and access control;
-Part C checks the formula engine and its approval and versions; Part D the comment analysis; Part E the computation modules (plug-ins), the effective period and the reproducibility of stored results; Part F HR-configurable evaluator groups and access control; Part H evaluation tool drafts and checks, and adding an evaluator group; Part G the margin of error, form reliability, participation forecast, development follow-up and the fixes from the 20 Nov 2026 test.
+Part C checks the formula engine and its approval and versions; Part D the comment analysis; Part E the computation modules (plug-ins), the effective period and the reproducibility of stored results; Part F HR-configurable evaluator groups and access control; Part H evaluation tool drafts and checks, and adding an evaluator group; Part I semesters, notifications and the process steps; Part G the margin of error, form reliability, participation forecast, development follow-up and the fixes from the 20 Nov 2026 test.
 
 | ID | Requirement | Scenario | Expected | Actual | Result |
 |---|---|---|---|---|---|
@@ -96,5 +96,9 @@ Part C checks the formula engine and its approval and versions; Part D the comme
 | TC-84 | Every category can be changed | HR gives each of the six categories new percentages; a VP approves; a new period is created | {"COLLEGE_FACULTY":"ST 30, DEAN 50, CHAIR 20","BASICED_TEACHER":"ST 25, PRIN 25, APRIN 25, SHEAD 25","CI":"ST 60, DEAN 40","DEAN":"CHAIR 40, SEC 10, FAC 50","NTP_STAFF":"NTPHEAD 100","NTP_HEAD":"NTPSTAFF 100"} | {"COLLEGE_FACULTY":"ST 30, DEAN 50, CHAIR 20","BASICED_TEACHER":"ST 25, PRIN 25, APRIN 25, SHEAD 25","CI":"ST 60, DEAN 40","DEAN":"CHAIR 40, SEC 10, FAC 50","NTP_STAFF":"NTPHEAD 100","NTP_HEAD":"NTPSTAFF 100"} | PASS |
 | TC-85 | Percentages only | A formula saved earlier as "every group the same", as "my own formula" and as percentages, when HR changes it | [[33.33,33.33,33.34],[null,null],[40,60]] | [[33.33,33.33,33.34],[null,null],[40,60]] | PASS |
 | TC-86 | Tools by period | The student tool gets a new version between two periods: which version does each period show, and how many answered? A period before its tasks are created | {"first":"old version, 38 answered","beforeTasks":"new version, 0 of 60 answered","second":"new version, 0 of 60 answered","draftListed":false,"sameAsCountingTasks":true} | {"first":"old version, 38 answered","beforeTasks":"new version, 0 of 60 answered","second":"new version, 0 of 60 answered","draftListed":false,"sameAsCountingTasks":true} | PASS |
+| TC-87 | School year and semester | Names read as the same semester; SIT and SBAA in one semester; SIT twice; all departments on top; a year far ahead; a summer name from before | {"sameName":true,"sit":true,"sbaa":true,"sitAgain":false,"all":false,"year2150":true,"summer":3,"printed":2} | {"sameName":true,"sit":true,"sbaa":true,"sitAgain":false,"all":false,"year2150":true,"summer":3,"printed":2} | PASS |
+| TC-88 | Local date | A day at 00:30 and 23:30 on this computer | ["2026-11-24","2026-11-24"] | ["2026-11-24","2026-11-24"] | PASS |
+| TC-89 | Notifications | Where each kind leads; opening one marks only that one; another person cannot | {"hr":["periods","assign","monitor","reports","formulas"],"dean":["monitor","dept","dept"],"teacher":["results","results","tasks"],"vp":["reports","formulas"],"unknown":null,"onlyOne":true,"other":404} | {"hr":["periods","assign","monitor","reports","formulas"],"dean":["monitor","dept","dept"],"teacher":["results","results","tasks"],"vp":["reports","formulas"],"unknown":null,"onlyOne":true,"other":404} | PASS |
+| TC-90 | Process steps | The next step: Dean percentages not set; set; a tool broken; period open; closed; sent to the VPs; approved; released | ["scoring","monitor","tools","monitor","review","approve","release","plans or finished"] | ["scoring","monitor","tools","monitor","review","approve","release","plans or finished"] | PASS |
 
 Limits of this report: these are developer-run functional, security and integration tests on simulated data. They do not replace the stakeholder evaluation (ISO/IEC 25010 questionnaire) or confirmation of the rules by HRMC.

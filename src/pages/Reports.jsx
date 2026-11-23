@@ -5,7 +5,7 @@ import {
   TARGET_TYPES, computeAll, computeTarget, canSeeAll, canSeeComments, canSeeDept, deptName, groupName, userById, sectionStats,
   itemStats, formOfTask, itemCategory, hasFinal, pendingApprovals, policyFor, approvalRuleText, formulaWords, howInWords, isEvaluatee, stageAtLeast, targetsOf, commentParts, targetType,
 } from '../lib/logic';
-import { Card, Badge, RuleNote, PeriodPicker, Select, Meter, Stat, Stats, Empty, Avatar, ItemTable, PrintButton, fmt, pct, newestFirst, usePages, ask } from '../ui';
+import { Card, Badge, RuleNote, PeriodPicker, Select, Meter, Stat, Stats, Empty, Avatar, ItemTable, PrintButton, fmt, pct, newestFirst, usePages, useNavArgs, ask } from '../ui';
 import { ReleaseSteps } from './Overview';
 import { UbPrints, CommentText, SummarySheet as Sheet, ratingWord as rw, twoDp, UbPacket } from './CompReport';
 import { FollowUp } from './Plans';
@@ -417,9 +417,10 @@ const FORMAL_TABS = ['overall', 'subject', 'section', 'department', 'comments', 
 export default function Reports() {
   const { db, user, act } = useApp();
   const periods = visiblePeriods(db, user);
-  const [pidSel, setPid] = useState(periods[periods.length - 1]?.id);
+  const args = useNavArgs();
+  const [pidSel, setPid] = useState(args.periodId || periods[periods.length - 1]?.id);
   const pid = periods.some((p) => p.id === pidSel) ? pidSel : periods[periods.length - 1]?.id; // newest if none chosen yet
-  const [tab, setTab] = useState(user.role === 'HR' ? 'ubprint' : 'overall');
+  const [tab, setTab] = useState(args.tab || (user.role === 'HR' ? 'ubprint' : 'overall'));
   const [tid, setTid] = useState('');
   const [deptSel, setDept] = useState(db.departments[0]?.id);
   const dept = db.departments.some((d) => d.id === deptSel) ? deptSel : db.departments[0]?.id;
@@ -519,7 +520,8 @@ export default function Reports() {
 export function DeptResults() {
   const { db, user, act } = useApp();
   const periods = db.periods.filter((p) => canSeeDept(user, p));
-  const [pidSel, setPid] = useState(periods[periods.length - 1]?.id);
+  const args = useNavArgs();
+  const [pidSel, setPid] = useState(args.periodId || periods[periods.length - 1]?.id);
   const pid = periods.some((p) => p.id === pidSel) ? pidSel : periods[periods.length - 1]?.id; // newest if none chosen yet
   const [tid, setTid] = useState('');
   const people = useMemo(() => (pid ? computeAll(db, pid).filter((r) => r.target.dept === user.dept && r.targetId !== user.id) : []), [db, pid, user]);

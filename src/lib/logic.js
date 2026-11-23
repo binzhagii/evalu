@@ -210,6 +210,22 @@ export const isEvaluatee = (u) => (u.role === 'TP' && ['faculty', 'ci', 'dean'].
 
 export const userById = (db, id) => db.users.find((u) => u.id === id);
 export const deptName = (db, id) => db.departments.find((d) => d.id === id)?.name || id;
+/** The school year starts mid-year: from June on it is "this year – next year". */
+export const schoolYearNow = (d = new Date()) => (d.getMonth() >= 5 ? d.getFullYear() : d.getFullYear() - 1);
+export const SEMESTERS = ['1st Semester', '2nd Semester']; // no summer evaluation
+/** The name of a period: "AY 2026-2027 1st Semester". */
+export const periodName = (year, sem) => `AY ${year}-${Number(year) + 1} ${SEMESTERS[sem - 1]}`;
+/** "AY 2026-27 Term 1" or "AY 2026-2027 1st Semester" → { year: 2026, sem: 1 }; sem 3 = an old summer period; null = another kind of name. */
+export function semesterOf(name = '') {
+  const y = name.match(/(\d{4})\s*-\s*\d{2,4}/);
+  const sem = /summer/i.test(name) ? 3 : /term\s*2|2nd|second/i.test(name) ? 2 : /term\s*1|1st|first/i.test(name) ? 1 : 0;
+  return y && sem ? { year: Number(y[1]), sem } : null;
+}
+/** A period of the same school year and semester that already covers one of these departments (none chosen = all). */
+export function samePeriod(db, name, depts = []) {
+  const k = semesterOf(name);
+  return k ? db.periods.find((p) => { const x = semesterOf(p.name); return x && x.year === k.year && x.sem === k.sem && (!depts?.length || !p.depts?.length || p.depts.some((d) => depts.includes(d))); }) || null : null;
+}
 export const periodById = (db, id) => db.periods.find((p) => p.id === id);
 const active = (u) => u && u.active !== false;
 
@@ -586,7 +602,9 @@ export function generateTasks(draft, periodId) {
 
 let _n = 0;
 export const uid = (p) => `${p}_${Date.now().toString(36)}${(_n++).toString(36)}${Math.random().toString(36).slice(2, 6)}`;
-export const today = () => new Date().toISOString().slice(0, 10);
+/** A date as YYYY-MM-DD on this computer's clock (not UTC: before 8 a.m. in Manila that is still yesterday). */
+export const localDay = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+export const today = () => localDay();
 
 /** Adds a notification unless one with the same key already exists. Returns true if added. */
 export function notify(draft, { key, userId, kind, text }) {
@@ -763,7 +781,7 @@ export function forecastWarnings(draft, periodId, now = Date.now()) {
   }
   if (risky.length) {
     const ids = risky.map((f) => f.section.id).sort().join(',');
-    for (const h of hrUsers(draft)) if (notify(draft, { key: `fch|${periodId}|${h.id}|${ids}`, userId: h.id, kind: 'participation', text: `Early warning for ${p.name}: at their current pace, ${plural(risky.length, 'class', 'classes')} may not reach half + 1 by ${fmtDate(p.deadline)}: ${risky.slice(0, 5).map(line).join('; ')}${risky.length > 5 ? `; and ${risky.length - 5} more` : ''}. See Progress.` })) sent++;
+    for (const h of hrUsers(draft)) if (notify(draft, { key: `fch|${periodId}|${h.id}|${ids}`, userId: h.id, kind: 'participation', text: `Early warning for ${p.name}: at their current pace, ${plural(risky.length, 'class', 'classes')} may not reach half + 1 by ${fmtDate(p.deadline)}: ${risky.slice(0, 5).map(line).join('; ')}${risky.length > 5 ? `; and ${risky.length - 5} more` : ''}. See Response progress.` })) sent++;
   }
   return sent;
 }
@@ -870,9 +888,9 @@ export function planProgress(db, plan) {
   return { before: before.final, after: null, next: null, areas: [] };
 }
 /** Where a plan stands, for a badge: [badge kind, words]. */
-export function planStatus(plan, today = new Date().toISOString().slice(0, 10)) {
+export function planStatus(plan, now = today()) {
   if (plan.status === 'closed') return plan.outcome === 'improved' ? ['completed', 'Improved'] : plan.outcome === 'not-yet' ? ['overdue', 'Not improved yet'] : ['muted', 'Cancelled'];
   if (!plan.acknowledgedAt) return ['pending', 'Waiting to be read'];
-  if (plan.reviewBy < today) return ['overdue', 'Due for review'];
+  if (plan.reviewBy < now) return ['overdue', 'Due for review'];
   return ['info', 'In progress'];
 }

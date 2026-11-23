@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { AppProvider, useApp } from './lib/store';
 import { ROLES, POSITIONS, isTeacher } from './lib/logic';
-import { Icon, Avatar, NavContext, AskHost } from './ui';
+import { Icon, Avatar, NavContext, NavArgsContext, AskHost } from './ui';
 import { HROverview, VpOverview } from './pages/Overview';
 import Tasks from './pages/Tasks';
 import { Periods, Assignments, Monitor, Classes, AuditLog } from './pages/HR';
@@ -109,8 +109,8 @@ function navFor(user) {
   if (user.role === 'HR') {
     n.push(
       ['home', 'Overview', 'home', <HROverview />, 'Your checklist for this term and a quick look at what needs attention'],
-      ['periods', 'Dates & release', 'calendar', <Periods />, 'Set an evaluation deadline, then close the term and share results'],
       ['classes', 'Classes & students', 'list', <Classes />, 'Import class lists from the Registrar or ARC'],
+      ['periods', 'Dates & release', 'calendar', <Periods />, 'Set an evaluation deadline, then close the period and share results'],
       ['assign', 'Evaluation tasks', 'list', <Assignments />, 'Create the evaluations students and staff need to complete'],
       ['monitor', 'Response progress', 'chart', <Monitor />, 'See which classes and departments have responded'],
       ['reports', 'View & print results', 'report', <Reports />, 'Read, print, or share results for a completed term'],
@@ -126,7 +126,7 @@ function navFor(user) {
       ['home', 'Overview', 'home', <VpOverview />, 'A summary of the results released to you'],
       ['reports', 'Reports', 'report', <Reports />, 'Final scores and results by person, class and subject'],
       ['analytics', 'Analytics', 'trend', <Analytics />, 'Trends, department comparisons and low-rated items'],
-      ['formulas', 'Formula approvals', 'scale', <Formulas />, 'Rating formulas waiting for your approval'],
+      ['formulas', 'Formula approvals', 'scale', <Formulas />, 'Formulas HR sent you: what counts now, what would change, and why'],
     );
   } else {
     // Clinical Instructors are evaluated but don't evaluate anyone
@@ -136,7 +136,7 @@ function navFor(user) {
     if (isTeacher(user) || user.position === 'dean' || user.role === 'NTP') n.push(['results', 'My results', 'star', <MyResults />, 'Your evaluation results and your classes\' response progress']);
   }
   n.push(
-    ['notifs', 'Notifications', 'bell', <Notifications />, 'Reminders and updates sent to you'],
+    ['notifs', 'Notifications', 'bell', <Notifications pages={n.map((x) => x[0])} />, 'Reminders and updates sent to you. Click one to open it'],
     ['account', 'My account', 'user', <MyAccount />, 'Your details and password'],
   );
   return n;
@@ -146,9 +146,10 @@ function navFor(user) {
 // Notifications and My account stay at the bottom.
 const HR_NAV_SECTIONS = [
   { label: '', keys: ['home'] },
-  { label: 'Run an evaluation', keys: ['periods', 'classes', 'assign', 'monitor'] },
+  { label: 'Prepare', keys: ['forms', 'formulas', 'policy', 'accounts', 'classes'] },
+  { label: 'Run an evaluation', keys: ['periods', 'assign', 'monitor'] },
   { label: 'Results', keys: ['reports', 'analytics'] },
-  { label: 'Settings', keys: ['accounts', 'forms', 'formulas', 'policy', 'audit'] },
+  { label: 'Records', keys: ['audit'] },
   { label: '', keys: ['notifs', 'account'], bottom: true },
 ];
 
@@ -176,6 +177,7 @@ const firstOpen = () => { try { return !sessionStorage.getItem(INTRO_KEY) && !re
 function Shell() {
   const { db, user, checking, error, clearError, done, clearDone, logout } = useApp();
   const [tab, setTab] = useState(null);
+  const [navArgs, setNavArgs] = useState({});
   const [menu, setMenu] = useState(false); // phone menu open?
   const [openGroup, setOpenGroup] = useState(null); // null: the group of the page you are on; '' none
   const [intro, setIntro] = useState(firstOpen);
@@ -191,14 +193,16 @@ function Shell() {
   if (!db) return <div className="login-loading">{error || 'Loading…'}</div>;
   const nav = navFor(user);
   const navSections = user.role === 'HR'
-    ? HR_NAV_SECTIONS.map((section) => ({ ...section, items: nav.filter(([k]) => section.keys.includes(k)) })).filter((section) => section.items.length)
+    ? HR_NAV_SECTIONS.map((section) => ({ ...section, items: section.keys.map((k) => nav.find((x) => x[0] === k)).filter(Boolean) })).filter((section) => section.items.length)
     : [{ label: '', items: nav }];
   const cur = nav.find((n) => n[0] === tab) || nav[0];
   const [key, label, , page, subtitle] = cur;
   const isHome = key === nav[0][0];
   const unread = db.notifications.filter((n) => n.userId === user.id && !n.read).length;
   const position = POSITIONS[user.role]?.[user.position];
-  const go = (k) => { setTab(k); setOpenGroup(null); };
+  const go = (k, args = {}) => { setTab(k); setNavArgs(args); setOpenGroup(null); window.scrollTo(0, 0); };
+  // small numbers on the menu: unread notifications, and formulas waiting for this VP
+  const counts = { notifs: unread, formulas: user.role === 'DIR' ? (db.formulas || []).filter((f) => f.status === 'pending').length : 0 };
   const shown = openGroup ?? navSections.find((s) => s.label && s.items.some(([k]) => k === key))?.label;
   return (
     <NavContext.Provider value={go}>
@@ -227,9 +231,9 @@ function Shell() {
                     </button>
                   )}
                   {open && section.items.map(([k, l, icon]) => (
-                    <button key={k} className={key === k ? 'on' : ''} onClick={() => { go(k); setMenu(false); window.scrollTo(0, 0); }} aria-current={key === k ? 'page' : undefined}>
+                    <button key={k} className={key === k ? 'on' : ''} onClick={() => { go(k); setMenu(false); }} aria-current={key === k ? 'page' : undefined}>
                       <Icon name={icon} /><span>{l}</span>
-                      {k === 'notifs' && unread > 0 && <span className="pill">{unread}</span>}
+                      {counts[k] > 0 && <span className="pill">{counts[k]}</span>}
                     </button>
                   ))}
                 </div>
@@ -248,7 +252,7 @@ function Shell() {
             <p>{isHome ? `${ROLES[user.role]} · ${new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}` : subtitle}</p>
           </header>
           {error && <ErrorAlert text={error} onClose={clearError} />}
-          {page}
+          <NavArgsContext.Provider value={navArgs}>{page}</NavArgsContext.Provider>
         </main>
         {done && <DoneToast key={done.id} text={done.text} onClose={clearDone} />}
       </div>

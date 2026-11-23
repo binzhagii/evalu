@@ -1,22 +1,19 @@
 // "How the final rating is computed": HR sets it in plain words, tries it, and sends it to a VP.
 // After the VP approves, HR starts using it. Old periods keep the formula they were computed with.
 // The engine behind it is src/lib/formula.js.
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useApp } from '../lib/store';
 import {
   TARGET_TYPES, AGGREGATIONS, MISSING_RULES, ROUNDING_METHODS, formGroups, formulaKey, methodOf, asPercentages,
-  defaultFormula, policyFor, periodById, validateFormula, computeFinal, formulaWords, howInWords, computeTarget, targetsOf, targetType, deptName, groupName,
+  defaultFormula, policyFor, periodById, validateFormula, computeFinal, formulaWords, deptName,
 } from '../lib/logic';
-import { Card, Select, Badge, ask, fmt } from '../ui';
-import { AddGroup, BothLevels, Overview, formulaNow } from './FormulaParts';
+import { Card, Select, Badge, ask, useNavArgs } from '../ui';
+import { AddGroup, BothLevels, Overview, TryIt, formulaNow } from './FormulaParts';
+import FormulaApprovals from './FormulaApprovals';
 
 const STATUS = { draft: ['pending', 'Not sent yet'], pending: ['info', 'Waiting for VP'], approved: ['completed', 'Approved, ready to use'], scheduled: ['info', 'Starts next period'], active: ['completed', 'In use'], archived: ['muted', 'Old version'], rejected: ['overdue', 'Returned by VP'] };
 const day = (iso) => (iso ? new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : '');
-const SAMPLE = { ST: 3.5, DEAN: 3.6, CHAIR: 3.4 };
 const short = (txt) => txt.split(':')[0];
-
-/** The computation in numbers, only when it is a simple sum (percentages or the same for all); otherwise nothing. */
-const plainHow = (r) => (r.final != null && r.breakdown?.some((b) => b.share && b.contribution != null) ? howInWords(r) : '');
 
 /** The settings, in plain words. Technical settings are under "More options". */
 function FormulaForm({ f, setF, groups, groupNames, readOnly }) {
@@ -81,63 +78,16 @@ function FormulaForm({ f, setF, groups, groupNames, readOnly }) {
   );
 }
 
-/** "Try it": the current formula and the new one side by side, on one example and on a past period. */
-function TryIt({ db, tt, dept, draft, baseline }) {
-  if (!draft.method || !draft.components.length || !draft.missing) return <div className="fx-try"><h4>Try it</h4><p className="muted">Answer 1 and 2 above, then you can try the formula here.</p></div>;
-  return <TryItReady db={db} tt={tt} dept={dept} draft={draft} baseline={baseline} />;
-}
-function TryItReady({ db, tt, dept, draft, baseline }) {
-  const groups = [...new Set([...baseline.components, ...draft.components].map((c) => c.group))];
-  const [scores, setScores] = useState(() => Object.fromEntries(groups.map((g) => [g, SAMPLE[g] ?? 3.5])));
-  const sc = Object.fromEntries(groups.map((g) => [g, scores[g] === '' || scores[g] == null ? null : Number(scores[g])]));
-  const now = computeFinal(baseline, sc), next = computeFinal(draft, sc);
-  const closed = db.periods.filter((p) => p.status === 'closed');
-  const [pid, setPid] = useState(closed.at(-1)?.id || '');
-  const [showList, setShowList] = useState(false);
-  const people = targetsOf(db).filter((u) => targetType(db, u) === tt && (!dept || u.dept === dept));
-  const real = useMemo(() => (pid ? people.map((u) => ({ u, now: computeTarget(db, pid, u.id).final, next: computeTarget(db, pid, u.id, { formula: draft }).final }))
-    .filter((r) => r.now != null || r.next != null) : []), [db, pid, draft]); // eslint-disable-line react-hooks/exhaustive-deps
-  const changed = real.filter((r) => r.now !== r.next);
-  const tag = (r) => (r.final == null ? <Badge kind="overdue">no rating</Badge> : null);
-  return (
-    <div className="fx-try">
-      <h4>Try it</h4>
-      <p className="muted small">Type example ratings. Leave a box empty to see what happens when a group has no rating.</p>
-      <div className="row">{groups.map((g) => (
-        <label key={g} className="inline">{groupName(db, g)} <input type="number" step="0.01" min="1" max="4" className="tiny" value={scores[g] ?? ''} placeholder="none" onChange={(e) => setScores({ ...scores, [g]: e.target.value })} /></label>
-      ))}</div>
-      <div className="fx-compare">
-        <div><span className="muted">Now</span><b>{fmt(now.final)}</b>{tag(now)}<span className="muted small">{plainHow(now)}</span></div>
-        <div className="fx-arrow">→</div>
-        <div><span className="muted">With this formula</span><b>{fmt(next.final)}</b>{tag(next)}<span className="muted small">{plainHow(next)}</span></div>
-      </div>
-      {closed.length > 0 && (
-        <p>
-          On <Select value={pid} onChange={setPid}>{closed.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</Select>:{' '}
-          <b>{changed.length} of {real.length}</b> {TARGET_TYPES[tt].toLowerCase()} would get a different rating.{' '}
-          {changed.length > 0 && <button className="link" onClick={() => setShowList(!showList)}>{showList ? 'Hide' : 'See who'}</button>}
-          <span className="muted small"> (Nothing is changed: this is only a test.)</span>
-        </p>
-      )}
-      {showList && changed.length > 0 && (
-        <table>
-          <thead><tr><th>Name</th><th>Now</th><th>With this formula</th></tr></thead>
-          <tbody>{changed.map((r) => <tr key={r.u.id}><td>{r.u.name}</td><td>{fmt(r.now)}</td><td><b>{fmt(r.next)}</b></td></tr>)}</tbody>
-        </table>
-      )}
-    </div>
-  );
-}
-
 export default function Formulas() {
   const { db, user, act } = useApp();
   const names = Object.fromEntries((db.evaluatorGroups || []).map((g) => [g.id, g.name]));
   const words = (formula) => formulaWords(formula, names);
   const isHR = user.role === 'HR';
   const pendingAll = (db.formulas || []).filter((f) => f.status === 'pending');
-  const [tt, setTt] = useState(() => (!isHR && pendingAll[0]?.targetType) || Object.keys(TARGET_TYPES)[0]);
+  const args = useNavArgs(); // a notification can open one category
+  const [tt, setTt] = useState(() => args.tt || (!isHR && pendingAll[0]?.targetType) || Object.keys(TARGET_TYPES)[0]);
   const deptKeys = [...new Set((db.formulas || []).filter((f) => f.targetType === tt && f.dept).map((f) => f.dept))];
-  const [dept, setDept] = useState(() => (!isHR && pendingAll[0]?.dept) || '');
+  const [dept, setDept] = useState(() => (args.tt ? args.dept : !isHR && pendingAll[0]?.dept) || '');
   const key = formulaKey(tt, dept || null);
   const versions = (db.formulas || []).filter((f) => f.key === key).sort((a, b) => b.version - a.version);
   const active = versions.find((f) => f.status === 'active');
@@ -191,7 +141,7 @@ export default function Formulas() {
     if (r) setMsg(`Now in use.${r.kept ? ` ${r.kept} open period(s) already had answers and keep the old formula.` : ''}`);
   };
   const later = async () => {
-    if (!(await ask('Start with the next evaluation period?', 'The formula in use stays until you create the next evaluation period under Periods & release. That new period will use this one.', { ok: 'Start next period' }))) return;
+    if (!(await ask('Start with the next evaluation period?', 'The formula in use stays until you create the next evaluation period under Dates & release. That new period will use this one.', { ok: 'Start next period' }))) return;
     if (await act('activateFormula', { id: working.id, when: 'next' })) setMsg('Set. It starts when you create the next evaluation period.');
   };
 
@@ -199,11 +149,7 @@ export default function Formulas() {
     <>
       {isHR && <div className="note"><b>One place for scoring percentages and calculation.</b> Every category has its own formula. Click <b>Change</b> beside a category, set its evaluator groups and percentages, then try it. Send HRMC-approved changes to a VP; past results keep the formula they used.</div>}
       {msg && <div className="note ok">{msg}</div>}
-      {!isHR && pendingAll.length > 0 && (
-        <Card title={`Waiting for your approval (${pendingAll.length})`}>
-          <ul>{pendingAll.map((p) => <li key={p.id}><button className="link" onClick={() => pick(p.targetType, p.dept || '')}>{p.config.name}</button> <span className="muted">· sent by {p.meta.submittedBy}</span></li>)}</ul>
-        </Card>
-      )}
+      {!isHR && <FormulaApprovals first={args.tt ? formulaKey(args.tt, args.dept || null) : null} />}
       <Overview tt={tt} dept={dept} onPick={pick} onChange={isHR ? change : null} />
       <Card title={`Rating formula: ${who}`} actions={<span className="row" style={{ margin: 0 }}>
         <Select value={dept} onChange={(v) => pick(tt, v)} aria-label="Department">
@@ -211,7 +157,7 @@ export default function Formulas() {
           {db.departments.filter((d) => isHR || deptKeys.includes(d.id)).map((d) => <option key={d.id} value={d.id}>Only {d.name}</option>)}
         </Select>
       </span>}>
-        <p className="muted">{isHR ? 'To give one department its own formula, choose it at the top right, then click Change formula.' : 'HR changes the scoring rule and sends it to you. Check it with "Try it", then approve it or return it to HR. Old results never change.'}</p>
+        <p className="muted">{isHR ? 'To give one department its own formula, choose it at the top right, then click Change formula.' : 'This is what counts now. Old results never change.'}</p>
         <div className="fx-now">
           <span className="muted">{who} now:</span>
           <b className="fx-sentence">{words(baseline)}</b>
@@ -223,10 +169,10 @@ export default function Formulas() {
 
       {adding && canAdd && <AddGroup key={key + (working?.id || '')} tt={tt} dept={dept} base={asPercentages(working ? working.config : baseline)} onDone={added} onCancel={() => setAdding(false)} />}
       <span ref={editor} />
-      {working && f && (
+      {isHR && working && f && (
         <Card title={`New formula for ${who}`} actions={<Badge kind={STATUS[working.status][0]}>{STATUS[working.status][1]}</Badge>}>
           {working.status === 'rejected' && <div className="note warn">The VP returned it: "{working.meta.rejectReason}". Fix it and send it again.</div>}
-          {working.status === 'pending' && <div className="note">Basis: <b>{working.meta.basis}</b>. {isHR ? 'Waiting for the VP.' : 'Check it with "Try it", then approve or return it.'}</div>}
+          {working.status === 'pending' && <div className="note">Basis: <b>{working.meta.basis}</b>. Waiting for the VP.</div>}
           {working.status === 'scheduled' && <div className="note">Approved by {working.meta.approvedBy}. It starts when HR creates the next evaluation period. Until then, {who} keep the formula in use now.</div>}
           {editable && working.config.method !== 'WEIGHTED_AVERAGE' && <div className="note">This draft used another way of combining scores. It now uses percentages: check them, then save.</div>}
           <div className="fx-now"><b className="fx-sentence">{words(f)}</b></div>
@@ -240,14 +186,9 @@ export default function Formulas() {
               <button className="ghost" onClick={async () => { if (await ask('Discard this new formula?', 'The formula in use stays the same.', { ok: 'Discard', danger: true })) act('deleteFormulaDraft', { id: working.id }); }}>Discard</button></>}
             {isHR && working.status === 'approved' && <><button onClick={use}>Start using it now</button><button className="ghost" onClick={later}>Start with the next period</button><span className="muted small">Not sure? Choose "Start with the next period": the period going on now is not affected.</span></>}
             {isHR && working.status === 'scheduled' && <button className="ghost" onClick={use}>Start using it now instead</button>}
-            {user.role === 'DIR' && working.status === 'pending' && <>
-              <button onClick={async () => { if (await ask('Approve this formula?', 'HR can then start using it. Old results do not change.', { ok: 'Approve' })) act('approveFormula', { id: working.id }); }}>Approve</button>
-              <button className="ghost" onClick={async () => { const why = await ask('Return this formula to HR?', 'Write what needs to change.', { ok: 'Return to HR', danger: true, input: 'e.g. The percentages do not match the committee decision' }); if (why) act('rejectFormula', { id: working.id, reason: why }); }}>Return to HR</button>
-            </>}
           </div>
         </Card>
       )}
-      {!working && !isHR && <Card><p className="muted">Nothing is waiting for your approval for {who}.</p></Card>}
 
       <BothLevels formula={baseline} tt={tt} dept={dept || null} />
       <Card title="Past formulas">

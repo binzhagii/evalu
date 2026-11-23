@@ -1,13 +1,12 @@
 // Parts of the "Scoring & calculation" page: every category at a glance, both levels of weights together
 // (the percentage of each evaluator group, and the parts inside its tool), and adding an evaluator group in one go.
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useApp } from '../lib/store';
 import {
   TARGET_TYPES, CLASS_TYPES, POSITIONS, activeFormula, currentPolicy, defaultFormula, deptName, formGroups, formulaSnapshot, groupName, groupsOf,
-  methodOf, targetType, toolName, toolParts, toolProblems, toolStatus,
+  canSeeAll, computeFinal, computeTarget, howInWords, targetsOf, methodOf, targetType, toolName, toolParts, toolProblems, toolStatus,
 } from '../lib/logic';
-import { Card, Select, Badge, Icon, useNav } from '../ui';
-import { openToolNext } from './Tools';
+import { Card, Select, Badge, Icon, useNav, fmt } from '../ui';
 
 const short = (n) => +Number(n).toFixed(2);
 /** The formula of a category (or of one department) that counts now. */
@@ -23,6 +22,60 @@ function groupsText(db, f) {
   return m?.usesWeights ? f.components.map((c) => `${groupName(db, c.group)} ${c.weight == null || c.weight === '' ? '(not set)' : `${c.weight}%`}`).join(' · ') : `${f.components.map((c) => groupName(db, c.group)).join(', ')} (${m?.label?.toLowerCase() || 'no method'})`;
 }
 const WORKING = { draft: ['pending', 'Draft not sent'], rejected: ['overdue', 'Returned by VP'], pending: ['info', 'Waiting for VP'], approved: ['completed', 'Approved, not used yet'], scheduled: ['info', 'Starts next period'] };
+
+/* ---------------- try a formula ---------------- */
+const SAMPLE = { ST: 3.5, DEAN: 3.6, CHAIR: 3.4 };
+/** The computation in numbers, only when it is a simple sum (percentages or the same for all); otherwise nothing. */
+const plainHow = (r) => (r.final != null && r.breakdown?.some((b) => b.share && b.contribution != null) ? howInWords(r) : '');
+
+/** "Try it": the current formula and the new one side by side, on one example and on a past period. */
+export function TryIt({ db, tt, dept, draft, baseline }) {
+  if (!draft.method || !draft.components.length || !draft.missing) return <div className="fx-try"><h4>Try it</h4><p className="muted">Answer 1 and 2 above, then you can try the formula here.</p></div>;
+  return <TryItReady db={db} tt={tt} dept={dept} draft={draft} baseline={baseline} />;
+}
+function TryItReady({ db, tt, dept, draft, baseline }) {
+  const groups = [...new Set([...baseline.components, ...draft.components].map((c) => c.group))];
+  const [scores, setScores] = useState(() => Object.fromEntries(groups.map((g) => [g, SAMPLE[g] ?? 3.5])));
+  const sc = Object.fromEntries(groups.map((g) => [g, scores[g] === '' || scores[g] == null ? null : Number(scores[g])]));
+  const now = computeFinal(baseline, sc), next = computeFinal(draft, sc);
+  const { user } = useApp();
+  const closed = db.periods.filter((p) => p.status === 'closed' && canSeeAll(user, p)); // a VP sees only the periods sent to them
+  const [pid, setPid] = useState(closed.at(-1)?.id || '');
+  const [showList, setShowList] = useState(false);
+  const people = targetsOf(db).filter((u) => targetType(db, u) === tt && (!dept || u.dept === dept));
+  const real = useMemo(() => (pid ? people.map((u) => ({ u, now: computeTarget(db, pid, u.id).final, next: computeTarget(db, pid, u.id, { formula: draft }).final }))
+    .filter((r) => r.now != null || r.next != null) : []), [db, pid, draft]); // eslint-disable-line react-hooks/exhaustive-deps
+  const changed = real.filter((r) => r.now !== r.next);
+  const tag = (r) => (r.final == null ? <Badge kind="overdue">no rating</Badge> : null);
+  return (
+    <div className="fx-try">
+      <h4>Try it</h4>
+      <p className="muted small">Type example ratings. Leave a box empty to see what happens when a group has no rating.</p>
+      <div className="row">{groups.map((g) => (
+        <label key={g} className="inline">{groupName(db, g)} <input type="number" step="0.01" min="1" max="4" className="tiny" value={scores[g] ?? ''} placeholder="none" onChange={(e) => setScores({ ...scores, [g]: e.target.value })} /></label>
+      ))}</div>
+      <div className="fx-compare">
+        <div><span className="muted">Now</span><b>{fmt(now.final)}</b>{tag(now)}<span className="muted small">{plainHow(now)}</span></div>
+        <div className="fx-arrow">→</div>
+        <div><span className="muted">With this formula</span><b>{fmt(next.final)}</b>{tag(next)}<span className="muted small">{plainHow(next)}</span></div>
+      </div>
+      {closed.length > 0 && (
+        <p>
+          On <Select value={pid} onChange={setPid}>{closed.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</Select>:{' '}
+          <b>{changed.length} of {real.length}</b> {TARGET_TYPES[tt].toLowerCase()} would get a different rating.{' '}
+          {changed.length > 0 && <button className="link" onClick={() => setShowList(!showList)}>{showList ? 'Hide' : 'See who'}</button>}
+          <span className="muted small"> (Nothing is changed: this is only a test.)</span>
+        </p>
+      )}
+      {showList && changed.length > 0 && (
+        <table>
+          <thead><tr><th>Name</th><th>Now</th><th>With this formula</th></tr></thead>
+          <tbody>{changed.map((r) => <tr key={r.u.id}><td>{r.u.name}</td><td>{fmt(r.now)}</td><td><b>{fmt(r.next)}</b></td></tr>)}</tbody>
+        </table>
+      )}
+    </div>
+  );
+}
 
 /* ---------------- every category at a glance ---------------- */
 export function Overview({ tt, dept, onPick, onChange }) {
@@ -63,7 +116,7 @@ export function BothLevels({ formula, tt, dept }) {
   const { db, user } = useApp();
   const go = useNav();
   const m = methodOf(formula.method, formula.methodVersion ?? 1);
-  const open = (id) => { openToolNext(id); go('forms'); };
+  const open = (id) => go('forms', { toolId: id });
   return (
     <Card title="Where the rating comes from">
       <p className="muted">Each evaluator group counts for a percentage of the final rating. Inside its tool, each part counts for a percentage of that group's score.</p>

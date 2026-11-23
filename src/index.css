@@ -761,3 +761,19 @@ table.fx-overview td.fx-dept button.link { font-weight:400; color:var(--mut); }
   .form-qs li.tool-item > .form-q-tools button { padding:4px 10px; font-size:13px; }
   .form-qs li.tool-item::after { content:''; display:block; clear:both; }
 }
+
+/* Overview steps, clickable notifications, formula approvals, school year */
+.term-group { margin:14px 0 2px; color:var(--mut); font-size:13px; text-transform:uppercase; letter-spacing:.04em; }
+.term-steps li.next { background:var(--pri-l); border-radius:10px; box-shadow:0 0 0 6px var(--pri-l); }
+.next-link { margin-left:8px; color:var(--pri); }
+.term-steps li.next .term-n { background:var(--pri); color:#fff; }
+.notifs li:has(.n-open) { padding:0; }
+.n-open { display:flex; gap:12px; align-items:center; width:100%; text-align:left; background:none; color:var(--fg); padding:12px 10px; border-radius:10px; font-weight:400; }
+.n-open:hover:not(:disabled) { background:#f6f7f8; color:var(--fg); }
+.n-open .n-body { flex:1; display:grid; gap:2px; min-width:0; }
+.n-open > .icon { color:var(--mut); }
+.fx-nownext { display:flex; flex-wrap:wrap; gap:12px; align-items:stretch; margin:10px 0; }
+.fx-nownext > div:not(.fx-arrow) { flex:1 1 260px; display:grid; gap:4px; align-content:start; border:1px solid var(--bd); border-radius:10px; padding:10px 14px; }
+.year-pick { display:inline-flex; align-items:center; gap:6px; }
+.year-pick input { width:86px; }
+.year-pick button { padding:6px 12px; }

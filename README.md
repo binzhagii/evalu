@@ -106,6 +106,7 @@ Sign in as `hr`. HR has the most pages.
 
 #### Overview
 Your home page. It shows:
+- **What to do**: the whole process in order (prepare, run, results, follow up), checked from the real data of the period, with the next step on top.
 - **Responses received**: how many evaluations in open periods are done.
 - **Overdue evaluations**: how many are past the deadline.
 - **Classes below half + 1**: classes where fewer than half of the class plus one have answered. These classes would be excluded if the period closed now.
@@ -113,7 +114,7 @@ Your home page. It shows:
 - Each open period with progress bars for each evaluator group, the classes that need attention, and who can see the results of each period.
 
 #### Periods & release
-- **Create a period**: enter a name (for example "2nd Semester 2026–2027") and a deadline. Tick departments to open the evaluation for only those departments (none ticked = all). Then generate the tasks under Assignments.
+- **Create a period**: choose the school year (the current one or any later one), the semester (1st or 2nd) and the dates. The same semester can be created again only for departments it does not cover yet. Tick departments to open the evaluation for only those departments (none ticked = all). Then generate the tasks under Assignments.
 - **Send participation alerts** while a period is open: the teacher, the department heads and HR are told which classes are at or below half.
 - **Close a period** when the deadline has passed. Classes where fewer than half of the class plus one answered are excluded, and the teacher, department heads and HR are notified.
 - **Release results** one step at a time: **HR only → VPs → Faculty**. After you send results to the VPs, **every VP must click "Approve"** before the *Release to faculty* button works.
@@ -240,7 +241,7 @@ Sign in as `hr_assistant`. The HRMC Assistant has the same screens and powers as
 
 ### Everyone
 
-- **Notifications**: reminders, overdue warnings and invalidated-class notices. A red dot on the menu means there is something new. Use **Mark all as read** to clear them.
+- **Notifications**: reminders, overdue warnings and invalidated-class notices. Click one to open the page it is about; only that one is marked as read. A red dot on the menu means there is something new. Use **Mark all as read** to clear them.
 - **My account**: your details, and **Change password**. Changing your password signs you out on your other devices.
 - **Log out**: the button next to your name at the bottom of the menu.
 
