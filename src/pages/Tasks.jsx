@@ -19,7 +19,7 @@ export default function Tasks() {
     if (!id) return null;
     const sec = db.sections.find((s) => s.id === id);
     const t = db.tasks.find((x) => x.sectionId === id && x.evaluatorId === user.id && periodById(db, x.periodId)?.status === 'open');
-    if (!t) return { note: sec ? `You are not on the class list of ${sec.code} ${sec.subject}, or its evaluation is not open. Your other evaluations are below.` : 'This QR code is no longer valid. Your evaluations are below.', warn: true };
+    if (!t) return { note: sec ? `The evaluation of ${sec.code} ${sec.subject} is not open. Your other evaluations are below.` : 'You are not on the class list of this QR code, or it is no longer valid. Your evaluations are below.', warn: true };
     if (t.response) return { note: `You already evaluated ${sec?.subject || 'this class'}. Thank you!` };
     return { open: t.id };
   });

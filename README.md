@@ -121,6 +121,7 @@ Your home page. It shows:
 - **Reset simulated data** puts all the sample data back. It erases every change, so use it only while testing.
 
 #### Assignments
+- **Personnel are listed by name; students are counted per class** ("12 of 40 answered"). Nobody, HR included, receives an answer with who gave it, its time, or its place in the class list. Other users only receive the people and classes they work with. The change history says "A student" for submitted student evaluations.
 - **Evaluations are created by themselves** when the period starts and after every change in the classes, students and staff; unanswered ones of students who dropped a class or accounts that were deactivated are removed. Evaluators are assigned from the class lists and from each person's role and department. Internship, practicum and field trip subjects are skipped.
 - See every task and whether it is pending, completed or overdue. Search for one evaluator.
 - **Send reminders now**. Reminders are also sent **automatically** once a day in the last 7 days before the deadline. Department heads and HR are alerted too.
@@ -139,13 +140,18 @@ section code,subject,teacher name,teacher email,student ID,student name,student 
 
 - Classes that don't exist yet are created. If the first row names the columns, they can be in any order; `subject code`, `type of class` and `student department` are optional. Names with a comma ("Dela Cruz, Juan") are read when they are in quotes.
 - Importing a newer list adds the new students and lists the ones who **dropped**, so you can remove them. Students of other departments can be in a class.
+- A new student gets the `student department` of the file. Without it, they get the department of their teacher: after **Check file**, HR can choose another one per section. If their classes later say otherwise, evalU asks HR to confirm (**Needs you** and **Class lists**).
 - evalU suggests the **type of class** (laboratory, clinical) from the subject names.
 - **Students without an account get one automatically.** Their first password is their **student ID**, and they must change it at the first sign-in. Students who already have an account are just added to the class, so the same student in two classes is created once.
 - **Teachers without an account get one too**, as Faculty in the chosen department. Their first password is the part of their email before the @ (for example `jdelacruz`).
 - Rows with a problem (for example a non-UB email, or a student from another department) are listed and skipped.
 - An example file with 1 teacher and 6 students in 2 classes is in [samples/class-list-example.csv](samples/class-list-example.csv). Import it with **School of Information Technology (SIT)** chosen.
 
-You can also add a section by hand. Practicum, internship and field trip subjects are listed but marked "not evaluated".
+- **Import during or after the first grading period**, when students who dropped are no longer on the list.
+- **Another teacher for the same section and subject**: the check step asks whether the earlier teacher was **replaced** or **both teach it**. Replaced: the unanswered evaluations of the earlier teacher are removed; submitted answers stay and count only if enough of the class had answered.
+- **Not evaluated**: the words that make a subject not evaluated (internship, practicum, field trip, OJT…). HR edits the list and can decide for one class. Earlier semesters, and classes students already answered, stay as they were.
+
+You can also add a section by hand.
 
 #### Forms
 - **UB's own evaluation tools** are built in (from the Word, Excel and PDF files in `templates and for printing pdf/`), with the same categories, weights and questions. They use UB's **4-point scale**: 4 Extensively demonstrated, 3 Adequately demonstrated, 2 Fairly demonstrated, 1 Not demonstrated (non-teaching: 4 Excellent, 3 Good, 2 Fair, 1 Poor). "Points" items on the Dean's tools (outreach, linkages, seminars, research) show their own words for each rating.
@@ -164,14 +170,16 @@ You can also add a section by hand. Practicum, internship and field trip subject
 - **Versions**: a tool in use is never edited directly; changes go into a draft, and past results keep the old version.
 - **Criteria bank**: criteria already answered can't be reworded or deleted, so old reports stay the same.
 
+Pages with several parts have a **bar** at the top: one part shows at a time. Adding or editing something (a class, an account, an office, a deadline) opens its own screen with a Back button.
+
 #### Scoring & calculation
-This is the single HR page for both evaluator percentages and the final-score method. The starting rules include College faculty 40 / 40 / 20 and Basic Education 40 / 20 / 20 / 20 (Table 6). Every category has its own formula: click **Change** beside it, set its evaluator groups and percentages, and try the result. Formula changes go through VP approval; each period keeps the formula version it started with. The page lists every category at a glance and shows both levels of weights together (the percentage of each group, and the parts inside its tool). **Add evaluator group** adds a new rater (for example Peers) in one screen: who they are, their tool and the new percentages. Evaluations are created only for the groups in the formula, so a department with its own formula gets only its own groups.
+This is the single HR page for both evaluator percentages and the final-score method. The starting rules include College faculty 40 / 40 / 20 and Basic Education 40 / 20 / 20 / 20 (Table 6). The bar above has three parts: **Formulas**, **Evaluator groups** and **History**. Every category has its own formula: open it, click **Change formula**, set its evaluator groups and percentages, and try the result. Formula changes go through VP approval; each period keeps the formula version it started with. **Where it comes from** shows both levels of weights together (the percentage of each group, and the parts inside its tool). To add a rater (for example Peers): create the group under **Evaluator groups → New group** (name and members), then open a formula and click **Add a group to this formula** (group, tool, percentages). **Departments** lists the departments with their own formula; a department can also **follow all departments again** (a VP approves it). Evaluations are created only for the groups in the formula, so a department with its own formula gets only its own groups.
 
 #### Accounts
 - **Import staff from a file**: deans, chairs, principals, office heads and staff (name, UB email, position, department or office).
 - **Add account**: enter a username, full name, role, position and department (students also choose their classes). The app shows a **temporary password once**, so write it down and give it to the person privately.
 - **Evaluator groups** are under **Scoring & calculation**: add, rename, change the members, and delete (a group used before is archived, so old results stay). The percentages must total 100%. System access roles such as HR and VP remain fixed.
-- **Departments & offices** (its own page): add, rename, deactivate, move everyone to another one, and delete. An **Office** (for example the Registrar) has a head and staff who evaluate each other. A closed period remembers the department and category each person had, so moving somebody later never changes a released rating; its results stay with the dean of that department.
+- **Departments & offices** (its own page): open one to see its people, its classes and its settings (rename, type, deactivate, move everyone to another one, delete). Changing the type first shows what it does: who would be rated differently, the formula now and then, and the raters that would be missing. A department where a group of the formula has nobody (for example no Program Chair) gets a warning. An **Office** (for example the Registrar) has a head and staff who evaluate each other. A closed period remembers the department and category each person had, so moving somebody later never changes a released rating; its results stay with the dean of that department.
 - **Edit**: change someone's name, role, department or classes.
 - **Reset password**: gives the person a new temporary password and signs them out everywhere.
 - **Deactivate**: the person can't sign in any more and gets no new tasks. Their past evaluations stay in the reports. **Reactivate** undoes this.

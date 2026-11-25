@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useApp } from '../lib/store';
 import { currentPolicy, fullPolicy, neededResponses, ruleWords, PARTICIPATION_RULES, bandTable, interpretation, DEFAULT_POLICY } from '../lib/logic';
-import { Card, Select, Badge, ask } from '../ui';
+import { Card, Select, Badge, Tabs, useTab, ask } from '../ui';
 
 const FIELD = {
   participationRule: 'Participation rule', participationPercent: 'Participation %', participationMin: 'Minimum answers (no rule)', bands: 'What each rating means', lowItem: 'Low question line',
@@ -32,6 +32,8 @@ export default function Policy() {
   const history = [...(db.policies || [])].reverse();
   const version = db.policies?.at(-1)?.version || 0;
   const examples = [10, 25, 40, 41];
+  const tabs = [['part', 'Participation'], ['mean', 'Rating meanings'], ['release', 'Comments and release'], ['versions', 'Version history']];
+  const [tab, setTab] = useTab(tabs, 'part');
   const bandOk = f.bands[0] > f.bands[1] && f.bands[1] > f.bands[2];
   const closedKeeping = db.periods.filter((p) => p.status !== 'open').length;
   // an open period somebody already answered in keeps its rules
@@ -49,10 +51,12 @@ export default function Policy() {
     <>
       <div className="note"><b>These settings affect how every evaluation is counted.</b> Leave them unchanged unless HRMC has approved a policy change. Saving requires a reason; closed terms keep their original rules.</div>
       {msg && <div className="note ok">{msg}</div>}
-      <Card title={`Evaluation rules · ${version ? `version ${version}` : "UB's starting rules"}`}>
+      <Tabs tabs={tabs} value={tab} onChange={setTab} />
+      {tab !== 'versions' && <Card title={`Evaluation rules · ${version ? `version ${version}` : "UB's starting rules"}`}>
         <p className="muted">These rules turn the answers into ratings. HR can change them when HRMC changes its policy. Each change is saved with a reason, and <b>closed periods keep the rules they used</b>, so past results never change.</p>
 
-        <h4>1. When does a class count? (participation rule)</h4>
+        {tab === 'part' && <>
+        <h4>When does a class count? (participation rule)</h4>
         <div className="fx-choices rule-choices">
           {['more', 'atleast'].map((k) => (
             <label key={k} className="inline fx-choice"><input type="radio" name="part-rule" checked={f.participationRule === k} onChange={() => set('participationRule', k)} /> <span>{PARTICIPATION_RULES[k]} <input type="number" className="tiny" aria-label={`${PARTICIPATION_RULES[k]} percent`} min="1" max={k === 'more' ? 99 : 100} disabled={f.participationRule !== k} value={f.participationPercent} onChange={(e) => set('participationPercent', Number(e.target.value))} /> % of the class must answer</span></label>
@@ -64,7 +68,9 @@ export default function Policy() {
           <tbody><tr><td>Answers needed</td>{examples.map((n) => <td key={n}><b>{neededResponses(n, f)}</b></td>)}</tr></tbody></table>
         <p className="muted small">A class counts when <b>{ruleWords(f)}</b> answered. The starting rule, more than 50%, is the same as HRMC's "half of the class plus one" for every class size (40 students → 21; 41 students → 21).</p>
 
-        <h4>2. What each rating means</h4>
+        </>}
+        {tab === 'mean' && <>
+        <h4>What each rating means</h4>
         <div className="row">
           {['Outstanding', 'Satisfactory', 'Fair'].map((w, i) => (
             <label key={w} className="inline">{w} from <input type="number" step="0.01" min="1" max="4" className="tiny" value={f.bands[i]} onChange={(e) => { const b = [...f.bands]; b[i] = Number(e.target.value); set('bands', b); }} /></label>
@@ -73,14 +79,16 @@ export default function Policy() {
         </div>
         {bandOk && <table className="policy-ex"><tbody>{bandTable(f).map(([range, i]) => <tr key={range}><td>{range}</td><td>{interpretation([...f.bands, 1][i], false, f)}</td></tr>)}</tbody></table>}
 
-        <h4>3. Low questions</h4>
+        <h4>Low questions</h4>
         <div className="row">
           <label className="inline">Flag questions averaging below <input type="number" step="0.01" min="1" max="4" className="tiny" value={f.lowItem} onChange={(e) => set('lowItem', Number(e.target.value))} /></label>
           <span className="muted small">Starting value 3.00 (where Satisfactory begins). Flagged questions show in Analytics.</span>
         </div>
         <p className="muted small">Evaluator percentages and how the final rating is computed are set together under <b>Scoring &amp; calculation</b>.</p>
 
-        <h4>4. Confidentiality and release</h4>
+        </>}
+        {tab === 'release' && <>
+        <h4>Confidentiality and release</h4>
         <div className="row">
           <label className="inline">Show students' comments about a teacher only when at least <input type="number" min="0" max="50" className="tiny" value={f.minAnonymity} onChange={(e) => set('minAnonymity', Number(e.target.value))} /> students answered</label>
         </div>
@@ -99,11 +107,14 @@ export default function Policy() {
         <div className="row"><label className="inline"><input type="checkbox" checked={f.autoRelease === true} onChange={(e) => set('autoRelease', e.target.checked)} /> Release the results to faculty by themselves once enough VPs approved</label></div>
         <p className="muted small">When this is off, HR clicks "Release to faculty" after the approvals. VPs who have not answered are reminded every 3 days.</p>
 
+        </>}
+
         <h4>Save as a new version</h4>
         {changed.length === 0 ? <p className="muted">No changes yet. Change a rule above to save a new version.</p> : (
           <>
             <div className="note small"><b>When it starts:</b> {when.join(' ')}</div>
             <ul className="policy-changes">{changed.map((k) => <li key={k}><b>{FIELD[k]}</b>: {show(k, cur[k])} → <b>{show(k, f[k])}</b></li>)}</ul>
+            {!bandOk && <div className="note warn small">Fix the numbers under <b>Rating meanings</b> first.</div>}
             <div className="row">
               <input className="wide" placeholder="Reason for the change (required), e.g. HRMC memo no. 12, s. 2026" value={reason} onChange={(e) => setReason(e.target.value)} />
               <button disabled={reason.trim().length < 5 || !bandOk} onClick={save}>Save new version</button>
@@ -111,9 +122,9 @@ export default function Policy() {
             </div>
           </>
         )}
-      </Card>
+      </Card>}
 
-      <Card title="Version history">
+      {tab === 'versions' && <Card title="Version history">
         {history.length === 0 ? <p className="muted">No changes yet: every period uses UB's default rules.</p> : (
           <table>
             <thead><tr><th>Version</th><th>When</th><th>By</th><th>Reason</th><th>What changed</th></tr></thead>
@@ -131,7 +142,7 @@ export default function Policy() {
           </table>
         )}
         <p className="muted small">Which version each period uses is shown under Dates &amp; release. Every change is also in Change history.</p>
-      </Card>
+      </Card>}
     </>
   );
 }

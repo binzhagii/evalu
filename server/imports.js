@@ -1,6 +1,6 @@
 // Reading the files HR imports: class lists (Registrar / ARC) and staff lists.
 import {
-  CLASS_TYPES, POSITIONS, ROLES, currentTerm, isEvaluatee, isInstitutionalEmail, isNursingDept, isTeacher, periodName, uid,
+  CLASS_TYPES, POSITIONS, ROLES, currentTerm, exemptPattern, exemptWords, replaceTeacher, saysExempt, userById, isEvaluatee, isExemptSection, isInstitutionalEmail, isNursingDept, isTeacher, periodName, uid,
 } from '../src/lib/logic.js';
 
 /**
@@ -68,9 +68,16 @@ const findDept = (db, v) => { const s = plain(v); return s ? db.departments.find
  * A class list into `db` (a copy the caller saves or throws away). Classes belong to a semester (term, "2026-1") and are
  * told apart by section, subject, teacher and type of class. Returns what was done and what could not be read.
  * drop: students of these classes who are not in the file any more are removed from them.
+ * A new student without a "student department" gets the department HR chose for their section (deptOf), or that of
+ * their teachers. The second is a guess: it is marked, and HR is asked when their classes say otherwise.
+ * teacherChanges: classes of this department that are in the file with another teacher. replace: the ones HR says were
+ * replaced (see replaceTeacher); for the others both teachers stay.
  */
-export function importClasses(db, { csv, listDept, term, drop }) {
+export function importClasses(db, { csv, listDept, term, drop, deptOf = {}, replace = [] }) {
+  const excluded = exemptPattern(exemptWords(db));
   const errors = [], warnings = [], fresh = [], freshTeachers = [];
+  const unknownDept = new Map(); // new student -> their classes in the file
+  const corrected = new Set(), differs = new Set();
   const seen = new Map(); // class + student -> first row
   const inFile = new Map(); // class id -> students in the file
   const before = new Set(db.sections.map((s) => s.id));
@@ -110,7 +117,7 @@ export function importClasses(db, { csv, listDept, term, drop }) {
     // a row without a type belongs to the class already there, whatever type HR gave it
     let s = classes.get(key(want)) || (!get('type') && [...classes.values()].find((x) => plain(x.code) === plain(code) && plain(x.subject) === plain(subject) && x.facultyId === f.id));
 
-    let st = null;
+    let st = null, isGuess = false;
     const sid = get('studentId').toLowerCase(), sname = get('studentName'), semail = get('studentLogin').toLowerCase();
     if (sid || sname) {
       st = login(semail) || login(sid);
@@ -120,6 +127,7 @@ export function importClasses(db, { csv, listDept, term, drop }) {
         if (!isInstitutionalEmail(semail)) { bad(`"${get('studentLogin')}" is not an official UB email.${cells.length > 8 ? ' If names have a comma, put them in quotes: "Dela Cruz, Juan".' : ''}`); continue; }
         const d = get('studentDept') ? findDept(db, get('studentDept')) : null;
         if (get('studentDept') && (!d || d.kind === 'office')) { bad(`"${get('studentDept')}" is not a department.`); continue; }
+        if (!d) isGuess = true;
         st = { id: uid('u'), username: sid, email: semail, name: sname, role: 'ST', position: 'student', dept: (d || db.departments.find((x) => x.id === f.dept)).id, passwordHash: null, active: true, mustChangePassword: true };
       }
     } else if (semail) {
@@ -129,17 +137,38 @@ export function importClasses(db, { csv, listDept, term, drop }) {
     if (st && st.role !== 'ST') { bad(`${st.name} is not a student account.`); continue; }
     if (!s) {
       s = { id: uid('sec'), code, subject, facultyId: f.id, dept: f.dept, studentIds: [], ...(term && { term }), ...(type && { classType: type }) };
+      s.exempt = saysExempt(s, excluded);
       db.sections.push(s); classes.set(key(s), s); created++;
     }
     if (!inFile.has(s.id)) inFile.set(s.id, new Set());
     if (!st) continue; // a row that only lists the class
-    if (!st.passwordHash && !login(st.username)) { addPerson(st); fresh.push(st); }
+    if (!st.passwordHash && !login(st.username)) { addPerson(st); fresh.push(st); if (isGuess) { st.deptGuess = true; unknownDept.set(st, new Set()); } }
+    const given = get('studentDept') ? findDept(db, get('studentDept')) : null;
+    if (given && given.kind !== 'office' && st.deptGuess) { // the file says it: no guess any more
+      if (!unknownDept.delete(st)) corrected.add(st.id);
+      st.dept = given.id; delete st.deptGuess;
+    } else if (given && given.id !== st.dept && !differs.has(st.id)) { differs.add(st.id); warnings.push(`Row ${line}: ${st.name} is in ${db.departments.find((x) => x.id === st.dept)?.name}, but the file says ${given.name}. Not changed; correct it under People & sign-in if the file is right.`); }
+    unknownDept.get(st)?.add(s);
     const rowKey = `${s.id}|${st.id}`;
     if (seen.has(rowKey)) { duplicates++; warnings.push(`Row ${line}: duplicate of row ${seen.get(rowKey)} (${st.name} in ${code}); counted once.`); continue; }
     seen.set(rowKey, line);
     inFile.get(s.id).add(st.id);
     if (!fresh.includes(st)) existingStudents++;
-    if (!s.studentIds.includes(st.id)) { s.studentIds.push(st.id); enrolled++; }
+    if (!s.studentIds.includes(st.id)) { s.studentIds.push(st.id); enrolled++; delete s.replaced; }
+  }
+
+  // new students without a department: the one HR chose for their section, else the one most of their classes have
+  const guessed = new Map();
+  for (const [st, list] of unknownDept) {
+    const chosen = [...list].map((s) => deptOf[plain(s.code)]).find(Boolean);
+    const count = {};
+    for (const s of list) count[s.dept] = (count[s.dept] || 0) + 1;
+    st.dept = chosen || Object.entries(count).sort((a, b) => b[1] - a[1])[0]?.[0] || st.dept;
+    if (chosen) delete st.deptGuess;
+    for (const s of list) {
+      const k = plain(s.code), x = guessed.get(k) || { key: k, code: s.code, dept: s.dept, students: new Set() };
+      x.students.add(st); guessed.set(k, x);
+    }
   }
 
   // who is not on the list any more (only in the classes the file has)
@@ -150,8 +179,26 @@ export function importClasses(db, { csv, listDept, term, drop }) {
     for (const x of s.studentIds.filter((y) => !students.has(y))) dropped.push({ section: s.id, code: s.code, subject: s.subject, student: x, name: db.users.find((u) => u.id === x)?.name });
     if (drop) s.studentIds = s.studentIds.filter((x) => students.has(x));
   }
-  const notInFile = listDept ? db.sections.filter((s) => (s.term || null) === (term || null) && s.dept === listDept.id && before.has(s.id) && !inFile.has(s.id)) : [];
-  return { rows: rows.length, created, enrolled, duplicates, existingStudents, errors, warnings, fresh, freshTeachers, dropped, notInFile };
+  let notInFile = listDept ? db.sections.filter((s) => (s.term || null) === (term || null) && s.dept === listDept.id && before.has(s.id) && !inFile.has(s.id)) : [];
+
+  // the same section and subject with another teacher: replaced, or do both teach it? (HR answers)
+  const teacherChanges = [];
+  const filed = [...inFile.keys()].map((id) => db.sections.find((x) => x.id === id));
+  for (const old of notInFile.filter((s) => s.studentIds.length)) {
+    const next = filed.filter((s) => plain(s.code) === plain(old.code) && plain(s.subject) === plain(old.subject) && s.facultyId !== old.facultyId);
+    if (!next.length) continue;
+    const now = new Set(next.flatMap((s) => [...inFile.get(s.id)])), same = old.studentIds.filter((x) => now.has(x)).length;
+    const open = new Set(db.periods.filter((p) => p.status === 'open').map((p) => p.id)), tasks = db.tasks.filter((t) => t.sectionId === old.id && open.has(t.periodId));
+    const x = { id: old.id, code: old.code, subject: old.subject, from: userById(db, old.facultyId)?.name, to: next.map((s) => userById(db, s.facultyId)?.name).join(', '), students: old.studentIds.length, same,
+      waiting: tasks.filter((t) => !t.response).length, answered: tasks.filter((t) => t.response).length,
+      likely: next.some((s) => !before.has(s.id)) && same * 2 >= old.studentIds.length }; // mostly the same students, and the new class is new
+    if (replace.includes(old.id)) { x.replaced = true; x.removed = replaceTeacher(db, old, next); }
+    teacherChanges.push(x);
+  }
+  notInFile = notInFile.filter((s) => !teacherChanges.some((x) => x.id === s.id));
+  const notEvaluated = filed.filter((s) => isExemptSection(s));
+  return { rows: rows.length, created, enrolled, duplicates, existingStudents, errors, warnings, fresh, freshTeachers, dropped, notInFile, teacherChanges, notEvaluated, corrected: corrected.size,
+    guessed: [...guessed.values()].map((x) => ({ ...x, students: x.students.size })), guessedCount: unknownDept.size };
 }
 
 /* ---------- staff (deans, program chairs, office heads, staff…) ---------- */

@@ -7,7 +7,7 @@ import {
   computeAll, canSeeAll, hasFinal, itemStats, sectionStats, targetsOf, targetsInDept, countedSections, personIn, policyFor, ruleWords, TARGET_TYPES, deptName, groupName,
   formOfTask, itemCategory, interpretation, commentParts, cronbachAlpha, alphaLabel,
 } from '../lib/logic';
-import { Card, PeriodPicker, Select, Badge, fmt, pct } from '../ui';
+import { Card, PeriodPicker, Select, Badge, Tabs, useTab, usePages, fmt, pct } from '../ui';
 import { summarizeComments } from '../lib/comments';
 
 const NO_ANIM = { isAnimationActive: false }; // no moving graphics
@@ -131,8 +131,10 @@ function PeriodCompare({ db, periods, data, dept }) {
   );
 }
 
+const TABS = [['find', 'Key findings'], ['ratings', 'Ratings'], ['time', 'Over time'], ['part', 'Participation'], ['questions', 'Questions'], ['comments', 'Comments and agreement']];
 export default function Analytics() {
   const { db, user } = useApp();
+  const [tab, setTab] = useTab(TABS, 'find');
   const periods = db.periods.filter((p) => canSeeAll(user, p));
   const [dept, setDept] = useState('ALL');
   const [pidSel, setPid] = useState(periods[periods.length - 1]?.id);
@@ -234,13 +236,14 @@ export default function Analytics() {
   return (
     <>
       <div className="row between">
-        <p className="muted" style={{ margin: 0 }}>Start with <b>Key findings</b> for a short summary. Choose a term and department to explore the details below.</p>
+        <p className="muted" style={{ margin: 0 }}>Start with <b>Key findings</b> for a short summary. The term and department you choose apply to every part.</p>
         {filters}
       </div>
 
-      <KeyFindings findings={findings} />
+      <Tabs tabs={TABS} value={tab} onChange={setTab} />
+      {tab === 'find' && <KeyFindings findings={findings} />}
 
-      <Card title="Trend over time">
+      {tab === 'time' && <Card title="Trend over time">
         <p className="muted">Average final rating per period. The dashed grey line shows earlier records imported by HR (from before evalU).</p>
         <div className="chart"><ResponsiveContainer><LineChart data={trend}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="period" /><YAxis domain={[1, 4]} /><Tooltip /><Legend />
           <Line {...NO_ANIM} type="monotone" dataKey="score" name="evalU periods" stroke="#b3001b" strokeWidth={2} connectNulls />
@@ -250,9 +253,9 @@ export default function Analytics() {
           <li>Earlier records: final ratings HR imported from the Excel files (Reports → Earlier records). They were <b>not recomputed</b> by evalU, so their forms and weights may differ: compare with care.</li>
           <li>A trend shows change over time; it does not explain the cause.</li>
         </Source>
-      </Card>
+      </Card>}
 
-      <Card title="Rating distribution">
+      {tab === 'ratings' && <Card title="Rating distribution">
         <p className="muted">How many people fall in each rating band, per department ({period?.name}).</p>
         {distribution.length === 0 ? <p className="muted">No final ratings for this selection.</p> : (
           <>
@@ -267,9 +270,9 @@ export default function Analytics() {
           <li>Non-teaching staff use Excellent / Good / Fair / Poor; they are counted in the matching band.</li>
           <li>People without a final rating (e.g. weights not set) are not counted.</li>
         </Source>
-      </Card>
+      </Card>}
 
-      <Card title="Participation">
+      {tab === 'part' && <Card title="Participation">
         <p className="muted">Students' response rate and classes left out because not enough answered ({period?.name}: {ruleWords(pol)}).</p>
         {participation.length === 0 ? <p className="muted">No class lists for this selection.</p> : (
           <table><thead><tr><th>Department</th><th>Classes</th><th>Counted</th><th>Excluded</th><th>Students answered</th><th>Response rate</th></tr></thead>
@@ -280,9 +283,9 @@ export default function Analytics() {
           <li>A class counts when its answers reach the period's participation rule; excluded classes are left out of the teachers' results.</li>
           <li>Response rate = students who answered ÷ students enrolled. A high rate does not prove the answers are representative.</li>
         </Source>
-      </Card>
+      </Card>}
 
-      <Card title="Comparison across departments">
+      {tab === 'ratings' && <Card title="Comparison across departments">
         <p className="muted">Average final rating per department ({period?.name}).</p>
         <div className="chart"><ResponsiveContainer><BarChart data={compare}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="department" /><YAxis domain={[0, 4]} /><Tooltip /><Legend /><Bar {...NO_ANIM} dataKey="Average final rating" fill="#b3001b" /></BarChart></ResponsiveContainer></div>
         <table><thead><tr><th>Department</th><th>Average final rating</th><th>People with a final rating</th></tr></thead>
@@ -291,9 +294,9 @@ export default function Analytics() {
           <li>Average of the final ratings of the people in each department who have a final rating.</li>
           <li>Departments use different forms (e.g. Basic Ed vs. college), so differences may partly come from the forms.</li>
         </Source>
-      </Card>
+      </Card>}
 
-      <Card title="Strengths and weaknesses by category">
+      {tab === 'questions' && <Card title="Strengths and weaknesses by category">
         <p className="muted">Average answer per form category, lowest first ({dept === 'ALL' ? 'all departments' : deptName(db, dept)}, {period?.name}). Categories below {pol.lowItem.toFixed(2)} are flagged.</p>
         {cats.length === 0 ? <p className="muted">No answers for this selection.</p> : (
           <table><thead><tr><th>Category</th><th>Evaluator group</th><th>Average</th><th>Answers</th><th>People rated</th><th /></tr></thead>
@@ -305,9 +308,9 @@ export default function Analytics() {
           <li>Average = mean of those answers (category weights are not applied here, so this is not the weighted score).</li>
           <li>Students' answers only from classes that reached the participation rule.</li>
         </Source>
-      </Card>
+      </Card>}
 
-      <Card title="What the comments are about">
+      {tab === 'comments' && <Card title="What the comments are about">
         <p className="muted">Written comments of the evaluations that count, sorted by topic ({dept === 'ALL' ? 'all departments' : deptName(db, dept)}, {period?.name}).</p>
         {csum.total === 0 ? <p className="muted">No comments for this selection{user.role === 'HR' ? '' : ', or they are not shared with you'}.</p> : (
           <>
@@ -321,9 +324,9 @@ export default function Analytics() {
           <li>A comment can have several topics or none. The tags help HR find what to read; they can miss sarcasm, so read the comments under Reports → All comments.</li>
           <li>The comments stay inside evalU; nothing is sent to an outside AI service.</li>
         </Source>
-      </Card>
+      </Card>}
 
-      <Card title="Do the evaluator groups agree?">
+      {tab === 'comments' && <Card title="Do the evaluator groups agree?">
         <p className="muted">Where the evaluator groups rate the same person differently ({period?.name}). A gap of 0.50 or more is flagged.</p>
         {gaps.length === 0 ? <p className="muted">No one was rated by two or more groups.</p> : (
           <table><thead><tr><th>Name</th><th>Ratings by group</th><th>Gap</th></tr></thead>
@@ -338,31 +341,43 @@ export default function Analytics() {
           <li>Gap = highest group score − lowest group score. Largest gaps first (top 15).</li>
           <li>A gap shows that groups see different things (classroom vs. compliance); it does not say who is right.</li>
         </Source>
-      </Card>
+      </Card>}
 
-      <PeriodCompare db={db} periods={periods} data={data} dept={dept} />
+      {tab === 'time' && <PeriodCompare db={db} periods={periods} data={data} dept={dept} />}
 
-      <Sureness db={db} pid={pid} now={now} dept={dept} />
+      {tab === 'ratings' && <Sureness db={db} pid={pid} now={now} dept={dept} />}
 
-      <Card title="Results per question">
+      {tab === 'questions' && <Card title="Results per question">
         <p className="muted">Each question, lowest first. Questions averaging below <b>{pol.lowItem.toFixed(2)}</b> (the low question line in Policy &amp; rules) are flagged; <b>consistently low</b> means it was also low in the previous period.</p>
         {items.length === 0 ? <p className="muted">No item results for this selection.</p> : (
-          <table className="items">
-            <thead><tr><th>Question</th><th>Evaluator group</th><th>Average</th><th>Previous period</th><th>Answers</th><th>Flag</th></tr></thead>
-            <tbody>{items.map((r) => (
-              <tr key={r.group + r.criterionId} className={r.low ? 'low' : ''}>
-                <td>{text(r.criterionId)}</td><td>{groupName(db, r.group)}</td><td><b>{fmt(r.mean)}</b></td><td>{fmt(r.prev)}</td><td>{r.n}</td>
-                <td>{r.consistent ? <Badge kind="overdue">consistently low</Badge> : r.low ? <Badge kind="pending">low</Badge> : ''}</td>
-              </tr>
-            ))}</tbody>
-          </table>
+          <Questions items={items} text={text} resetKey={`${pid}|${dept}`} />
         )}
         <Source>
           <li>Average of each question's answers in the evaluations that count, per evaluator group.</li>
           <li>"Previous period" is the period released just before the selected one.</li>
           <li>The cutoff comes from the period's policy (Policy &amp; rules), not a fixed number in the code.</li>
         </Source>
-      </Card>
+      </Card>}
+    </>
+  );
+}
+
+/** Every question, a page at a time. */
+function Questions({ items, text, resetKey }) {
+  const { db } = useApp();
+  const { rows, bar } = usePages(items, resetKey, 10);
+  return (
+    <>
+      <table className="items">
+        <thead><tr><th>Question</th><th>Evaluator group</th><th>Average</th><th>Previous period</th><th>Answers</th><th>Flag</th></tr></thead>
+        <tbody>{rows.map((r) => (
+          <tr key={r.group + r.criterionId} className={r.low ? 'low' : ''}>
+            <td>{text(r.criterionId)}</td><td>{groupName(db, r.group)}</td><td><b>{fmt(r.mean)}</b></td><td>{fmt(r.prev)}</td><td>{r.n}</td>
+            <td>{r.consistent ? <Badge kind="overdue">consistently low</Badge> : r.low ? <Badge kind="pending">low</Badge> : ''}</td>
+          </tr>
+        ))}</tbody>
+      </table>
+      {bar}
     </>
   );
 }

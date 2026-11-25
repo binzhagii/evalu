@@ -451,7 +451,7 @@ try {
   await tc('TC-71', 'Fix DEF-03: Clinical Instructors', 'CI weights; the Program Chair has a form for CIs and is assigned to evaluate the Nursing CI', { weights: { ST: 40, DEAN: 40, CHAIR: 20 }, chairForm: true, chairTask: true }, async () => {
     const d = (await call('/api/data', { cookie: hr })).data;
     const ci = d.users.find((u) => u.username === 'ci_c1').id, chair = d.users.find((u) => u.username === 'chair_c').id;
-    return { weights: d.rules.CI, chairForm: !!L.instrumentFor(d, 'CI', 'CHAIR', 'C'), chairTask: d.tasks.some((t) => t.targetId === ci && t.evaluatorId === chair && t.group === 'CHAIR') };
+    return { weights: d.rules.CI, chairForm: !!L.instrumentFor(d, 'CI', 'CHAIR', 'C'), chairTask: d.assignments.some((t) => t.targetId === ci && t.evaluatorId === chair && t.group === 'CHAIR') };
   });
   /* ---------------- Part H: evaluation tools (drafts, checks) and adding an evaluator group ---------------- */
   const { buildSeed } = await import('../src/lib/seed.js');
@@ -710,7 +710,7 @@ try {
     await y.run('restoreEvaluatorGroup', { id: 'PEERS' });
     return { ...out, restored: L.toolStatus(tool()) };
   });
-  await tc('TC-101', 'Offices', 'A Registrar with a head and two staff; a student, a teacher and a class list there; SIT changed to an office; the head leaves', { tasks: 4, student: false, teacher: false, classList: false, sitAsOffice: false, warning: 'No office head: its staff get no evaluation.' }, async () => {
+  await tc('TC-101', 'Offices', 'A Registrar with a head and two staff; a student, a teacher and a class list there; SIT changed to an office; the head leaves', { tasks: 4, student: false, teacher: false, classList: false, sitAsOffice: false, warning: 'No Office Head to rate: Non-teaching staff (100%).' }, async () => {
     const x = lab(), id = (await x.run('addDepartment', { name: 'Office of the Registrar', kind: 'office' })).id;
     const add = (n, role, position) => x.run('createUser', { name: n, username: n, email: `${n}@ubaguio.edu`, role, position, dept: id });
     await add('reg_head', 'NTP', 'head'); await add('reg_one', 'NTP', 'staff'); await add('reg_two', 'NTP', 'staff');
@@ -859,6 +859,186 @@ try {
     d.periods.push({ id: 'P', name: 'Big', status: 'open', deadline: '2099-01-01', releaseStage: 'hr', rules: d.rules, depts: null, approvals: [] });
     const t0 = Date.now(), a = L.syncOpenPeriods(d), b = L.syncOpenPeriods(d), ms = Date.now() - t0;
     return a.added > 40000 && b.added === 0 && b.removed === 0 && ms < 5000 ? 'under 5 seconds, nothing added twice' : `${ms} ms, added ${a.added} then ${b.added}`;
+  });
+  const GE = 'section,subject,teacher email,student id,student name,student email';
+  const newSt = (n, code, subject, teacher) => `${code},${subject},${teacher}@ubaguio.edu,2031000${n},New ${n},2031000${n}@s.ubaguio.edu`;
+  await tc('TC-118', 'Department of new students', 'A new SIT student first listed in a general education class of SBAA, then in 2 SIT classes; HR confirms; a student with most classes where the list put them', { first: 'B', asked: 1, suggested: 'A', needsYou: true, moved: 1, after: ['A', 0], notAsked: 0 }, async () => {
+    const x = lab(), of = () => x.db.users.find((u) => u.username === '20310001');
+    await x.run('importClassList', { dept: 'B', csv: `${GE}\n${newSt(1, 'GE-1', 'Ethics', 'fac_b1')}` }); const first = of().dept;
+    await x.run('importClassList', { dept: 'A', csv: [GE, newSt(1, 'IT-1', 'Programming', 'fac_a1'), newSt(1, 'IT-1', 'Networks', 'fac_a2')].join('\n') });
+    const ask = L.deptsToConfirm(x.db), need = CY.needsYou(x.db).some((n) => n.text.includes('may be in the wrong department'));
+    const r = await x.run('setStudentDepts', { list: ask.map((k) => ({ userId: k.user.id, dept: k.suggest })) }), after = [of().dept, L.deptsToConfirm(x.db).length];
+    await x.run('importClassList', { dept: 'A', csv: [GE, newSt(2, 'IT-1', 'Programming', 'fac_a1'), newSt(2, 'IT-1', 'Networks', 'fac_a2')].join('\n') });
+    await x.run('importClassList', { dept: 'B', csv: `${GE}\n${newSt(2, 'GE-1', 'Ethics', 'fac_b1')}` });
+    return { first, asked: ask.length, suggested: ask[0]?.suggest, needsYou: need, moved: r.moved, after, notAsked: L.deptsToConfirm(x.db).length };
+  });
+  await tc('TC-119', 'Department of new students', 'Checking a list: the sections HR is asked about; HR chooses SIT for one; a later list with the student department column; an office and a student who already has a department', { sections: ['GE-1:1', 'GE-2:1'], saved: 0, chosen: ['A', false], guess: ['B', true], fixed: ['A', false, 1], office: false, kept: ['A', 1] }, async () => {
+    const x = lab(), u = (n) => x.db.users.find((k) => k.username === '2031000' + n), n0 = x.db.users.length;
+    const csv = [GE, newSt(1, 'GE-1', 'Ethics', 'fac_b1'), newSt(2, 'GE-2', 'Ethics', 'fac_b1')].join('\n');
+    const c = await x.run('importClassList', { dept: 'B', csv, preview: true }), saved = x.db.users.length - n0;
+    await x.run('addDepartment', { name: 'Registrar', kind: 'office' });
+    const office = await x.run('importClassList', { dept: 'B', csv, deptOf: { [c.guessed[0].key]: x.db.departments.at(-1).id } });
+    await x.run('importClassList', { dept: 'B', csv, deptOf: { [c.guessed[0].key]: 'A' } });
+    const chosen = [u(1).dept, !!u(1).deptGuess], guess = [u(2).dept, !!u(2).deptGuess];
+    const f = await x.run('importClassList', { dept: 'A', csv: `${GE},student department\n${newSt(2, 'IT-2', 'Networks', 'fac_a1')},SIT\n${newSt(1, 'IT-2', 'Networks', 'fac_a1')},SBAA` });
+    return { sections: c.guessed.map((g) => `${g.code}:${g.students}`), saved, chosen, guess, fixed: [u(2).dept, !!u(2).deptGuess, f.corrected], office: office.ok, kept: [u(1).dept, f.warnings.filter((w) => w.includes('Not changed')).length] };
+  });
+  await tc('TC-120', 'Classes of other departments', "A student's account saved with a class of another school, then with another department: their classes and evaluations", { enrolled: true, kept: true }, async () => {
+    const x = lab(), st = x.db.users.find((u) => u.id === 'st_a01'), sec = x.db.sections.find((s) => s.dept === 'B' && !L.isExemptSection(s));
+    const mine = x.db.sections.filter((s) => s.studentIds.includes(st.id)).map((s) => s.id), acc = { userId: st.id, name: st.name, username: st.username, email: st.email, role: 'ST', position: 'student' };
+    await x.run('updateUser', { ...acc, dept: 'A', sectionIds: [...mine, sec.id] }); L.syncOpenPeriods(x.db);
+    const enrolled = x.db.tasks.some((t) => t.evaluatorId === st.id && t.sectionId === sec.id);
+    await x.run('updateUser', { ...acc, dept: 'C', sectionIds: [...mine, sec.id] });
+    return { enrolled, kept: [...mine, sec.id].every((id) => x.db.sections.find((s) => s.id === id).studentIds.includes(st.id)) };
+  });
+  await tc('TC-121', "A department's own formula", 'SIT gets its own; all departments change; SIT asks to follow them again; the VP approves; HR starts it; all departments change again. A closed period keeps its formula', { own: [60, 40], waits: 60, noEdit: false, follows: 50, again: 45, period: true, twice: false, history: ['archived', 'archived'] }, async () => {
+    const x = lab(), C = (a, b, c) => [['ST', a, 'SECTION_AVERAGE'], ['DEAN', b, 'AVERAGE'], ['CHAIR', c, 'AVERAGE']].map(([group, weight, aggregation]) => ({ group, weight, aggregation }));
+    const st = (d) => L.formulaFor(x.db, null, 'COLLEGE_FACULTY', d).components[0].weight;
+    await x.activate('COLLEGE_FACULTY', 'A', C(60, 20, 20)); const own = [st('A'), st('B')];
+    const closed = x.db.periods.find((p) => p.status === 'closed'), kept = JSON.stringify(closed.formulas || {});
+    await x.activate('COLLEGE_FACULTY', null, C(50, 30, 20));
+    const r = await x.run('followAllDepartments', { targetType: 'COLLEGE_FACULTY', dept: 'A', basis: 'Validation test' });
+    const waits = st('A'), noEdit = (await x.run('saveFormulaDraft', { id: r.id, config: {} })).ok;
+    await x.run('approveFormula', { id: r.id }, VPU); await x.run('activateFormula', { id: r.id, when: 'now' }); const follows = st('A');
+    await x.activate('COLLEGE_FACULTY', null, C(45, 35, 20));
+    return { own, waits, noEdit, follows, again: st('A'), period: JSON.stringify(x.db.periods.find((p) => p.id === closed.id).formulas || {}) === kept, twice: (await x.run('followAllDepartments', { targetType: 'COLLEGE_FACULTY', dept: 'A', basis: 'Validation test' })).ok, history: x.db.formulas.filter((f) => f.dept === 'A').map((f) => f.status) };
+  });
+  await tc('TC-122', "A department's own formula", 'Follow again: with the next period; in an open period nobody answered in; returned by the VP, then discarded', { before: 60, newPeriod: 40, openPeriod: [60, 40], returned: 'rejected', left: 'active' }, async () => {
+    const C = [['ST', 60, 'SECTION_AVERAGE'], ['DEAN', 20, 'AVERAGE'], ['CHAIR', 20, 'AVERAGE']].map(([group, weight, aggregation]) => ({ group, weight, aggregation }));
+    const start = async () => { const x = lab(); for (const t of x.db.tasks) if (t.periodId === 'p4') t.response = null; await x.activate('COLLEGE_FACULTY', 'A', C); return x; };
+    const ask = async (x) => { const r = await x.run('followAllDepartments', { targetType: 'COLLEGE_FACULTY', dept: 'A', basis: 'Validation test' }); return r.id; };
+    const st = (x, p) => L.formulaFor(x.db, p, 'COLLEGE_FACULTY', 'A').components[0].weight;
+    const a = await start(), ia = await ask(a); await a.run('approveFormula', { id: ia }, VPU); await a.run('activateFormula', { id: ia, when: 'next' }); const before = st(a, null);
+    const p = await a.run('createPeriod', { name: 'AY 2030-2031 1st Semester', deadline: '2099-01-01' });
+    const b = await start(), ib = await ask(b), open1 = st(b, 'p4'); await b.run('approveFormula', { id: ib }, VPU); await b.run('activateFormula', { id: ib, when: 'now' });
+    const c = await start(), ic = await ask(c); await c.run('rejectFormula', { id: ic, reason: 'Keep it' }, VPU); const returned = c.db.formulas.find((f) => f.id === ic).status; await c.run('deleteFormulaDraft', { id: ic });
+    return { before, newPeriod: st(a, p.id), openPeriod: [open1, st(b, 'p4')], returned, left: c.db.formulas.find((f) => f.dept === 'A').status };
+  });
+  await tc('TC-123', 'Evaluator groups', 'A new group with members, added to a formula later; without members; a department formula where nobody is in the category, an office', { made: true, idle: 0, members: true, added: true, empty: false, nobody: false, office: false }, async () => {
+    const x = lab(), r = await x.run('addEvaluatorGroup', { name: 'Peers', positions: ['faculty'], userIds: ['dean_a'] }); L.syncOpenPeriods(x.db);
+    const idle = x.db.tasks.filter((t) => t.group === r.id).length, members = L.groupsOf(x.db, x.db.users.find((u) => u.id === 'fac_a1')).includes(r.id) && L.groupsOf(x.db, x.db.users.find((u) => u.id === 'dean_a')).includes(r.id);
+    const g = await x.run('addGroupWithFormula', { targetType: 'COLLEGE_FACULTY', group: r.id, weights: { ST: 30, DEAN: 30, CHAIR: 20, [r.id]: 20 } });
+    const empty = await x.run('addEvaluatorGroup', { name: 'Nobody', positions: [], userIds: [] });
+    const cfg = { name: 'x', method: 'WEIGHTED_AVERAGE', components: [{ group: 'ST', weight: 100, aggregation: 'SECTION_AVERAGE' }], missing: 'REWEIGHT', minGroups: 1, rounding: { decimals: 2, method: 'HALF_UP' } };
+    const basic = x.db.departments.find((d) => d.kind === 'basic').id; await x.run('addDepartment', { name: 'Registrar', kind: 'office' });
+    return { made: r.ok, idle, members, added: g.ok && !!g.toolId, empty: empty.ok, nobody: (await x.run('saveFormulaDraft', { targetType: 'COLLEGE_FACULTY', dept: basic, config: cfg })).ok, office: (await x.run('saveFormulaDraft', { targetType: 'COLLEGE_FACULTY', dept: x.db.departments.at(-1).id, config: cfg })).ok };
+  });
+  await tc('TC-124', 'Missing raters', 'Sample data; SIT without its chair, a deactivated chair; Basic Ed without AP and subject head; SIT with its own formula without chairs; a group HR made that nobody in SBAA has; the only faculty member, rated by Faculty', { start: 0, chair: ['No Program Chair to rate: College faculty (20%), Dean.'], deactivated: true, basic: ['No Assistant Principal to rate: Basic Ed teacher (20%).', 'No Subject Head to rate: Basic Ed teacher (20%).'], own: ['No Program Chair to rate: Dean.'], group: ['No Library to rate: College faculty (10%).'], only: ['No other Faculty to rate: College faculty (10%).'] }, async () => {
+    const W = (x, id) => L.deptWarnings(x.db, x.db.departments.find((d) => d.id === id)), C = (list) => list.map(([group, weight]) => ({ group, weight, aggregation: group === 'ST' ? 'SECTION_AVERAGE' : 'AVERAGE' }));
+    const x = lab(), start = x.db.departments.flatMap((d) => W(x, d.id)).length;
+    const noChair = () => { const y = lab(); y.db.users = y.db.users.filter((u) => !(u.dept === 'A' && u.position === 'chair')); return y; };
+    const chair = W(noChair(), 'A');
+    const z = lab(); for (const u of z.db.users) if (u.dept === 'A' && u.position === 'chair') u.active = false;
+    const b = lab(), be = b.db.departments.find((d) => d.kind === 'basic').id; b.db.users = b.db.users.filter((u) => !(u.dept === be && ['aprincipal', 'shead'].includes(u.position)));
+    const o = noChair(); await o.activate('COLLEGE_FACULTY', 'A', C([['ST', 50], ['DEAN', 50]]));
+    const g = lab(), gr = await g.run('addEvaluatorGroup', { name: 'Library', positions: [], userIds: ['fac_a1'] }), added = await g.run('addGroupWithFormula', { targetType: 'COLLEGE_FACULTY', group: gr.id, tool: { copyFrom: g.tool('COLLEGE_FACULTY', 'DEAN').id }, weights: { ST: 40, DEAN: 30, CHAIR: 20, [gr.id]: 10 } });
+    await g.run('useForm', { instrumentId: added.toolId }); await g.run('submitFormula', { id: added.id, basis: 'Validation test' }); await g.run('approveFormula', { id: added.id }, VPU); await g.run('activateFormula', { id: added.id, when: 'now' });
+    const f = lab(); f.db.users = f.db.users.filter((u) => !(u.dept === 'A' && u.position === 'faculty' && u.id !== 'fac_a1'));
+    const fa = await f.run('addGroupWithFormula', { targetType: 'COLLEGE_FACULTY', group: 'FAC', tool: { copyFrom: f.tool('COLLEGE_FACULTY', 'DEAN').id }, weights: { ST: 40, DEAN: 30, CHAIR: 20, FAC: 10 } });
+    await f.run('useForm', { instrumentId: fa.toolId }); await f.run('submitFormula', { id: fa.id, basis: 'Validation test' }); await f.run('approveFormula', { id: fa.id }, VPU); await f.run('activateFormula', { id: fa.id, when: 'now' });
+    return { start, chair, deactivated: JSON.stringify(W(z, 'A')) === JSON.stringify(chair), basic: W(b, be), own: W(o, 'A'), group: W(g, 'B'), only: W(f, 'A') };
+  });
+  await tc('TC-125', 'Type of a department', 'What changing SIT to Basic Education would do; nothing is changed by asking; SBAA to the same type; refused when people were already evaluated', { moves: [['COLLEGE_FACULTY', 'BASICED_TEACHER', 2]], missing: 3, untouched: 'college', same: 0, refused: false }, async () => {
+    const x = lab(), d = x.db.departments.find((k) => k.id === 'A'), c = L.typeChange(x.db, d, 'basic');
+    return { moves: c.moves.map((m) => [m.from, m.to, m.n]), missing: c.warnings.length, untouched: d.kind, same: L.typeChange(x.db, d, 'college').moves.length, refused: (await x.run('updateDepartment', { deptId: 'A', kind: 'basic' })).ok };
+  });
+  await tc('TC-126', 'Type of a department', 'A new college with a dean, a chair and a teacher in an open period, changed to Basic Education: the evaluations of the teacher, before and at once after', { before: 2, after: 0, dean: true }, async () => {
+    const dep = (await act(hr, 'addDepartment', { name: 'School of Tests (SOTS)', kind: 'college' })).data.result.id, ids = {};
+    for (const position of ['dean', 'chair', 'faculty']) ids[position] = (await act(hr, 'createUser', { name: `Sots ${position}`, username: `sots_${position}`, email: `sots.${position}@ubaguio.edu`, role: 'TP', position, dept: dep })).data.result.id;
+    const open = async () => { const d = (await call('/api/data', { cookie: hr })).data, p = d.periods.filter((k) => k.status === 'open').map((k) => k.id); return Math.max(0, ...p.map((k) => d.tasks.filter((t) => t.periodId === k && t.targetId === ids.faculty).length)); };
+    const before = await open(), r = await act(hr, 'updateDepartment', { deptId: dep, kind: 'basic' });
+    return { before, after: await open(), dean: r.status === 200 };
+  });
+  /* ---------------- Part K: privacy, class lists, excluded subjects ---------------- */
+  const see = (db, id) => JSON.parse(JSON.stringify(viewFor(db, db.users.find((u) => u.id === id))));
+  await tc('TC-127', 'NFR5 anonymity', "What HR's browser gets: an answer with who gave it, its real number, its time; the order of a class list; a list of which student evaluates whom; and whether the ratings and counts stay the same", { named: 0, realIds: 0, times: 0, classListOrder: false, studentsListed: 0, personnelAnswers: false, sameRatings: true, sameCounts: true }, async () => {
+    const x = await closedLab(); await x.run('createPeriod', { name: 'AY 2026-2027 2nd Semester', deadline: '2099-01-01' }); L.syncOpenPeriods(x.db);
+    const v = see(x.db, 'hr'), real = new Set(x.db.tasks.map((t) => t.id)), key = (t) => JSON.stringify(t.response?.answers || null);
+    const of = (d) => d.tasks.filter((t) => t.periodId === 'p4' && t.sectionId === 'sec1').map(key);
+    const rate = (d) => JSON.stringify(['p1', 'p2', 'p3', 'p4'].map((id) => L.computeAll(d, id).map((r) => [r.targetId, r.final, r.status])));
+    const cnt = (d) => JSON.stringify(d.sections.map((s) => { const k = L.sectionStats(d, 'p4', s.id); return [k.required, k.responded, k.valid]; }));
+    return { named: v.tasks.filter((t) => t.evaluatorId).length, realIds: v.tasks.filter((t) => real.has(t.id)).length, times: v.tasks.filter((t) => t.response?.submittedAt).length, classListOrder: of(v).join() === of(x.db).join(),
+      studentsListed: v.assignments.filter((a) => a.group === 'ST').length, personnelAnswers: v.assignments.some((a) => 'response' in a || 'answers' in a), sameRatings: rate(v) === rate(x.db) && rate(see(x.db, 'vp')) === rate(x.db), sameCounts: cnt(v) === cnt(x.db) };
+  });
+  await tc('TC-128', 'NFR5 privacy', 'The people and classes each role gets: a student, a teacher, a dean, a VP, HR', { student: { students: 1, onlyTheirTeachers: true, classes: 'own', namesOfOthersInClass: 0 }, teacher: { students: 0, classes: 'own' }, dean: { students: 0, otherDepts: 0, noResultsLost: true }, vp: { students: 0, rosters: 0 }, hr: 'all' }, async () => {
+    const x = await closedLab(), V = (id) => see(x.db, id), st = (v) => v.users.filter((u) => u.role === 'ST').length;
+    const a = V('st_a01'), f = V('fac_a1'), d = V('dean_a'), vp1 = V('vp'), h = V('hr'), mine = new Set(x.db.tasks.filter((t) => t.evaluatorId === 'st_a01').map((t) => t.targetId));
+    const ratings = (v) => JSON.stringify(L.computeAll(v, 'p4').filter((r) => r.dept === 'A').map((r) => [r.targetId, r.final]));
+    return { student: { students: st(a), onlyTheirTeachers: a.users.every((u) => u.id === 'st_a01' || mine.has(u.id)), classes: a.sections.every((s) => x.db.sections.find((k) => k.id === s.id).studentIds.includes('st_a01')) ? 'own' : 'others', namesOfOthersInClass: a.sections.reduce((n, s) => n + s.studentIds.length, 0) },
+      teacher: { students: st(f), classes: f.sections.every((s) => s.facultyId === 'fac_a1') ? 'own' : 'others' },
+      dean: { students: st(d), otherDepts: d.users.filter((u) => u.dept && u.dept !== 'A').length, noResultsLost: ratings(d) === ratings(x.db) },
+      vp: { students: st(vp1), rosters: vp1.sections.reduce((n, s) => n + s.studentIds.length, 0) }, hr: h.users.length === x.db.users.length && h.sections.length === x.db.sections.length ? 'all' : 'some' };
+  });
+  await tc('TC-129', 'NFR5 anonymity', 'A student submits an evaluation: the change history HR sees; the sealed entry itself is not changed', { who: 'A student', teacher: '', kept: true }, async () => {
+    // a student answered earlier in this run: the entry in the database, and what HR gets of it
+    const raw = sql.prepare("SELECT a.id, a.user_name, a.detail FROM audit_log a JOIN users u ON u.id = a.user_id WHERE a.action = 'submitEvaluation' AND u.role = 'ST' ORDER BY a.id DESC LIMIT 1").get();
+    const e = (await call('/api/audit', { cookie: hr })).data.entries.find((k) => k.id === raw.id); assert.ok(raw.user_name !== 'A student' && raw.detail);
+    return { who: e.user_name, teacher: e.detail, kept: sql.prepare('SELECT user_name FROM audit_log WHERE id = ?').get(raw.id).user_name === raw.user_name };
+  });
+  await tc('TC-130', 'Evaluations to create', "What HR's browser counts as still to be created, against the server: none yet, some, all; one HR removed by hand; HR tries to remove one of a student", { none: true, some: true, all: 0, removed: 0, student: false }, async () => {
+    const x = lab(), per = x.db.periods.find((k) => k.id === 'p4');
+    x.db.tasks = x.db.tasks.filter((t) => t.periodId !== per.id);
+    const server2 = () => { const have = new Set(x.db.tasks.filter((t) => t.periodId === per.id).map(L.taskKey)); return L.expectedAssignments(x.db, per.id).filter((a) => !have.has(L.taskKey(a))).length; };
+    const browser = () => L.missingEvaluations(see(x.db, 'hr'), per.id), same = () => server2() > 0 && browser() === server2();
+    const none = same(); L.generateTasks(x.db, per.id); const full = x.db.tasks;
+    x.db.tasks = full.filter((t, i) => t.periodId !== per.id || i % 3); const some = same(); x.db.tasks = full;
+    const all0 = browser(), dean = x.db.tasks.find((t) => t.periodId === per.id && t.group === 'DEAN'), st = x.db.tasks.find((t) => t.periodId === per.id && t.group === 'ST');
+    await x.run('removeTask', { taskId: dean.id });
+    return { none, some, all: all0, removed: browser(), student: (await x.run('removeTask', { taskId: st.id })).ok };
+  });
+  const LISTOF = (sec, email, ids) => ['section,subject,teacher email,student', ...ids.map((id) => `${sec.code},${sec.subject},${email},${id}@s.ubaguio.edu`)].join('\n');
+  await tc('TC-131', 'Replaced teacher', 'A class nobody answered yet gets another teacher in a newer list: the check step; "replaced"; "both teach it"; the list imported again', { asked: [1, true, 10], replaced: { old: 0, now: 10, oldClass: false }, both: { old: 10, now: 10, oldClass: true }, again: 0 }, async () => {
+    const start = () => { const x = lab(), sec = x.db.sections.find((s) => s.facultyId === 'fac_a2' && !L.isExemptSection(s)); for (const t of x.db.tasks) if (t.sectionId === sec.id) t.response = null; x.db.tasks = x.db.tasks.filter((t) => t.sectionId !== sec.id || t.periodId === 'p4'); return { x, sec, csv: LISTOF(sec, 'fac_a1@ubaguio.edu', sec.studentIds) }; };
+    const n = (x, sec, id) => x.db.tasks.filter((t) => t.periodId === 'p4' && t.group === 'ST' && t.targetId === id && x.db.sections.some((s) => s.id === t.sectionId && s.code === sec.code && s.subject === sec.subject)).length;
+    const a = start(), c = (await a.x.run('importClassList', { dept: 'A', csv: a.csv, preview: true })).teacherChanges;
+    const go = async (s, replace) => { await s.x.run('importClassList', { dept: 'A', csv: s.csv, replace }); L.syncOpenPeriods(s.x.db); return { old: n(s.x, s.sec, 'fac_a2'), now: n(s.x, s.sec, 'fac_a1'), oldClass: s.x.db.sections.some((k) => k.id === s.sec.id) }; };
+    const b = start(), replaced = await go(a, [a.sec.id]), both = await go(b, []);
+    return { asked: [c.length, c[0].likely, c[0].same], replaced, both, again: (await a.x.run('importClassList', { dept: 'A', csv: a.csv, preview: true })).teacherChanges.length };
+  });
+  await tc('TC-132', 'Replaced teacher', '4 of 10 students had answered: the answers stay, the class keeps its size, so 4 are not "everyone"; the new teacher; the notices; the list with the earlier teacher again', { answersKept: 4, size: [10, 4, false], waiting: 0, newTeacher: 10, students: 0, forecast: null, back: [10, false] }, async () => {
+    const x = lab(), sec = x.db.sections.find((s) => s.facultyId === 'fac_a2' && !L.isExemptSection(s)), ids = [...sec.studentIds];
+    const T = x.db.tasks.filter((t) => t.periodId === 'p4' && t.sectionId === sec.id), some = T.find((t) => t.response).response; T.forEach((t, i) => { t.response = i < 4 ? structuredClone(some) : null; });
+    await x.run('importClassList', { dept: 'A', csv: LISTOF(sec, 'fac_a1@ubaguio.edu', ids), replace: [sec.id] }); L.syncOpenPeriods(x.db);
+    const k = L.sectionStats(x.db, 'p4', sec.id), old = x.db.sections.find((s) => s.id === sec.id), t = (id) => x.db.tasks.filter((y) => y.periodId === 'p4' && y.sectionId === id), nw = x.db.sections.find((s) => s.code === sec.code && s.subject === sec.subject && s.facultyId === 'fac_a1');
+    const out = { answersKept: t(sec.id).filter((y) => y.response).length, size: [k.required, k.responded, k.valid], waiting: t(sec.id).filter((y) => !y.response).length, newTeacher: t(nw.id).length, students: old.studentIds.length, forecast: L.participationForecast(x.db, 'p4', sec.id) };
+    await x.run('importClassList', { dept: 'A', csv: LISTOF(sec, 'fac_a2@ubaguio.edu', ids) }); L.syncOpenPeriods(x.db);
+    return { ...out, back: [t(sec.id).length, !!x.db.sections.find((s) => s.id === sec.id).replaced] };
+  });
+  await tc('TC-133', 'Replaced teacher', 'Not a replacement: the same section and subject with other students (asked, but "both teach it" is chosen); the same in another department\'s list; both teachers in the file; answers of closed periods', { otherStudents: [1, false], otherDept: 0, bothInFile: 0, closedSame: true }, async () => {
+    const x = lab(), sec = x.db.sections.find((s) => s.facultyId === 'fac_a2' && !L.isExemptSection(s)), P = async (o) => (await x.run('importClassList', { preview: true, ...o })).teacherChanges;
+    const other = await P({ dept: 'A', csv: LISTOF(sec, 'fac_a1@ubaguio.edu', ['st_b01', 'st_b02']) }), dept = await P({ dept: 'B', csv: LISTOF(sec, 'fac_b1@ubaguio.edu', sec.studentIds) });
+    const both = await P({ dept: 'A', csv: LISTOF(sec, 'fac_a1@ubaguio.edu', sec.studentIds) + '\n' + LISTOF(sec, 'fac_a2@ubaguio.edu', sec.studentIds).split('\n').slice(1).join('\n') });
+    const rate = () => JSON.stringify(['p1', 'p2', 'p3'].map((id) => L.computeAll(x.db, id).map((r) => [r.targetId, r.final]))), before = rate();
+    await x.run('importClassList', { dept: 'A', csv: LISTOF(sec, 'fac_a1@ubaguio.edu', sec.studentIds), replace: [sec.id] });
+    return { otherStudents: [other.length, other[0]?.likely], otherDept: dept.length, bothInFile: both.length, closedSame: rate() === before };
+  });
+  await tc('TC-134', 'FR6 excluded subjects', 'Internship, Interns, PRACTICUM II, Fieldtrip, Field-trip, OJT, On-the-Job Training, On the job training; and Internal Auditing, Internet of Things, Fieldwork, Practical Research, Educational Tour', { not: 8, evaluated: 5 }, () => {
+    const n = (list, want) => list.filter((subject) => L.isExemptSection({ code: 'X1', subject }) === want).length;
+    return { not: n(['Internship', 'Interns Seminar', 'PRACTICUM II', 'Fieldtrip', 'Field-trip', 'OJT 1', 'On-the-Job Training', 'On the job training'], true), evaluated: n(['Internal Auditing', 'Internet of Things', 'Fieldwork', 'Practical Research', 'Educational Tour'], false) };
+  });
+  await tc('TC-135', 'FR6 excluded subjects', 'HR adds "Educational tour": a class nobody answered, one already answered, one of an earlier semester; the check of a file; HR decides for one class; a word too short; a teacher tries', { now: 1, kept: 1, past: 'evaluated', tasks: [10, 0], file: 1, back: 10, refused: false, tooShort: false, teacher: 403 }, async () => {
+    const x = lab(), real = x.db.sections.filter((s) => s.dept === 'A' && !L.isExemptSection(s)), [a, b] = real;
+    for (const s of [a, b]) s.subject = 'Educational Tour';
+    for (const t of x.db.tasks) if (t.sectionId === a.id) t.response = null;
+    x.db.sections.push({ id: 'old', code: 'OLD', subject: 'Educational Tour', facultyId: 'fac_a1', dept: 'A', studentIds: [], term: '2020-1', exempt: false });
+    const n = () => x.db.tasks.filter((t) => t.periodId === 'p4' && t.sectionId === a.id).length, before = n();
+    const r = await x.run('setExemptWords', { words: [...L.DEFAULT_EXEMPT_WORDS, 'Educational tour'] }); L.syncOpenPeriods(x.db); const after = n();
+    const file = (await x.run('importClassList', { dept: 'A', preview: true, csv: 'NEW1,Educational Tours,fac_a1@ubaguio.edu,st_a01@s.ubaguio.edu' })).notEvaluatedCount;
+    await x.run('setSectionEvaluated', { sectionId: a.id, evaluated: true }); L.syncOpenPeriods(x.db);
+    return { now: r.now, kept: r.kept, past: L.isExemptSection(x.db.sections.find((s) => s.id === 'old')) ? 'not evaluated' : 'evaluated', tasks: [before, after], file, back: n(), refused: (await x.run('setSectionEvaluated', { sectionId: b.id, evaluated: false })).ok,
+      tooShort: (await x.run('setExemptWords', { words: ['a'] })).ok, teacher: (await act(fac, 'setExemptWords', { words: ['Anything'] })).status };
+  });
+  await tc('TC-136', 'FR6 excluded subjects', 'Saved and read again: the words, HR\'s choice for a class and a replaced teacher; upgrading a database from before (an earlier class, an answered one and a new one with "Field-trip")', { words: true, choice: false, replaced: 'Someone', upgrade: [false, false, true], twice: false }, async () => {
+    const id = (await act(hr, 'createSection', { code: 'KEEP-1', subject: 'Keeping', facultyId: 'fac_a1' })).data.result.id;
+    await act(hr, 'setSectionEvaluated', { sectionId: id, evaluated: false }); await act(hr, 'setExemptWords', { words: [...L.DEFAULT_EXEMPT_WORDS, 'Zzz tour'] });
+    sql.prepare('UPDATE sections SET replaced = ? WHERE id = ?').run(JSON.stringify({ by: 'Someone', sizes: {} }), id);
+    const row = sql.prepare('SELECT evaluated, replaced FROM sections WHERE id = ?').get(id), words = JSON.parse(sql.prepare("SELECT value FROM settings WHERE key = 'exemptWords'").get().value);
+    const x = lab(); for (const s of x.db.sections) s.exempt = false;
+    const [a, b, c] = x.db.sections.filter((s) => x.db.tasks.some((t) => t.sectionId === s.id && t.response)); for (const s of [a, b, c]) { s.subject = 'Field-trip'; delete s.exempt; }
+    a.term = '2020-1'; for (const t of x.db.tasks) if (t.sectionId === c.id) t.response = null;
+    upgradeData(x.db); const is = [a, b, c].map((s) => L.isExemptSection(x.db.sections.find((k) => k.id === s.id)));
+    const snap = JSON.stringify(x.db.sections); upgradeData(x.db);
+    return { words: words.includes('Zzz tour'), choice: !!row.evaluated, replaced: JSON.parse(row.replaced).by, upgrade: is, twice: JSON.stringify(x.db.sections) !== snap };
   });
 } finally {
   server.close();

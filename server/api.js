@@ -22,7 +22,7 @@ let queue = Promise.resolve();
 const oneAtATime = (fn) => { const p = queue.then(fn); queue = p.catch(() => {}); return p; };
 
 // After these, evaluations in open periods follow by themselves (new classes, students, staff; dropped students).
-const FOLLOWED = new Set(['createPeriod', 'setPeriodDeadline', 'reopenPeriod', 'importClassList', 'importStaff', 'createUser', 'updateUser', 'setUserActive', 'createSection', 'updateSection', 'deleteSection', 'moveDepartment', 'updateEvaluatorGroup', 'activateFormula', 'useForm']);
+const FOLLOWED = new Set(['createPeriod', 'setPeriodDeadline', 'reopenPeriod', 'importClassList', 'importStaff', 'createUser', 'updateUser', 'setUserActive', 'createSection', 'updateSection', 'deleteSection', 'setSectionEvaluated', 'setExemptWords', 'moveDepartment', 'updateDepartment', 'updateEvaluatorGroup', 'activateFormula', 'useForm']);
 
 async function runAction(name, args, user, req) {
   const action = Object.hasOwn(actions, name) ? actions[name] : null;
@@ -112,7 +112,10 @@ export async function handleApi(req, res) {
     }
     if (route === 'GET /api/audit') {
       if (user.role !== 'HR') throw new HttpError(403, 'You are not allowed to do this.');
-      send(res, 200, { entries: readAudit(1000) });
+      // that a student answered is recorded, but HR does not see which student, or whom they evaluated
+      const students = new Set(getDb().users.filter((u) => u.role === 'ST').map((u) => u.id));
+      const entries = readAudit(1000).map((e) => ({ ...e, prev_hash: undefined, ...(e.action === 'submitEvaluation' && students.has(e.user_id) && { user_id: null, user_name: 'A student', detail: '', hash: null }) }));
+      send(res, 200, { entries });
       return true;
     }
 

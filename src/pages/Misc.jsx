@@ -3,7 +3,7 @@ import { flushSync } from 'react-dom';
 import { useApp } from '../lib/store';
 import { computeTarget, canSeeOwn, sectionStats, STAGE_LABEL, policyFor, currentPolicy, hasRule, ruleWords, ruleMark, inTerm, isExemptSection, participationForecast, forecastText } from '../lib/logic';
 import { linkFor } from '../lib/cycle';
-import { Card, Badge, Meter, Empty, Icon, RuleNote, useNav } from '../ui';
+import { Card, Badge, Meter, Empty, Icon, RuleNote, Tabs, useNav, useTab } from '../ui';
 import { ResultCard, PastRecords } from './Reports';
 import { QrButton } from './ClassQr';
 import { MyPlans } from './Plans';
@@ -103,11 +103,15 @@ export function MyResults() {
   const released = db.periods.filter((p) => canSeeOwn(user, p));
   const hidden = db.periods.filter((p) => !canSeeOwn(user, p) && p.status === 'closed');
   const mine = db.pastResults.filter((r) => r.userId === user.id);
+  const classesNow = myClasses.length > 0 && open.length > 0, plans = (db.plans || []).some((p) => p.targetId === user.id);
+  const tabs = [['results', 'My results'], ...(classesNow ? [['classes', 'My classes']] : []), ...(plans ? [['plans', 'Development plan']] : []), ...(mine.length ? [['earlier', 'Earlier records']] : [])];
+  const [tab, setTab] = useTab(tabs, 'results');
   // FR20: viewing your own results is recorded
   useEffect(() => { for (const p of released) act('logView', { periodId: p.id, targetId: user.id, what: 'own' }); }, [released.length]); // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <>
-      {myClasses.length > 0 && open.length > 0 && (
+      <Tabs tabs={tabs} value={tab} onChange={setTab} />
+      {tab === 'classes' && (
         <div className="no-print"><Card title="Student response progress for my classes">
           <p className="muted">{hasRule(policyFor(db, open.at(-1).id)) ? `${ruleWords(policyFor(db, open.at(-1).id)).replace(/^./, (x) => x.toUpperCase())} must answer, or that class is left out of your result. ` : ''}Tip: show the class QR code in class so students can answer on their phones right away.</p>
           {open.flatMap((p) => myClasses.filter((s) => inTerm(p, s)).map((s) => {
@@ -128,15 +132,15 @@ export function MyResults() {
           }))}
         </Card></div>
       )}
-      <MyPlans />
-      {released.length === 0 && (
+      {tab === 'plans' && <MyPlans />}
+      {tab === 'results' && released.length === 0 && (
         <Card><Empty icon="clock" title="Your results have not been released yet">HR releases results to you after the Vice Presidents have reviewed and approved them.</Empty></Card>
       )}
-      {[...released].reverse().map((p) => (
+      {tab === 'results' && [...released].reverse().map((p) => (
         <MyPeriodResult key={p.id} period={p} />
       ))}
-      {hidden.length > 0 && <p className="muted no-print">Not yet released to you: {hidden.map((p) => `${p.name} (${STAGE_LABEL[p.releaseStage]})`).join('; ')}.</p>}
-      {mine.length > 0 && <div className="no-print"><Card title="Earlier records (before evalU)"><PastRecords userId={user.id} /></Card></div>}
+      {tab === 'results' && hidden.length > 0 && <p className="muted no-print">Not yet released to you: {hidden.map((p) => `${p.name} (${STAGE_LABEL[p.releaseStage]})`).join('; ')}.</p>}
+      {tab === 'earlier' && <div className="no-print"><Card title="Earlier records (before evalU)"><PastRecords userId={user.id} /></Card></div>}
       <details className="note no-print"><summary>How scores are calculated</summary><RuleNote policy={open.length ? policyFor(db, open.at(-1).id) : currentPolicy(db)} /><p>Your final score combines each evaluator group's average using the weights set by HR. If a group has no valid result (for example, the dean did not evaluate), its weight is removed and the score is computed over the remaining groups. The final score is rounded to two decimal places.</p></details>
     </>
   );

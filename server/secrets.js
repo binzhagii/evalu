@@ -1,7 +1,7 @@
 // Password hashing (scrypt) and comment encryption (AES-256-GCM).
 // The encryption key lives on the server only: server/data/secret.key
 // (or set EVALU_SECRET to a base64 32-byte key).
-import { scrypt, randomBytes, timingSafeEqual, createCipheriv, createDecipheriv, createHash } from 'node:crypto';
+import { scrypt, randomBytes, timingSafeEqual, createCipheriv, createDecipheriv, createHash, createHmac } from 'node:crypto';
 import { promisify } from 'node:util';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -20,6 +20,8 @@ export async function verifyPassword(password, stored) {
   const actual = await scryptAsync(password, Buffer.from(salt, 'base64'), expected.length);
   return timingSafeEqual(actual, expected);
 }
+/** A number nobody can trace back without the key, for rows that must not show who they came from. */
+export const opaqueId = (id) => createHmac('sha256', KEY).update(id).digest('base64url').slice(0, 16);
 export const sha256 = (s) => createHash('sha256').update(s).digest('base64url');
 
 function loadKey() {

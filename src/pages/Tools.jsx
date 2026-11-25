@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useApp } from '../lib/store';
 import { TARGET_TYPES, CLASS_TYPES, activeDepts, deptName, groupName, effectiveWeights, sameTool, toolName, toolsOfPeriod, toolParts, toolProblems, toolStatus } from '../lib/logic';
-import { Card, Select, Badge, SaveInput, Empty, newestFirst, usePages, useNavArgs, ask } from '../ui';
+import { Card, Select, Badge, SaveInput, Empty, newestFirst, usePages, useNavArgs, useTab, Tabs, ask } from '../ui';
 import { QuestionList } from './Tasks';
 
 const STATUS = { 'in-use': ['completed', 'In use'], draft: ['pending', 'Draft'], scheduled: ['info', 'Starts next period'], old: ['muted', 'Old version'] };
@@ -54,8 +54,12 @@ function ToolList({ onOpen, filters, setFilters }) {
       || (a.dept ? 1 : 0) - (b.dept ? 1 : 0) || VARIANT_ORDER.indexOf(a.variant || '') - VARIANT_ORDER.indexOf(b.variant || '') || usedFor(db, a).localeCompare(usedFor(db, b)) || STATUS_ORDER.indexOf(toolStatus(a)) - STATUS_ORDER.indexOf(toolStatus(b)) || (b.version || 1) - (a.version || 1));
   const { rows, bar } = usePages(list, `${tt}|${grp}|${st}|${s}|${filters.period}`, 10);
   const drafts = db.instruments.filter((i) => toolStatus(i) === 'draft').length;
+  const tabs = [['list', 'Tools'], ['new', 'New tool'], ['bank', 'Question bank']];
+  const [tab, setTab] = useTab(tabs, 'list');
   return (
     <>
+      <Tabs tabs={tabs} value={tab} onChange={setTab} />
+      {tab === 'list' && <>
       <div className="note"><b>These are the forms people answer.</b> Click a tool to read it. To change one, open it and click <b>Make changes</b>: you work on a draft, and people keep answering the current version until you use the new one.</div>
       <Card title={`Evaluation tools (${list.length})`}>
         <div className="row">
@@ -86,8 +90,9 @@ function ToolList({ onOpen, filters, setFilters }) {
           {bar}
         </>}
       </Card>
-      <NewTool onOpen={onOpen} />
-      <QuestionBank />
+      </>}
+      {tab === 'new' && <NewTool onOpen={onOpen} />}
+      {tab === 'bank' && <QuestionBank />}
     </>
   );
 }
@@ -114,9 +119,8 @@ function NewTool({ onOpen }) {
   const [f, setF] = useState({ name: '', targetType: 'COLLEGE_FACULTY', group: 'ST', dept: '', variant: '' });
   const set = (k) => (v) => setF({ ...f, [k]: v });
   return (
-    <details className="card advanced-panel">
-      <summary><b>New tool</b> <span className="muted">· Only when UB adds a new evaluation tool. To change one that exists, open it above.</span></summary>
-      <div className="advanced-content">
+    <Card title="New tool">
+        <p className="muted">Only when UB adds a new evaluation tool. To change one that exists, open it under Tools.</p>
         <div className="row">
           <input className="wide" placeholder="Tool name, e.g. Faculty by their Peers" value={f.name} onChange={(e) => set('name')(e.target.value)} />
           <label className="inline">Who is rated <Select value={f.targetType} onChange={set('targetType')}>{Object.entries(TARGET_TYPES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</Select></label>
@@ -127,9 +131,8 @@ function NewTool({ onOpen }) {
           <label className="inline">Type of class <Select value={f.variant} onChange={set('variant')}>{Object.entries(CLASS_TYPES).map(([k, l]) => <option key={k} value={k}>{k ? l : 'Any / lecture'}</option>)}</Select></label>
           <button disabled={!f.name.trim()} onClick={async () => { const r = await act('createForm', f); if (r) onOpen(r.id); }}>Create draft</button>
         </div>
-        <p className="muted small">A new rater (for example Peers) is easier to add under <b>Scoring &amp; calculation → Add evaluator group</b>: it makes the tool and the percentages together.</p>
-      </div>
-    </details>
+        <p className="muted small">A new rater (for example Peers) is easier to add under <b>Scoring &amp; calculation</b>: open a formula and click <b>+ Add a group to this formula</b>.</p>
+    </Card>
   );
 }
 
@@ -144,9 +147,8 @@ function QuestionBank() {
   const onAny = new Set(db.instruments.flatMap((i) => i.items.map((it) => it.criterionId)));
   const { rows, bar } = usePages(newestFirst(db.criteria).filter((c) => !s || c.text.toLowerCase().includes(s)), s);
   return (
-    <details className="card advanced-panel">
-      <summary><b>Question bank</b> <span className="muted">· Advanced. You don't need it to add an indicator: type it inside the tool.</span></summary>
-      <div className="advanced-content">
+    <Card title="Question bank">
+        <p className="muted">Advanced. You don't need it to add an indicator: type it inside the tool.</p>
         <div className="row"><input className="wide" placeholder="New question for the bank" value={text} onChange={(e) => setText(e.target.value)} />
           <button disabled={!text.trim()} onClick={async () => { if (await act('addCriterion', { text })) setText(''); }}>Add to the bank</button></div>
         <div className="row"><input className="wide" placeholder={`Search ${db.criteria.length} questions`} value={q} onChange={(e) => setQ(e.target.value)} /></div>
@@ -157,8 +159,7 @@ function QuestionBank() {
           </tr>
         ))}</tbody></table>
         {bar}
-      </div>
-    </details>
+    </Card>
   );
 }
 

@@ -5,7 +5,7 @@ import {
   TARGET_TYPES, computeAll, computeTarget, canSeeAll, canSeeComments, canSeeDept, deptName, groupName, userById, sectionStats,
   itemStats, formOfTask, itemCategory, hasFinal, pendingApprovals, policyFor, ruleWords, approvalRuleText, formulaWords, howInWords, stageAtLeast, targetsOf, targetsInDept, officeDepts, countedSections, personIn, commentParts,
 } from '../lib/logic';
-import { Card, Badge, RuleNote, PeriodPicker, Select, Meter, Stat, Stats, Empty, Avatar, ItemTable, PrintButton, fmt, pct, newestFirst, usePages, useNavArgs, ask } from '../ui';
+import { Card, Badge, RuleNote, PeriodPicker, Select, Meter, Stat, Stats, Empty, Avatar, ItemTable, PrintButton, fmt, pct, newestFirst, usePages, useNavArgs, useTab, ask, Tabs } from '../ui';
 import { ReleaseSteps } from './Overview';
 import { UbPrints, CommentText, SummarySheet as Sheet, ratingWord as rw, twoDp, UbPacket } from './CompReport';
 import { FollowUp } from './Plans';
@@ -193,6 +193,8 @@ export function DeptSummary({ db, periodId, dept }) {
   const valid = countedSections(db, periodId);
   const counted = tasks.filter((t) => t.group !== 'ST' || valid.has(t.sectionId));
   const groups = [...new Set(counted.map((t) => t.group))];
+  const [gSel, setG] = useState('');
+  const g1 = groups.includes(gSel) ? gSel : groups[0];
   const respondents = counted.filter((t) => t.response).length;
   const results = computeAll(db, periodId).filter((r) => r.dept === dept);
   const withScore = results.filter(hasFinal);
@@ -205,10 +207,11 @@ export function DeptSummary({ db, periodId, dept }) {
         <Stat icon="star" label="Average final score" value={fmt(avg)} sub={`${withScore.length} with a final score`} />
       </Stats>
       {groups.length === 0 && <Empty icon="report" title="No evaluations for this department in this period" />}
+      <Tabs tabs={groups.map((g) => [g, groupName(db, g)])} value={g1} onChange={setG} label="Evaluator group" />
       {groups.map((g) => {
         const ts = counted.filter((t) => t.group === g);
         return (
-          <div key={g}>
+          <div key={g} className={g === g1 ? undefined : 'paper-only'}>
             <h4>{groupName(db, g)} <span className="muted">· {ts.filter((t) => t.response).length} respondents</span></h4>
             <ItemTable rows={itemStats(ts, policyFor(db, periodId).lowItem)} criteria={db.criteria} categoryOf={categoryLookup(db, ts)} />
           </div>
@@ -454,7 +457,7 @@ export default function Reports() {
       <Stat icon="chart" label="Classes excluded" value={`${invalid} / ${secRows.length}`} sub="not enough students answered" tone={invalid ? 'warn' : ''} />
     </Stats>
     <Card actions={tab !== 'ubprint' && <PrintButton label={tab === 'individual' ? 'Print UB report' : 'Print'} />}>
-      <div className="tabs no-print" role="tablist">{tabs.map(([k, l]) => <button key={k} role="tab" aria-selected={tab === k} className={tab === k ? 'on' : ''} onClick={() => setTab(k)}>{l}</button>)}</div>
+      <Tabs tabs={tabs} value={tab} onChange={setTab} label="Parts of this page" />
       {tab !== 'ubprint' && !FORMAL_TABS.includes(tab) && <h3 className="print-only">evalU · {period.name} · {tabs.find((t) => t[0] === tab)?.[1]}</h3>}
       {FORMAL_TABS.includes(tab) && <FormalPrint tab={tab} db={db} pid={pid} period={period} all={all} secRows={secRows} bySubject={bySubject} dept={dept} selected={selected} />}
       <div className={FORMAL_TABS.includes(tab) ? 'no-print' : undefined}>
@@ -521,24 +524,27 @@ export function DeptResults() {
   const people = useMemo(() => (pid ? computeAll(db, pid).filter((r) => r.dept === user.dept && r.targetId !== user.id) : []), [db, pid, user]);
   const requests = db.requests.filter((r) => r.headId === user.id);
   const selected = tid || '';
+  const tabs = [['summary', 'Department summary'], ['people', 'Individual results'], ['plans', 'Development plans'], ...(requests.length ? [['requests', `Released on request (${requests.length})`]] : [])];
+  const [tab, setTab] = useTab(tabs, 'summary');
   useEffect(() => { if (pid) act('logView', { periodId: pid, what: 'department' }); }, [pid]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (pid && selected) act('logView', { periodId: pid, targetId: selected, what: 'individual' }); }, [pid, selected]); // eslint-disable-line react-hooks/exhaustive-deps
   if (!periods.length) return <Card><Empty icon="clock" title="No department results released yet">Department results appear after HR releases a period to faculty.</Empty></Card>;
   return (
     <>
-      {requests.length > 0 && (
+      <div className="row between no-print"><Tabs tabs={tabs} value={tab} onChange={setTab} />{tab !== 'requests' && <PeriodPicker periods={periods} value={pid} onChange={(v) => { setPid(v); setTid(''); }} />}</div>
+      {tab === 'requests' && (
         <Card title="Results released to you on request">
           <p className="muted">These results were requested by another office and released to you, as HRMC policy requires. Any further release is your responsibility.</p>
           <table><thead><tr><th>When</th><th>Results of</th><th>Period</th><th>Requested by</th><th /></tr></thead>
             <tbody>{requests.map((r) => <tr key={r.id}><td>{new Date(r.at).toLocaleDateString()}</td><td>{userById(db, r.targetId)?.name}</td><td>{db.periods.find((p) => p.id === r.periodId)?.name}</td><td>{r.office}</td>
-              <td><button className="ghost" onClick={() => { setPid(r.periodId); setTid(r.targetId); }}>Open</button></td></tr>)}</tbody></table>
+              <td><button className="ghost" onClick={() => { setPid(r.periodId); setTid(r.targetId); setTab('people'); }}>Open</button></td></tr>)}</tbody></table>
         </Card>
       )}
-      <Card title={`Department summary · ${deptName(db, user.dept)}`} actions={<><PeriodPicker periods={periods} value={pid} onChange={(v) => { setPid(v); setTid(''); }} /><PrintButton /></>}>
+      {tab === 'summary' && <Card title={`Department summary · ${deptName(db, user.dept)}`} actions={<PrintButton />}>
         <DeptSummary db={db} periodId={pid} dept={user.dept} />
-      </Card>
-      <FollowUp periodId={pid} dept={user.dept} />
-      <Card title="Individual results in your department">
+      </Card>}
+      {tab === 'plans' && <FollowUp periodId={pid} dept={user.dept} />}
+      {tab === 'people' && <Card title="Individual results in your department" actions={<PrintButton />}>
         <table>
           <thead><tr><th>Name</th><th>Type</th><th>Final score</th><th>Status</th></tr></thead>
           <tbody>{people.map((r) => (
@@ -547,7 +553,7 @@ export function DeptResults() {
           ))}</tbody>
         </table>
         {selected && people.some((r) => r.targetId === selected) && <ResultCard res={computeTarget(db, pid, selected)} db={db} periodId={pid} />}
-      </Card>
+      </Card>}
     </>
   );
 }

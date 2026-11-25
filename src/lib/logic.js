@@ -103,9 +103,20 @@ export function neededResponses(enrolled, policy = DEFAULT_POLICY) {
   return Math.min(enrolled, Math.max(1, n));
 }
 
-/** FR6: internship, practicum and field trip subjects are not evaluated. */
-export const EXEMPT_SUBJECT = /\b(intern(ship)?s?|practicum|ojt|field ?trips?)\b/i;
-export const isExemptSection = (s) => EXEMPT_SUBJECT.test(`${s.subject} ${s.code}`);
+/**
+ * FR6: internship, practicum and field trip subjects are not evaluated. HR keeps the list of words; a word also matches
+ * its plural and other ways to join it ("Field trip": field-trip, fieldtrips). Each class remembers what the words said
+ * (exempt), and HR can decide for one class (evaluated: true / false).
+ */
+export const DEFAULT_EXEMPT_WORDS = ['Internship', 'Intern', 'Practicum', 'OJT', 'On-the-job training', 'Field trip'];
+export const exemptWords = (db) => db.settings?.exemptWords || DEFAULT_EXEMPT_WORDS;
+export function exemptPattern(words) {
+  const parts = words.map((w) => w.trim().split(/[\s-]+/).filter(Boolean).map((x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('[\\s-]*')).filter(Boolean);
+  return parts.length ? new RegExp(`(?<![a-z0-9])(?:${parts.join('|')})s?(?![a-z0-9])`, 'i') : /(?!)/;
+}
+const DEFAULT_EXEMPT = exemptPattern(DEFAULT_EXEMPT_WORDS);
+export const saysExempt = (s, pattern = DEFAULT_EXEMPT) => pattern.test(`${s.subject} ${s.code}`);
+export const isExemptSection = (s) => (s.evaluated != null ? !s.evaluated : s.exempt ?? saysExempt(s));
 
 /**
  * The departments of the University of Baguio. HR can rename, add or remove departments later
@@ -131,13 +142,39 @@ export const activeDepts = (db) => db.departments.filter((d) => d.active !== fal
 /** Departments with classes, teachers and students. */
 export const schoolDepts = (db) => activeDepts(db).filter((d) => d.kind !== 'office');
 export const officeDepts = (db) => activeDepts(db).filter((d) => d.kind === 'office');
-/** What is missing in a department, so nobody is left without an evaluation unnoticed. */
+const HEADS_FIRST = ['DEAN', 'PRIN', 'NTPHEAD', 'CHAIR', 'APRIN', 'SHEAD'];
+/**
+ * Which raters are missing in a department: for everyone rated there, the groups of their formula (a department's own
+ * formula and the groups HR made too) that have nobody to rate them. Students are checked with the class lists.
+ */
 export function deptWarnings(db, d) {
-  const here = db.users.filter((u) => u.active !== false && u.dept === d.id);
-  const has = (...positions) => here.some((u) => positions.includes(u.position));
-  if (d.kind === 'office') return !here.length ? [] : !has('head') ? ['No office head: its staff get no evaluation.'] : !has('staff', 'secretary') ? ['No staff: the office head gets no evaluation.'] : [];
-  if (!has('faculty', 'ci')) return [];
-  return d.kind === 'basic' ? (has('principal') ? [] : ['No principal.']) : has('dean') ? [] : ['No dean.'];
+  const staff = db.users.filter((u) => active(u) && u.dept === d.id && u.role !== 'ST').map((u) => ({ id: u.id, type: targetType(db, u), groups: groupsOf(db, u) }));
+  const missing = new Map(); // group -> { whom, one: somebody is in the group, but only to be rated }
+  for (const tt of Object.keys(TARGET_TYPES)) {
+    const rated = staff.filter((u) => u.type === tt);
+    if (!rated.length) continue;
+    const f = formulaFor(db, null, tt, d.id), usesWeights = methodOf(f.method, f.methodVersion ?? 1)?.usesWeights;
+    for (const c of f.components) {
+      if (c.group === 'ST') continue;
+      const raters = staff.filter((u) => u.groups.includes(c.group));
+      if (raters.some((r) => rated.some((u) => u.id !== r.id))) continue;
+      const x = missing.get(c.group) || missing.set(c.group, { whom: [], other: false }).get(c.group);
+      x.whom.push(`${TARGET_TYPES[tt]}${usesWeights && Number(c.weight) > 0 ? ` (${c.weight}%)` : ''}`);
+      if (raters.length) x.other = true;
+    }
+  }
+  const order = (g) => { const i = HEADS_FIRST.indexOf(g); return i < 0 ? 99 : i; };
+  return [...missing].sort((a, b) => order(a[0]) - order(b[0])).map(([g, x]) => `No ${x.other ? 'other ' : ''}${groupName(db, g)} to rate: ${x.whom.join(', ')}.`);
+}
+/**
+ * What changing a department's type does: { moves: [{ from, to, n }] (people rated as another category), warnings }.
+ * warnings: the raters who would then be missing.
+ */
+export function typeChange(db, d, kind) {
+  const then = { ...db, departments: db.departments.map((x) => (x.id === d.id ? { ...x, kind } : x)) };
+  const count = {};
+  for (const u of db.users) if (active(u) && u.dept === d.id) { const a = targetType(db, u), b = targetType(then, u); if (a !== b) count[`${a}|${b}`] = (count[`${a}|${b}`] || 0) + 1; }
+  return { moves: Object.entries(count).map(([k, n]) => ({ from: k.split('|')[0], to: k.split('|')[1], n })), warnings: deptWarnings(then, { ...d, kind }) };
 }
 /** Why a department can't be deleted (empty = it can): what still uses it. */
 export function deptKeep(db, id) {
@@ -296,6 +333,22 @@ export function workingTerm(db) {
 export const inTerm = (p, s) => { const t = p && termOf(p.name); return !t || !s.term || s.term === t; };
 /** A class of a semester that is over: it is kept for the records and does not hold anything up. */
 export const isPastClass = (db, s) => !!s.term && s.term < currentTerm(db);
+/**
+ * Students whose department was taken from their teacher, but who do not have most of their classes there (for example
+ * they first appeared in a general education class of another school): [{ user, count: { dept: classes }, suggest }].
+ */
+export function deptsToConfirm(db) {
+  const guess = new Map(db.users.filter((u) => u.role === 'ST' && u.active !== false && u.deptGuess).map((u) => [u.id, { user: u, count: {} }]));
+  if (!guess.size) return [];
+  for (const s of db.sections) if (!isPastClass(db, s)) for (const id of s.studentIds) { const c = guess.get(id)?.count; if (c) c[s.dept] = (c[s.dept] || 0) + 1; }
+  const out = [];
+  for (const { user, count } of guess.values()) {
+    const top = Object.entries(count).sort((a, b) => b[1] - a[1]);
+    const others = top.filter(([d]) => d !== user.dept);
+    if (others.length && others[0][1] >= (count[user.dept] || 0)) out.push({ user, count, suggest: others[0][1] > (count[user.dept] || 0) ? others[0][0] : user.dept });
+  }
+  return out;
+}
 /** A type of class the subject suggests ('lab', 'skills', 'clin-…'), or null. Only for a class HR left as lecture. */
 export function suggestClassType(db, s) {
   if (s.classType || isExemptSection(s)) return null;
@@ -464,7 +517,8 @@ export const round2 = (x) => (x == null ? null : Math.round((x + Number.EPSILON)
 export function sectionStats(db, periodId, sectionId, participation = null) {
   const sec = db.sections.find((s) => s.id === sectionId);
   const tasks = db.tasks.filter((t) => t.periodId === periodId && t.sectionId === sectionId && t.group === 'ST');
-  const required = tasks.length;
+  // a teacher who was replaced: the class is as big as it was, so a few early answers don't become the whole class
+  const required = Math.max(tasks.length, sec?.replaced?.sizes?.[periodId] || 0);
   const done = tasks.filter((t) => t.response);
   const needed = neededResponses(required, { ...policyFor(db, periodId), ...(participation || (sec && participationFor(db, periodId, sec)) || {}) });
   const rate = required ? done.length / required : 0;
@@ -713,15 +767,54 @@ export function closesAt(p) {
 }
 /**
  * Keep an open period's evaluations right: new classes, students and staff get theirs; unanswered ones of students who
- * dropped a class, and of deactivated accounts, are removed (so the class size is right). Answers are never touched.
+ * dropped a class, of deactivated accounts, and of groups that no longer count for somebody, are removed. Answers are
+ * never touched.
  */
 export function syncTasks(draft, p, now = Date.now()) {
   if (p.status !== 'open' || notStarted(p, localDay(new Date(now))) || deadlinePassed(p, now)) return { added: 0, removed: 0 };
   const on = new Set(draft.users.filter(active).map((u) => u.id));
-  const inClass = new Map(draft.sections.map((s) => [s.id, new Set(s.studentIds)]));
+  const answeredIn = new Set(draft.tasks.filter((t) => t.periodId === p.id && t.response && t.sectionId).map((t) => t.sectionId));
+  const inClass = new Map(draft.sections.map((s) => [s.id, new Set(isExemptSection(s) && !answeredIn.has(s.id) ? [] : s.studentIds)]));
   const before = draft.tasks.length;
-  draft.tasks = draft.tasks.filter((t) => t.periodId !== p.id || t.response || (on.has(t.evaluatorId) && on.has(t.targetId) && (!t.sectionId || inClass.get(t.sectionId)?.has(t.evaluatorId))));
+  // a group that does not count for somebody any more (their category or formula changed) has nothing to answer
+  const people = new Map(draft.users.map((u) => [u.id, u])), counts = new Map();
+  const stillCounts = (t) => { if (!counts.has(t.targetId)) counts.set(t.targetId, new Set(ratingGroups(draft, p.id, people.get(t.targetId)))); return counts.get(t.targetId).has(t.group); };
+  draft.tasks = draft.tasks.filter((t) => t.periodId !== p.id || t.response || (on.has(t.evaluatorId) && on.has(t.targetId) && (!t.sectionId || inClass.get(t.sectionId)?.has(t.evaluatorId)) && stillCounts(t)));
   return { removed: before - draft.tasks.length, added: generateTasks(draft, p.id).added };
+}
+/**
+ * Another teacher took over a class: the old one's evaluations nobody answered are removed, submitted answers stay. With
+ * no answer the old class is removed; else it is kept without students, and with the size it had.
+ */
+export function replaceTeacher(draft, old, next) {
+  const open = new Set(draft.periods.filter((p) => p.status === 'open').map((p) => p.id)), sizes = {};
+  for (const id of open) { const n = sectionStats(draft, id, old.id).required; if (n) sizes[id] = n; }
+  const before = draft.tasks.length;
+  draft.tasks = draft.tasks.filter((t) => t.sectionId !== old.id || t.response || !open.has(t.periodId));
+  for (const s of next) {
+    if (old.classType && !s.classType) s.classType = old.classType;
+    if (old.evaluated != null && s.evaluated == null) s.evaluated = old.evaluated;
+  }
+  if (draft.tasks.some((t) => t.sectionId === old.id)) {
+    old.studentIds = [];
+    old.replaced = { by: next.map((s) => userById(draft, s.facultyId)?.name).filter(Boolean).join(', '), at: new Date().toISOString(), sizes };
+  } else draft.sections = draft.sections.filter((s) => s.id !== old.id);
+  return before - draft.tasks.length;
+}
+/** How many evaluations of an open period are still to be created. The browser does not know which student is which. */
+export function missingEvaluations(db, periodId) {
+  const tasks = db.tasks.filter((t) => t.periodId === periodId);
+  const off = new Set(periodById(db, periodId)?.auto?.skip || []);
+  const staff = db.assignments ? db.assignments.filter((t) => t.periodId === periodId) : tasks.filter((t) => t.group !== 'ST');
+  const have = new Set([...staff.map(taskKey), ...off]), inClass = {}, need = {};
+  for (const t of tasks) if (t.group === 'ST') inClass[t.sectionId] = (inClass[t.sectionId] || 0) + 1;
+  let n = 0;
+  for (const a of expectedAssignments(db, periodId)) {
+    if (a.group === 'ST') need[a.sectionId] = (need[a.sectionId] || 0) + 1;
+    else if (!have.has(taskKey(a))) n++;
+  }
+  for (const [id, k] of Object.entries(need)) n += Math.max(0, k - (inClass[id] || 0));
+  return n;
 }
 export const syncOpenPeriods = (draft) => draft.periods.filter((p) => p.status === 'open').reduce((a, p) => { const r = syncTasks(draft, p); return { added: a.added + r.added, removed: a.removed + r.removed }; }, { added: 0, removed: 0 });
 /** Close a period: leave out classes without enough answers, fix its rules and store every result. Returns the classes left out. */
@@ -789,7 +882,7 @@ function participationNotices(draft, periodId, final) {
   const day = today();
   const words = ruleWords(policyFor(draft, periodId));
   // no participation rule: no class is left out, so there is nothing to warn about
-  const low = draft.sections.filter((s) => hasRule(participationFor(draft, periodId, s))).map((s) => sectionStats(draft, periodId, s.id)).filter((st) => st.required && !st.valid);
+  const low = draft.sections.filter((s) => (final || !s.replaced) && hasRule(participationFor(draft, periodId, s))).map((s) => sectionStats(draft, periodId, s.id)).filter((st) => st.required && !st.valid);
   const kind = final ? 'invalidated' : 'participation';
   const tag = final ? `thr|${periodId}` : `part|${periodId}|${day}`;
   const line = (st) => `${st.section.code} (${st.section.subject}) – ${userById(draft, st.section.facultyId)?.name}: ${st.responded} of ${st.required} answered, ${st.needed} needed`;
@@ -898,7 +991,7 @@ export function participationForecast(db, periodId, sectionId, now = Date.now())
   const sec = db.sections.find((x) => x.id === sectionId);
   if (sec && !hasRule(participationFor(db, periodId, sec))) return null; // no rule, nothing to reach
   const st = sectionStats(db, periodId, sectionId);
-  if (!st.required || isExemptSection(st.section)) return null;
+  if (!st.required || isExemptSection(st.section) || st.section.replaced) return null;
   const elapsed = (now - start) / DAY_MS;
   const left = Math.max(0, (new Date(p.deadline + 'T23:59:59').getTime() - now) / DAY_MS);
   const perDay = st.responded / Math.max(1, elapsed);

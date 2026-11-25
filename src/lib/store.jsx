@@ -14,11 +14,11 @@ const DONE = {
   releaseNext: 'Results released', withdrawRelease: 'Release step withdrawn', checkThreshold: 'Participation alerts sent',
   setPeriodDeadline: 'Deadline changed', importStaff: 'Staff list imported', applyClassTypes: 'Class types set', generateTasks: 'Evaluation tasks created', sendReminders: 'Reminders sent',
   addAssignment: 'Evaluation added', removeTask: 'Evaluation removed',
-  importClassList: 'Class list imported', createSection: 'Class added', deleteSection: 'Class deleted', setClassType: 'Class type changed',
+  importClassList: 'Class list imported', setStudentDepts: 'Departments confirmed', createSection: 'Class added', deleteSection: 'Class deleted', setSectionEvaluated: 'Class saved', setExemptWords: 'Words saved', setClassType: 'Class type changed',
   importPastResults: 'Earlier records imported', deletePastResult: 'Record deleted',
   createUser: 'Account created', updateUser: 'Changes saved', resetPassword: 'Password reset', setUserActive: 'Account updated',
   addDepartment: 'Department added', updateDepartment: 'Department saved', deleteDepartment: 'Department deleted',
-  addUbDepartments: 'UB departments added', addEvaluatorGroup: 'Evaluator group added',
+  addUbDepartments: 'UB departments added', addEvaluatorGroup: 'Evaluator group created', followAllDepartments: 'Sent to the VP for approval',
   createForm: 'Draft created', reviseForm: 'Draft created', useForm: 'Tool saved', unscheduleForm: 'Back to draft', discardForm: 'Draft discarded', renameForm: 'Name saved',
   addFormItem: 'Indicator added', addNewFormItem: 'Indicator added', editFormItem: 'Indicator saved', removeFormItem: 'Indicator removed',
   addFormPart: 'Part added', renameFormPart: 'Part renamed', removeFormPart: 'Part removed', addGroupWithFormula: 'Evaluator group added to a draft', updateEvaluatorGroup: 'Evaluator group saved', deleteEvaluatorGroup: 'Evaluator group removed', restoreEvaluatorGroup: 'Evaluator group restored',
@@ -114,7 +114,7 @@ export function AppProvider({ children }) {
       const r = await api(`/api/actions/${name}`, args);
       if (r.ok) {
         setError(''); setDb(r.data.data);
-        if (DONE[name]) setDone({ id: Date.now(), text: DONE[name] }); // a short "done" message slides in
+        if (DONE[name] && !args?.preview) setDone({ id: Date.now(), text: DONE[name] }); // a short "done" message slides in
         return r.data.result;
       }
       if (r.status === 401) signedOut('Your session has ended. Please sign in again.');

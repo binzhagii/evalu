@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useApp } from '../lib/store';
 import { ROLES, POSITIONS, needsDept, deptName, isNursingDept, nursingDepts, activeDepts, schoolDepts, isPastClass, evaluatorGroups, defaultEvaluatorGroups } from '../lib/logic';
-import { Card, Select, Badge, Avatar, Empty, newestFirst, usePages, ask } from '../ui';
+import { Card, Select, Badge, Avatar, Empty, newestFirst, useNav, useNavArgs, usePages, useTab, Tabs, Screen, ask } from '../ui';
 
 /* ---------------- change your own password ---------------- */
 export function PasswordForm({ onDone, submitLabel = 'Change password', askCurrent = true }) {
@@ -82,6 +82,8 @@ export function MyAccount() {
 /* ---------------- HR: accounts ---------------- */
 const EMPTY = { name: '', username: '', email: '', role: 'ST', position: 'student', dept: '', sectionIds: [], evaluatorGroupIds: [] };
 
+const ClassBox = ({ s, on, onChange, where }) => <label className="inline"><input type="checkbox" checked={on} onChange={() => onChange(s.id)} /> {s.code} <span className="muted small">{s.subject}{where ? ` · ${where}` : ''}</span></label>;
+
 function AccountForm({ initial, onSave, onCancel, saveLabel }) {
   const { db } = useApp();
   const [f, setF] = useState(initial);
@@ -91,7 +93,10 @@ function AccountForm({ initial, onSave, onCancel, saveLabel }) {
     setF((x) => ({ ...x, role, position, dept: needsDept(role) ? x.dept : '', sectionIds: role === 'ST' ? x.sectionIds : [], evaluatorGroupIds: defaultEvaluatorGroups(role, position) }));
   };
   // this semester's classes of the department, and the classes of other departments they are in (general education)
-  const classes = db.sections.filter((s) => !isPastClass(db, s) && (s.dept === f.dept || f.sectionIds.includes(s.id)));
+  const [other, setOther] = useState(''); // another department whose classes are shown too
+  const now = db.sections.filter((s) => !isPastClass(db, s));
+  const classes = now.filter((s) => s.dept === f.dept || f.sectionIds.includes(s.id));
+  const otherClasses = other ? now.filter((s) => s.dept === other && !classes.includes(s)) : [];
   // Clinical Instructors are only in the School of Nursing
   const chosenDept = db.departments.find((d) => d.id === f.dept);
   const positions = Object.entries(POSITIONS[f.role]).filter(([k]) => k !== 'ci' || !chosenDept || isNursingDept(chosenDept) || f.position === 'ci');
@@ -120,7 +125,7 @@ function AccountForm({ initial, onSave, onCancel, saveLabel }) {
         <label>Position<br /><Select value={f.position} onChange={setPosition}>{positions.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</Select></label>
         {needsDept(f.role) && (
           <label>Department<br />
-            <Select value={f.dept} onChange={(v) => setF((x) => ({ ...x, dept: v, sectionIds: [] }))}>
+            <Select value={f.dept} onChange={(v) => setF((x) => ({ ...x, dept: v }))}>
               <option value="">Choose…</option>
               {deptChoices.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
             </Select>
@@ -139,9 +144,14 @@ function AccountForm({ initial, onSave, onCancel, saveLabel }) {
       {f.role === 'ST' && f.dept && (
         <div className="row">
           <span className="muted">Classes:</span>
-          {classes.length ? classes.map((s) => (
-            <label key={s.id} className="inline"><input type="checkbox" checked={f.sectionIds.includes(s.id)} onChange={() => toggle(s.id)} /> {s.code} <span className="muted small">{s.subject}</span></label>
-          )) : <span className="muted">No classes in this department this semester.</span>}
+          {classes.length ? classes.map((s) => <ClassBox key={s.id} s={s} on={f.sectionIds.includes(s.id)} onChange={toggle} where={s.dept !== f.dept && deptName(db, s.dept)} />) : <span className="muted">No classes in this department this semester.</span>}
+        </div>
+      )}
+      {f.role === 'ST' && f.dept && (
+        <div className="row">
+          <label className="inline">Add a class of another department <Select value={other} onChange={setOther} aria-label="Another department's classes"><option value="">Choose the department…</option>{schoolDepts(db).filter((d) => d.id !== f.dept && now.some((s) => s.dept === d.id)).map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</Select></label>
+          {otherClasses.map((s) => <ClassBox key={s.id} s={s} on={false} onChange={toggle} />)}
+          {other && !otherClasses.length && <span className="muted">All of its classes are already chosen above.</span>}
         </div>
       )}
       <div className="row">
@@ -162,7 +172,7 @@ function TempPasswordNote({ info, onClose }) {
     <div ref={box} className="note ok row" style={{ justifyContent: 'space-between' }}>
       <span>
         Temporary password for <b>{info.username}</b>: <code className="temp-pw">{info.tempPassword}</code><br />
-        <span className="muted">Give it to them privately. They must choose their own password when they first sign in. Until then you can see it again with <b>Show temporary password</b> in the list below.</span>
+        <span className="muted">Give it to them privately. They must choose their own password when they first sign in. Until then you can see it again with <b>Show temporary password</b> in the list of accounts.</span>
       </span>
       <span className="row" style={{ margin: 0 }}>
         <button className="ghost" onClick={copy}>{copied ? 'Copied' : 'Copy'}</button>
@@ -184,9 +194,8 @@ function StaffImport() {
   const [busy, setBusy] = useState(false);
   const run = async (preview) => { setBusy(true); const r = await act('importStaff', { csv, preview }); setBusy(false); if (r) { setOut(r); if (!preview && !r.errorCount) setCsv(''); } };
   return (
-    <details className="card advanced-panel">
-      <summary><b>Import staff from a file</b> <span className="muted">· Deans, chairs, principals, office heads and staff. Teachers and students come from class lists.</span></summary>
-      <div className="advanced-content">
+    <Card title="Import staff from a file">
+        <p className="muted">For deans, chairs, principals, office heads and staff. Teachers and students come from class lists.</p>
         <p className="muted">One person per line: <code>name, UB email, position, department or office</code>. The department can be its name or its letters, for example SIT. People who already have an account are skipped.</p>
         <label className="file-pick"><input type="file" accept=".csv,.txt,text/csv" onChange={async (e) => { const file = e.target.files?.[0]; if (file) { setCsv(await file.text()); setOut(null); } e.target.value = ''; }} />Choose CSV file…</label>
         <textarea rows={5} value={csv} onChange={(e) => { setCsv(e.target.value); setOut(null); }} placeholder={SAMPLE_STAFF} aria-label="Staff list" />
@@ -195,24 +204,29 @@ function StaffImport() {
           <b>{out.preview ? 'Check result (nothing saved yet):' : 'Imported.'}</b> {out.rows} row(s) read, <b>{out.created} account(s)</b> {out.preview ? 'would be created' : 'created'}{out.existing ? `, ${out.existing} already had one` : ''}.{out.errorCount > 0 && ` ${out.errorCount} row(s) have a problem and are skipped:`}
           {out.errors.length > 0 && <ul>{out.errors.map((e) => <li key={e}>{e}</li>)}</ul>}
           {out.preview && out.summary.length > 0 && <ul className="muted">{out.summary.map((x) => <li key={x}>{x}</li>)}</ul>}
-          {out.passwords?.length > 0 && <><p><b>Temporary passwords.</b> Give each one privately. Until the person signs in, you can see it again in the list below.</p>
+          {out.passwords?.length > 0 && <><p><b>Temporary passwords.</b> Give each one privately. Until the person signs in, you can see it again under Accounts.</p>
             <table><thead><tr><th>Name</th><th>UB email</th><th>Temporary password</th></tr></thead><tbody>{out.passwords.map((p) => <tr key={p.username}><td>{p.name}</td><td>{p.email}</td><td><code className="temp-pw">{p.tempPassword}</code></td></tr>)}</tbody></table></>}
         </div>}
-      </div>
-    </details>
+    </Card>
   );
 }
 
 export function Accounts() {
   const { db, user, act } = useApp();
   const [adding, setAdding] = useState(false);
-  const [editing, setEditing] = useState(null);
+  const args = useNavArgs(); // a department can open one person, or everyone in it
+  const go = useNav();
+  const [editing, setEditing] = useState(args.userId || null);
   const [temp, setTemp] = useState(null);
   const [msg, setMsg] = useState('');
   const [q, setQ] = useState('');
   const [role, setRole] = useState('');
-  const [dept, setDept] = useState('');
+  const [dept, setDept] = useState(args.dept || '');
   const [showInactive, setShowInactive] = useState(true);
+
+  const person = editing && db.users.find((u) => u.id === editing);
+  const fromDept = !!args.deptId && editing === args.userId; // Back leads to the department it was opened from
+  const close = () => (fromDept ? go('departments', { deptId: args.deptId }) : setEditing(null));
 
   const enrolled = (id) => db.sections.filter((s) => s.studentIds.includes(id)).map((s) => s.id);
   const create = async (f) => {
@@ -222,7 +236,7 @@ export function Accounts() {
   };
   const update = async (f) => {
     setMsg('');
-    if (await act('updateUser', { userId: editing, ...f })) { setEditing(null); setMsg('Account updated.'); }
+    if (await act('updateUser', { userId: editing, ...f })) { if (fromDept) return go('departments', { deptId: args.deptId }); setEditing(null); setMsg('Account updated.'); }
   };
   const reset = async (u) => {
     if (!(await ask('Reset password?', `Give ${u.name} a new temporary password? Their current password stops working and they are signed out.`, { ok: 'Reset password' }))) return;
@@ -239,10 +253,22 @@ export function Accounts() {
   const s = q.trim().toLowerCase();
   const list = newestFirst(db.users).filter((u) => (!role || u.role === role) && (!dept || u.dept === dept) && (showInactive || u.active)
     && (!s || u.name.toLowerCase().includes(s) || u.username.toLowerCase().includes(s) || (u.email || '').toLowerCase().includes(s)));
-  const { rows, bar } = usePages(list, `${role}|${dept}|${showInactive}|${s}`);
+  const { rows, bar } = usePages(list, `${role}|${dept}|${showInactive}|${s}`, 10);
+  const tabs = [['list', 'Accounts'], ['import', 'Import staff']];
+  const [tab, setTab] = useTab(tabs, 'list');
+  if (adding) return <Screen title="New account" backTo="All accounts" onBack={() => setAdding(false)}><AccountForm initial={EMPTY} onSave={create} onCancel={() => setAdding(false)} saveLabel="Create account" /></Screen>;
+  if (person) {
+    return (
+      <Screen title={`Edit ${person.name}`} backTo={fromDept ? `Back to ${deptName(db, args.deptId)}` : 'All accounts'} onBack={close}>
+        <AccountForm initial={{ name: person.name, username: person.username, email: person.email || '', role: person.role, position: person.position, dept: person.dept || '', sectionIds: enrolled(person.id), evaluatorGroupIds: person.evaluatorGroupIds || evaluatorGroups(person) }}
+          onSave={update} onCancel={close} saveLabel="Save changes" />
+      </Screen>
+    );
+  }
 
   return (
     <>
+      <Tabs tabs={tabs} value={tab} onChange={setTab} />
       <div className="note">
         <b>Most student and teacher accounts are created when you import a class list.</b> Use this page for one person at a time, or to update a name, or reset a password. New accounts get a temporary password that must be changed at first sign-in.
       </div>
@@ -250,31 +276,19 @@ export function Accounts() {
       {temp && <TempPasswordNote info={temp} onClose={() => setTemp(null)} />}
       {msg && <div className="note">{msg}</div>}
 
-      <Card title="Add an account" actions={!adding && <button onClick={() => { setAdding(true); setTemp(null); }}>New account</button>}>
-        {adding
-          ? <AccountForm initial={EMPTY} onSave={create} onCancel={() => setAdding(false)} saveLabel="Create account" />
-          : <p className="muted">Create accounts for new students, faculty and staff.</p>}
-      </Card>
+      {tab === 'import' && <StaffImport />}
 
-      <StaffImport />
-
-      <Card title={`Accounts (${list.length})`} actions={
-        <div className="row" style={{ margin: 0 }}>
+      {tab === 'list' && <Card title={`Accounts (${list.length})`} actions={<button onClick={() => { setAdding(true); setTemp(null); setMsg(''); }}>+ New account</button>}>
+        <div className="row">
           <input placeholder="Search name, username or email" value={q} onChange={(e) => setQ(e.target.value)} />
           <Select value={role} onChange={setRole}><option value="">All roles</option>{Object.entries(ROLES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</Select>
           <Select value={dept} onChange={setDept}><option value="">All departments</option>{db.departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</Select>
           <label className="inline muted"><input type="checkbox" checked={showInactive} onChange={(e) => setShowInactive(e.target.checked)} /> Show deactivated</label>
         </div>
-      }>
         <table>
           <thead><tr><th>Name</th><th>Username / email</th><th>Role</th><th>Department</th><th>Status</th><th>Actions</th></tr></thead>
           <tbody>
-            {rows.map((u) => editing === u.id ? (
-              <tr key={u.id}><td colSpan={6}>
-                <AccountForm initial={{ name: u.name, username: u.username, email: u.email || '', role: u.role, position: u.position, dept: u.dept || '', sectionIds: enrolled(u.id), evaluatorGroupIds: u.evaluatorGroupIds || evaluatorGroups(u) }}
-                  onSave={update} onCancel={() => setEditing(null)} saveLabel="Save changes" />
-              </td></tr>
-            ) : (
+            {rows.map((u) => (
               <tr key={u.id} className={u.active ? '' : 'inactive'}>
                 <td><span className="who-cell"><Avatar name={u.name} size={30} />{u.name}{u.id === user.id && <span className="muted"> (you)</span>}</span></td>
                 <td><code>{u.username}</code><br /><span className="muted">{u.email}</span></td>
@@ -286,7 +300,7 @@ export function Accounts() {
                       : <Badge kind="completed">active</Badge>}
                 </td>
                 <td className="row" style={{ margin: 0 }}>
-                  <button className="ghost" onClick={() => { setEditing(u.id); setTemp(null); }}>Edit</button>
+                  <button className="ghost" onClick={() => { setEditing(u.id); setTemp(null); setMsg(''); }}>Edit</button>
                   {u.hasTempPassword && <button className="ghost" onClick={async () => { setMsg(''); const r = await act('showTempPassword', { userId: u.id }); if (r) setTemp(r); }}>Show temporary password</button>}
                   {u.id !== user.id && u.active && <button className="ghost" onClick={() => reset(u)}>Reset password</button>}
                   {u.id !== user.id && (u.active
@@ -299,7 +313,7 @@ export function Accounts() {
         </table>
         {list.length === 0 && <Empty icon="users" title="No accounts match">Change the filters above.</Empty>}
         {bar}
-      </Card>
+      </Card>}
     </>
   );
 }
