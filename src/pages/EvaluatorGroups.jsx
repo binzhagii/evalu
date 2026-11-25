@@ -7,7 +7,7 @@ import { Card, Select, Badge, ask } from '../ui';
 const PEOPLE_POSITIONS = [...Object.entries(POSITIONS.TP), ...Object.entries(POSITIONS.NTP)];
 const positionName = (p) => POSITIONS.TP[p] || POSITIONS.NTP[p] || p;
 
-export default function EvaluatorGroups({ editing, setEditing }) {
+export default function EvaluatorGroups({ editing, setEditing, onAdd, addBlocked }) {
   const { db, act } = useApp();
   const [old, setOld] = useState(false);
   const all = db.evaluatorGroups || [];
@@ -21,8 +21,8 @@ export default function EvaluatorGroups({ editing, setEditing }) {
     if (ok && await act('deleteEvaluatorGroup', { id: g.id })) setEditing(null);
   };
   return (
-    <Card title="Evaluator groups">
-      <p className="muted">Everyone who can rate, and where each group counts. Rename a group or change its members here. To delete one, remove it from the formulas first. To add one, use <b>+ Add evaluator group</b> above.</p>
+    <Card title="Evaluator groups" actions={<>{addBlocked && <span className="muted small">{addBlocked}</span>}<button disabled={!!addBlocked} onClick={onAdd}>+ Add evaluator group</button></>}>
+      <p className="muted">Everyone who can rate, and where each group counts. Rename a group or change its members here. To delete one, remove it from the formulas first.</p>
       <table>
         <thead><tr><th>Group</th><th>Members</th><th>Counts in</th><th /></tr></thead>
         <tbody>

@@ -102,7 +102,7 @@ export default function Formulas() {
   useEffect(() => { setF(working ? structuredClone(editable ? asPercentages(working.config) : working.config) : null); }, [working?.id, working?.status, rev]); // eslint-disable-line react-hooks/exhaustive-deps, react/set-state-in-effect
   const groups = formGroups(db, tt, { drafts: true }); // a group whose tool is still a draft can be put in a draft formula
   const errs = f ? validateFormula(f, { allowedGroups: formGroups(db, tt, { scheduled: true }), groupNames: names }) : [];
-  const pick = (t, d) => { setTt(t); setDept(d); setMsg(''); setAdding(false); };
+  const pick = (t, d, add = false) => { setTt(t); setDept(d); setMsg(''); setAdding(add); };
   const canAdd = isHR && (!working || ['draft', 'rejected'].includes(working.status));
   const added = (r) => {
     setAdding(false); setRev((n) => n + 1); setJump(true);
@@ -166,7 +166,7 @@ export default function Formulas() {
         {isHR && !working && <div className="row"><button onClick={() => change(tt, dept)}>Change formula</button>{canAdd && <button className="ghost" onClick={() => setAdding(true)}>+ Add evaluator group</button>}</div>}
       </Card>
 
-      {adding && canAdd && <AddGroup key={key + (working?.id || '')} tt={tt} dept={dept} base={asPercentages(working ? working.config : baseline)} onDone={added} onCancel={() => setAdding(false)} />}
+      {adding && isHR && <AddGroup tt={tt} dept={dept} working={working} base={asPercentages(working ? working.config : baseline)} onCategory={(t, d) => pick(t, d, true)} onDone={added} onCancel={() => setAdding(false)} />}
       <span ref={editor} />
       {isHR && working && f && (
         <Card title={`New formula for ${who}`} actions={<Badge kind={STATUS[working.status][0]}>{STATUS[working.status][1]}</Badge>}>
@@ -189,7 +189,7 @@ export default function Formulas() {
         </Card>
       )}
 
-      {isHR && <EvaluatorGroups editing={editGroup} setEditing={setEditGroup} />}
+      {isHR && <EvaluatorGroups editing={editGroup} setEditing={setEditGroup} onAdd={() => setAdding(true)} addBlocked={adding ? 'Opened above' : editable && dirty ? 'Save your changes to the formula first' : ''} />}
       <BothLevels formula={baseline} tt={tt} dept={dept || null} />
       <Card title="Past formulas">
         {versions.length === 0 ? <p className="muted">No saved formula yet. {who} uses the starting formula shown above.</p> : (

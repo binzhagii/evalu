@@ -296,6 +296,22 @@ export function workingTerm(db) {
 export const inTerm = (p, s) => { const t = p && termOf(p.name); return !t || !s.term || s.term === t; };
 /** A class of a semester that is over: it is kept for the records and does not hold anything up. */
 export const isPastClass = (db, s) => !!s.term && s.term < currentTerm(db);
+/**
+ * Students whose department was taken from their teacher, but who do not have most of their classes there (for example
+ * they first appeared in a general education class of another school): [{ user, count: { dept: classes }, suggest }].
+ */
+export function deptsToConfirm(db) {
+  const guess = new Map(db.users.filter((u) => u.role === 'ST' && u.active !== false && u.deptGuess).map((u) => [u.id, { user: u, count: {} }]));
+  if (!guess.size) return [];
+  for (const s of db.sections) if (!isPastClass(db, s)) for (const id of s.studentIds) { const c = guess.get(id)?.count; if (c) c[s.dept] = (c[s.dept] || 0) + 1; }
+  const out = [];
+  for (const { user, count } of guess.values()) {
+    const top = Object.entries(count).sort((a, b) => b[1] - a[1]);
+    const others = top.filter(([d]) => d !== user.dept);
+    if (others.length && others[0][1] >= (count[user.dept] || 0)) out.push({ user, count, suggest: others[0][1] > (count[user.dept] || 0) ? others[0][0] : user.dept });
+  }
+  return out;
+}
 /** A type of class the subject suggests ('lab', 'skills', 'clin-…'), or null. Only for a class HR left as lecture. */
 export function suggestClassType(db, s) {
   if (s.classType || isExemptSection(s)) return null;

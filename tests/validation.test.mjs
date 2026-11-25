@@ -860,6 +860,37 @@ try {
     const t0 = Date.now(), a = L.syncOpenPeriods(d), b = L.syncOpenPeriods(d), ms = Date.now() - t0;
     return a.added > 40000 && b.added === 0 && b.removed === 0 && ms < 5000 ? 'under 5 seconds, nothing added twice' : `${ms} ms, added ${a.added} then ${b.added}`;
   });
+  const GE = 'section,subject,teacher email,student id,student name,student email';
+  const newSt = (n, code, subject, teacher) => `${code},${subject},${teacher}@ubaguio.edu,2031000${n},New ${n},2031000${n}@s.ubaguio.edu`;
+  await tc('TC-118', 'Department of new students', 'A new SIT student first listed in a general education class of SBAA, then in 2 SIT classes; HR confirms; a student with most classes where the list put them', { first: 'B', asked: 1, suggested: 'A', needsYou: true, moved: 1, after: ['A', 0], notAsked: 0 }, async () => {
+    const x = lab(), of = () => x.db.users.find((u) => u.username === '20310001');
+    await x.run('importClassList', { dept: 'B', csv: `${GE}\n${newSt(1, 'GE-1', 'Ethics', 'fac_b1')}` }); const first = of().dept;
+    await x.run('importClassList', { dept: 'A', csv: [GE, newSt(1, 'IT-1', 'Programming', 'fac_a1'), newSt(1, 'IT-1', 'Networks', 'fac_a2')].join('\n') });
+    const ask = L.deptsToConfirm(x.db), need = CY.needsYou(x.db).some((n) => n.text.includes('may be in the wrong department'));
+    const r = await x.run('setStudentDepts', { list: ask.map((k) => ({ userId: k.user.id, dept: k.suggest })) }), after = [of().dept, L.deptsToConfirm(x.db).length];
+    await x.run('importClassList', { dept: 'A', csv: [GE, newSt(2, 'IT-1', 'Programming', 'fac_a1'), newSt(2, 'IT-1', 'Networks', 'fac_a2')].join('\n') });
+    await x.run('importClassList', { dept: 'B', csv: `${GE}\n${newSt(2, 'GE-1', 'Ethics', 'fac_b1')}` });
+    return { first, asked: ask.length, suggested: ask[0]?.suggest, needsYou: need, moved: r.moved, after, notAsked: L.deptsToConfirm(x.db).length };
+  });
+  await tc('TC-119', 'Department of new students', 'Checking a list: the sections HR is asked about; HR chooses SIT for one; a later list with the student department column; an office and a student who already has a department', { sections: ['GE-1:1', 'GE-2:1'], saved: 0, chosen: ['A', false], guess: ['B', true], fixed: ['A', false, 1], office: false, kept: ['A', 1] }, async () => {
+    const x = lab(), u = (n) => x.db.users.find((k) => k.username === '2031000' + n), n0 = x.db.users.length;
+    const csv = [GE, newSt(1, 'GE-1', 'Ethics', 'fac_b1'), newSt(2, 'GE-2', 'Ethics', 'fac_b1')].join('\n');
+    const c = await x.run('importClassList', { dept: 'B', csv, preview: true }), saved = x.db.users.length - n0;
+    await x.run('addDepartment', { name: 'Registrar', kind: 'office' });
+    const office = await x.run('importClassList', { dept: 'B', csv, deptOf: { [c.guessed[0].key]: x.db.departments.at(-1).id } });
+    await x.run('importClassList', { dept: 'B', csv, deptOf: { [c.guessed[0].key]: 'A' } });
+    const chosen = [u(1).dept, !!u(1).deptGuess], guess = [u(2).dept, !!u(2).deptGuess];
+    const f = await x.run('importClassList', { dept: 'A', csv: `${GE},student department\n${newSt(2, 'IT-2', 'Networks', 'fac_a1')},SIT\n${newSt(1, 'IT-2', 'Networks', 'fac_a1')},SBAA` });
+    return { sections: c.guessed.map((g) => `${g.code}:${g.students}`), saved, chosen, guess, fixed: [u(2).dept, !!u(2).deptGuess, f.corrected], office: office.ok, kept: [u(1).dept, f.warnings.filter((w) => w.includes('Not changed')).length] };
+  });
+  await tc('TC-120', 'Classes of other departments', "A student's account saved with a class of another school, then with another department: their classes and evaluations", { enrolled: true, kept: true }, async () => {
+    const x = lab(), st = x.db.users.find((u) => u.id === 'st_a01'), sec = x.db.sections.find((s) => s.dept === 'B' && !L.isExemptSection(s));
+    const mine = x.db.sections.filter((s) => s.studentIds.includes(st.id)).map((s) => s.id), acc = { userId: st.id, name: st.name, username: st.username, email: st.email, role: 'ST', position: 'student' };
+    await x.run('updateUser', { ...acc, dept: 'A', sectionIds: [...mine, sec.id] }); L.syncOpenPeriods(x.db);
+    const enrolled = x.db.tasks.some((t) => t.evaluatorId === st.id && t.sectionId === sec.id);
+    await x.run('updateUser', { ...acc, dept: 'C', sectionIds: [...mine, sec.id] });
+    return { enrolled, kept: [...mine, sec.id].every((id) => x.db.sections.find((s) => s.id === id).studentIds.includes(st.id)) };
+  });
 } finally {
   server.close();
 }

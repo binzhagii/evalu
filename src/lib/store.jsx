@@ -14,7 +14,7 @@ const DONE = {
   releaseNext: 'Results released', withdrawRelease: 'Release step withdrawn', checkThreshold: 'Participation alerts sent',
   setPeriodDeadline: 'Deadline changed', importStaff: 'Staff list imported', applyClassTypes: 'Class types set', generateTasks: 'Evaluation tasks created', sendReminders: 'Reminders sent',
   addAssignment: 'Evaluation added', removeTask: 'Evaluation removed',
-  importClassList: 'Class list imported', createSection: 'Class added', deleteSection: 'Class deleted', setClassType: 'Class type changed',
+  importClassList: 'Class list imported', setStudentDepts: 'Departments confirmed', createSection: 'Class added', deleteSection: 'Class deleted', setClassType: 'Class type changed',
   importPastResults: 'Earlier records imported', deletePastResult: 'Record deleted',
   createUser: 'Account created', updateUser: 'Changes saved', resetPassword: 'Password reset', setUserActive: 'Account updated',
   addDepartment: 'Department added', updateDepartment: 'Department saved', deleteDepartment: 'Department deleted',
@@ -114,7 +114,7 @@ export function AppProvider({ children }) {
       const r = await api(`/api/actions/${name}`, args);
       if (r.ok) {
         setError(''); setDb(r.data.data);
-        if (DONE[name]) setDone({ id: Date.now(), text: DONE[name] }); // a short "done" message slides in
+        if (DONE[name] && !args?.preview) setDone({ id: Date.now(), text: DONE[name] }); // a short "done" message slides in
         return r.data.result;
       }
       if (r.status === 401) signedOut('Your session has ended. Please sign in again.');

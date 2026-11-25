@@ -161,7 +161,32 @@ function ToolWeights({ i, weight, onOpen }) {
 /* ---------------- add an evaluator group (one screen) ---------------- */
 const PEOPLE_POSITIONS = [...Object.entries(POSITIONS.TP), ...Object.entries(POSITIONS.NTP)];
 
-export function AddGroup({ tt, dept, base, onDone, onCancel }) {
+const BLOCKED = {
+  pending: 'a new formula that is waiting for the VP. You can add a group after the VP approves it and it is in use, or after the VP returns it.',
+  approved: 'an approved formula that is not used yet. Choose when it starts, then add the group.',
+  scheduled: 'an approved formula that starts with the next period. You can add a group once it is in use.',
+};
+/** Whose rating the new group joins, then the steps. A category with a formula on its way can't be changed yet: it says why. */
+export function AddGroup({ tt, dept, working, onCategory, ...rest }) {
+  const { db } = useApp();
+  const top = useRef(null);
+  useEffect(() => { top.current?.scrollIntoView({ block: 'start' }); }, []); // the button may be far from here
+  const why = working && BLOCKED[working.status];
+  const name = `${TARGET_TYPES[tt]}${dept ? ` (only ${deptName(db, dept)})` : ''}`;
+  return (
+    <div ref={top}>
+      <Card title="Add an evaluator group" className="fx-add">
+        <h4>Whose rating will the group join?</h4>
+        <div className="row">
+          <Select value={tt} onChange={(v) => onCategory(v, '')} aria-label="Who is rated">{Object.entries(TARGET_TYPES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</Select>
+          <Select value={dept} onChange={(v) => onCategory(tt, v)} aria-label="Department of the people rated"><option value="">All departments</option>{db.departments.filter((d) => d.active !== false).map((d) => <option key={d.id} value={d.id}>Only {d.name}</option>)}</Select>
+        </div>
+        {why ? <><div className="note warn">{name} already has {why}</div><div className="row"><button className="ghost" onClick={rest.onCancel}>Cancel</button></div></> : <AddGroupSteps key={tt + dept + (working?.id || '')} tt={tt} dept={dept} {...rest} />}
+      </Card>
+    </div>
+  );
+}
+function AddGroupSteps({ tt, dept, base, onDone, onCancel }) {
   const { db, act } = useApp();
   const used = new Set(base.components.map((c) => c.group));
   const choices = (db.evaluatorGroups || []).filter((g) => g.active !== false && !used.has(g.id) && (g.id !== 'ST' || ['COLLEGE_FACULTY', 'BASICED_TEACHER', 'CI'].includes(tt)));
@@ -174,8 +199,6 @@ export function AddGroup({ tt, dept, base, onDone, onCancel }) {
   const [weights, setWeights] = useState(() => Object.fromEntries(base.components.map((c) => [c.group, c.weight ?? ''])));
   const [mine, setMine] = useState('');
   const [busy, setBusy] = useState(false);
-  const top = useRef(null);
-  useEffect(() => { top.current?.scrollIntoView({ block: 'start' }); }, []); // it opens below the card with the button
   const isNew = who === '__new';
   const label = isNew ? name.trim() || 'the new group' : groupName(db, who);
 
@@ -214,8 +237,7 @@ export function AddGroup({ tt, dept, base, onDone, onCancel }) {
   };
   const target = `${TARGET_TYPES[tt]}${dept ? ` (only ${deptName(db, dept)})` : ''}`;
   return (
-    <Card title={`Add an evaluator group for ${target}`} className="fx-add">
-      <span ref={top} />
+    <>
       <p className="muted">Answer from top to bottom. Nothing is saved until the last step, and ratings do not change until the new formula is approved and in use.</p>
 
       <h4>1. Who will rate?</h4>
@@ -269,7 +291,7 @@ export function AddGroup({ tt, dept, base, onDone, onCancel }) {
         <button disabled={busy || problems.length > 0} onClick={save}><Icon name="check" size={16} /> Save as a draft formula</button>
         <button className="ghost" onClick={onCancel}>Cancel</button>
       </div>
-    </Card>
+    </>
   );
 }
 /** Same rule as the server (addGroupWithFormula): the ID of a new group from its name. */

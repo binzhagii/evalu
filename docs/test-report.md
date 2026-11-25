@@ -1,8 +1,8 @@
 # evalU validation test report
 
-Run: 2026-11-23T21:19:26.212Z · Node v22.22.0 · code version 96e77e8 · fresh test database with the sample data
+Run: 2026-11-25T07:38:24.483Z · Node v22.22.0 · code version 80adfa0 · fresh test database with the sample data
 
-**Result: 117 of 117 test cases passed.**
+**Result: 120 of 120 test cases passed.**
 
 Each case runs automatically (`npm run test:validation`). "Actual" is measured during this run, not written by hand.
 Part A checks the computation rules on controlled data; Part B runs the real server, database and access control;
@@ -127,5 +127,8 @@ Part C checks the formula engine and its approval and versions; Part D the comme
 | TC-115 | After sending to the VPs | A VP silent for 2, 4, 5 and 8 days; approving with the switch off, then on | {"reminders":[0,1,1,2],"off":"dir","on":"faculty","facultyTold":true} | {"reminders":[0,1,1,2],"off":"dir","on":"faculty","facultyTold":true} | PASS |
 | TC-116 | Needs you | Sample data; a laboratory subject; a closed period; a plan past its review date | {"start":["Dean: the percentages are not set, so nobody gets a rating."],"lab":true,"closed":true,"plan":true} | {"start":["Dean: the percentages are not set, so nobody gets a rating."],"lab":true,"closed":true,"plan":true} | PASS |
 | TC-117 | Speed | Preparing the evaluations of 5,000 students, 300 teachers and 1,000 classes of 40, then checking them again | under 5 seconds, nothing added twice | under 5 seconds, nothing added twice | PASS |
+| TC-118 | Department of new students | A new SIT student first listed in a general education class of SBAA, then in 2 SIT classes; HR confirms; a student with most classes where the list put them | {"first":"B","asked":1,"suggested":"A","needsYou":true,"moved":1,"after":["A",0],"notAsked":0} | {"first":"B","asked":1,"suggested":"A","needsYou":true,"moved":1,"after":["A",0],"notAsked":0} | PASS |
+| TC-119 | Department of new students | Checking a list: the sections HR is asked about; HR chooses SIT for one; a later list with the student department column; an office and a student who already has a department | {"sections":["GE-1:1","GE-2:1"],"saved":0,"chosen":["A",false],"guess":["B",true],"fixed":["A",false,1],"office":false,"kept":["A",1]} | {"sections":["GE-1:1","GE-2:1"],"saved":0,"chosen":["A",false],"guess":["B",true],"fixed":["A",false,1],"office":false,"kept":["A",1]} | PASS |
+| TC-120 | Classes of other departments | A student's account saved with a class of another school, then with another department: their classes and evaluations | {"enrolled":true,"kept":true} | {"enrolled":true,"kept":true} | PASS |
 
 Limits of this report: these are developer-run functional, security and integration tests on simulated data. They do not replace the stakeholder evaluation (ISO/IEC 25010 questionnaire) or confirmation of the rules by HRMC.

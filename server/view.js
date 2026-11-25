@@ -65,7 +65,7 @@ export function viewFor(db, user) {
     departments: db.departments,
     // never the password hash; HR also gets the account details it manages
     users: db.users.map((u) => (isHR
-      ? { id: u.id, username: u.username, email: u.email, name: u.name, role: u.role, position: u.position, dept: u.dept, evaluatorGroupIds: u.evaluatorGroupIds, active: u.active, mustChangePassword: u.mustChangePassword, hasTempPassword: !!u.tempPassword && u.mustChangePassword }
+      ? { id: u.id, username: u.username, email: u.email, name: u.name, role: u.role, position: u.position, dept: u.dept, evaluatorGroupIds: u.evaluatorGroupIds, active: u.active, mustChangePassword: u.mustChangePassword, hasTempPassword: !!u.tempPassword && u.mustChangePassword, ...(u.deptGuess && { deptGuess: true }) }
       : { id: u.id, name: u.name, role: u.role, position: u.position, dept: u.dept, active: u.active })),
     evaluatorGroups: db.evaluatorGroups || [],
     sections: db.sections.map((s) => (isHR ? s : { ...s, studentIds: [] })),

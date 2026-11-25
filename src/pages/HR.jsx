@@ -3,7 +3,7 @@ import { useApp } from '../lib/store';
 import {
   STAGES, STAGE_LABEL, taskStatus, userById, sectionStats, targetsOf, deptName, groupName,
   groupsOf, isExemptSection, isTeacher, pendingApprovals, periodCovers, CLASS_TYPES, approvalRuleText, plural, policyFor, currentPolicy, activeDepts, schoolDepts, hasRule, ruleWords, ruleMark, participationForecast,
-  SEMESTERS, closesAt, deadlinePassed, inTerm, isPastClass, nextTermOf, notStarted, suggestClassType, termLabel, workingTerm, localDay, periodName, samePeriod, schoolYearNow,
+  SEMESTERS, closesAt, deadlinePassed, deptsToConfirm, inTerm, isPastClass, nextTermOf, notStarted, suggestClassType, termLabel, workingTerm, localDay, periodName, samePeriod, schoolYearNow,
 } from '../lib/logic';
 
 /** Types of class HR can pick for a section. A Clinical Instructor (Nursing) works in the clinical area or the skills lab. */
@@ -253,6 +253,56 @@ SIT-101A,Web Development,Juan Dela Cruz,jdelacruz@ubaguio.edu,20260005,Ella Baut
 SIT-102B,Database Systems,Juan Dela Cruz,jdelacruz@ubaguio.edu,20260001,Ana Reyes,20260001@s.ubaguio.edu
 SIT-102B,Database Systems,Juan Dela Cruz,jdelacruz@ubaguio.edu,20260002,Ben Santos,20260002@s.ubaguio.edu
 SIT-102B,Database Systems,Juan Dela Cruz,jdelacruz@ubaguio.edu,20260006,Felix Garcia,20260006@s.ubaguio.edu`;
+/** New students of a list without a "student department": which department would they get? HR can choose another, per section. */
+function NewStudentDepts({ out, deptOf, setDeptOf }) {
+  const { db } = useApp();
+  const { rows, bar } = usePages(out.guessed, '', 10);
+  return (
+    <div className="guess-depts">
+      <p><b>Check the department of {plural(out.guessedCount, 'new student')}.</b> The file does not say it, so they would get the department of their teacher. If a section's students belong to another department (for example, they take a general education subject here), choose it:</p>
+      <table>
+        <thead><tr><th>Section</th><th>New students</th><th>Department of these students</th></tr></thead>
+        <tbody>{rows.map((g) => (
+          <tr key={g.key}><td><b>{g.code}</b></td><td>{g.students}</td><td>
+            <Select value={deptOf[g.key] || ''} onChange={(v) => setDeptOf({ ...deptOf, [g.key]: v })} aria-label={`Department of the new students of ${g.code}`}>
+              <option value="">{deptName(db, g.dept)} (their teacher's)</option>
+              {schoolDepts(db).map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+            </Select></td></tr>
+        ))}</tbody>
+      </table>
+      {bar}
+      <p className="muted small">A student in several sections gets the department you choose for one of them. Students who already have an account keep their department.</p>
+    </div>
+  );
+}
+/** Students whose department was a guess, and whose classes say otherwise. */
+function ConfirmDepts() {
+  const { db, act } = useApp();
+  const list = deptsToConfirm(db);
+  const [choice, setChoice] = useState({});
+  const { rows, bar } = usePages(list, '', 10);
+  if (!list.length) return null;
+  const of = (x) => choice[x.user.id] || x.suggest;
+  const save = (some) => act('setStudentDepts', { list: some.map((x) => ({ userId: x.user.id, dept: of(x) })) });
+  return (
+    <Card title={`Confirm the department of ${plural(list.length, 'new student')}`} actions={list.length > 1 && <button onClick={async () => { if (await ask(`Save the department of ${list.length} students?`, 'Each student gets the department shown in the list.', { ok: 'Save all' })) save(list); }}>Save all</button>}>
+      <p className="muted">Their class list did not say the department, so they got the one of their teacher. But they have as many or more classes in another department. Choose the right one; their evaluations do not change.</p>
+      <table>
+        <thead><tr><th>Student</th><th>Now in</th><th>Their classes</th><th>Right department</th><th /></tr></thead>
+        <tbody>{rows.map((x) => (
+          <tr key={x.user.id}>
+            <td><b>{x.user.name}</b> <span className="muted small">{x.user.username}</span></td>
+            <td>{deptName(db, x.user.dept)}</td>
+            <td>{Object.entries(x.count).sort((a, b) => b[1] - a[1]).map(([d, n]) => <div key={d}>{n} in {deptName(db, d)}</div>)}</td>
+            <td><Select value={of(x)} onChange={(v) => setChoice({ ...choice, [x.user.id]: v })} aria-label={`Department of ${x.user.name}`}>{schoolDepts(db).map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</Select></td>
+            <td><button className="ghost" onClick={() => save([x])}>Save</button></td>
+          </tr>
+        ))}</tbody>
+      </table>
+      {bar}
+    </Card>
+  );
+}
 export function Classes() {
   const { db, act } = useApp();
   const [f, setF] = useState({ code: '', subject: '', facultyId: '' });
@@ -261,6 +311,7 @@ export function Classes() {
   const [busy, setBusy] = useState(false);
   const [listDept, setListDept] = useState('');
   const [drop, setDrop] = useState(false); // remove the students who are not on the list any more
+  const [deptOf, setDeptOf] = useState({}); // section → the department HR chose for its new students
   const [term, setTerm] = useState(() => workingTerm(db)); // the semester HR works on
   const terms = [...new Set([workingTerm(db), nextTermOf(workingTerm(db)), ...db.sections.map((s) => s.term).filter(Boolean), term])].filter(Boolean).sort().reverse();
   const [msg, setMsg] = useState('');
@@ -281,6 +332,7 @@ export function Classes() {
       <div className="note"><b>Each semester, import the class list.</b> Choose the semester and department, check the file, then import it. Evaluations are created by themselves. Import a newer list any time: new students are added, and you can remove the ones who dropped. Internship, practicum, and field trip subjects are not evaluated.</div>
       <div className="row"><label className="inline"><b>Semester</b> <Select value={term} onChange={(v) => { setTerm(v); setOut(null); }} aria-label="Semester">{terms.map((t) => <option key={t} value={t}>{termLabel(t)}{t === workingTerm(db) ? ' (now)' : ''}</option>)}{db.sections.some((s) => !s.term) && <option value="__none">No semester (from before)</option>}</Select></label>
         <span className="muted">{plural(ofTerm.length, 'class', 'classes')} in this semester{isPastClass(db, { term }) ? ' · over, kept for the records' : ''}</span></div>
+      <ConfirmDepts />
       {suggested.length > 0 && (
         <Card title={`${plural(suggested.length, 'class looks', 'classes look')} like laboratory or clinical`} actions={<button onClick={() => act('applyClassTypes', { sectionIds: suggested.map((s) => s.id) })}>Set them all</button>}>
           <p className="muted">The type decides which form the students answer. These come from the subject names; uncommon ones can be set one by one below.</p>
@@ -291,7 +343,7 @@ export function Classes() {
       <Card title="Import a class list">
         <p className="muted">Choose the class list file from the Registrar/ARC, or paste it below. It must be a CSV file (in Excel: <b>File → Save As → CSV</b>). One student per line. If the first row has the column names, the columns can be in any order:</p>
         <p><code>section code, subject, teacher name, teacher email, student ID, student name, student UB email</code> <span className="muted">and, if you have them: <code>subject code</code>, <code>type of class</code>, <code>student department</code></span></p>
-        <p className="muted">Names like "Dela Cruz, Juan" are read when they are in quotes (Excel does this by itself). The same section can have several subjects and teachers, and students of other departments can be in a class. Classes that don't exist yet are created. <b>Teachers and students who don't have an account yet get one automatically</b> in the department you choose. A student's first password is their <b>student ID</b>; a teacher's is the part of their email before the @ (for example <code>jdelacruz</code>). Everyone must change it when they first sign in. People who already have an account are just added to the class. Rows with a problem are listed and skipped.</p>
+        <p className="muted">Names like "Dela Cruz, Juan" are read when they are in quotes (Excel does this by itself). The same section can have several subjects and teachers, and students of other departments can be in a class. Classes that don't exist yet are created. <b>Teachers and students who don't have an account yet get one automatically.</b> New teachers are put in the department you choose. New students get the <code>student department</code> of the file; without it, the one of their teacher, and you can change that after checking the file. A student's first password is their <b>student ID</b>; a teacher's is the part of their email before the @ (for example <code>jdelacruz</code>). Everyone must change it when they first sign in. People who already have an account are just added to the class. Rows with a problem are listed and skipped.</p>
         <div className="row">
           <label className="inline">Department of this list
             <Select value={listDept} onChange={setListDept}><option value="">Choose…</option>{schoolDepts(db).map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</Select></label>
@@ -303,8 +355,8 @@ export function Classes() {
         <textarea rows={6} value={csv} onChange={(e) => { setCsv(e.target.value); setOut(null); }} placeholder={SAMPLE_CLASS_LIST} />
         <div className="row">
           {/* step 1: check the file (nothing is saved); step 2: import */}
-          <button className="ghost" disabled={busy || !csv.trim() || !listDept} title={listDept ? '' : 'Choose the department first'} onClick={async () => { setBusy(true); const r = await act('importClassList', { csv, dept: listDept, term, preview: true }); setBusy(false); if (r) setOut(r); }}>1. Check file</button>
-          <button disabled={busy || !csv.trim() || !listDept || !out?.preview || term === '__none'} title={out?.preview ? '' : 'Check the file first'} onClick={async () => { if (out.errorCount && !(await ask('Import with problem rows?', `${out.errorCount} row(s) have a problem and will be skipped. The other rows are imported.`, { ok: 'Import the good rows' }))) return; setBusy(true); const r = await act('importClassList', { csv, dept: listDept, term, drop }); setBusy(false); setDrop(false); if (r) { setOut(r); if (!r.errorCount) setCsv(''); } }}>{busy ? 'Working… (big lists can take a minute)' : '2. Import class list'}</button>
+          <button className="ghost" disabled={busy || !csv.trim() || !listDept} title={listDept ? '' : 'Choose the department first'} onClick={async () => { setBusy(true); const r = await act('importClassList', { csv, dept: listDept, term, preview: true }); setBusy(false); setDeptOf({}); if (r) setOut(r); }}>1. Check file</button>
+          <button disabled={busy || !csv.trim() || !listDept || !out?.preview || term === '__none'} title={out?.preview ? '' : 'Check the file first'} onClick={async () => { if (out.errorCount && !(await ask('Import with problem rows?', `${out.errorCount} row(s) have a problem and will be skipped. The other rows are imported.`, { ok: 'Import the good rows' }))) return; setBusy(true); const r = await act('importClassList', { csv, dept: listDept, term, drop, deptOf }); setBusy(false); setDrop(false); setDeptOf({}); if (r) { setOut(r); if (!r.errorCount) setCsv(''); } }}>{busy ? 'Working… (big lists can take a minute)' : '2. Import class list'}</button>
           {csv.trim() && <span className="muted">{csv.trim().split(/\r?\n/).filter((l) => l.trim() && !/^\s*section/i.test(l)).length} row(s) in the file</span>}</div>
         {out?.preview && (
           <div className={`note ${out.errorCount ? 'warn' : 'ok'}`}>
@@ -313,11 +365,13 @@ export function Classes() {
             {out.errorCount > 0 ? <> <b>{out.errorCount} row(s) have a problem</b> and would be skipped:</> : ' No problems found.'}
             {(out.errors.length > 0 || out.warnings?.length > 0) && <ul>{out.errors.map((e, i) => <li key={'e' + i}>{e}</li>)}{out.warnings.map((w, i) => <li key={'w' + i} className="muted">{w}</li>)}</ul>}
             {out.droppedCount > 0 && <div><label className="inline"><input type="checkbox" checked={drop} onChange={(e) => setDrop(e.target.checked)} /> <b>Remove the {plural(out.droppedCount, 'student')} who {out.droppedCount === 1 ? 'is' : 'are'} not on this list any more</b> (dropped). Their answers, if any, are kept.</label><details className="source"><summary>Show who</summary><ul>{out.dropped.map((d) => <li key={d}>{d}</li>)}</ul></details></div>}
+            {out.corrected > 0 && <div><b>{plural(out.corrected, 'student')}</b> who had their teacher's department would get the one in this file.</div>}
+            {out.guessedCount > 0 && <NewStudentDepts key={csv} out={out} deptOf={deptOf} setDeptOf={setDeptOf} />}
             {out.notInFile?.length > 0 && <div className="small muted">Classes of this department that are not in the file (nothing happens to them): {out.notInFile.join('; ')}</div>}
             {out.newClasses?.length > 0 && <div className="small muted">New classes: {out.newClasses.join('; ')}</div>}
           </div>
         )}
-        {out && !out.preview && <div className={`note ${out.errorCount ? 'warn' : 'ok'}`}><b>Imported.</b> {out.created} class section(s) created, <b>{out.teachers || 0} teacher account(s)</b> and <b>{out.accounts || 0} student account(s) created</b>, {out.enrolled} enrolment(s) added{out.duplicates ? `, ${out.duplicates} duplicate row(s) counted once` : ''}.{(out.accounts > 0 || out.teachers > 0) && ' New students sign in with their UB email and their student ID as the password; new teachers with their UB email and the part before the @.'}{out.evaluations && <> <b>{out.evaluations.added} evaluation(s) created</b>{out.evaluations.removed ? <> and {out.evaluations.removed} removed</> : ''} by themselves.</>}{out.errorCount > 0 && <> {out.errorCount} row(s) skipped:<ul>{out.errors.map((e, i) => <li key={i}>{e}</li>)}</ul></>}</div>}
+        {out && !out.preview && <div className={`note ${out.errorCount ? 'warn' : 'ok'}`}><b>Imported.</b> {out.created} class section(s) created, <b>{out.teachers || 0} teacher account(s)</b> and <b>{out.accounts || 0} student account(s) created</b>, {out.enrolled} enrolment(s) added{out.duplicates ? `, ${out.duplicates} duplicate row(s) counted once` : ''}.{(out.accounts > 0 || out.teachers > 0) && ' New students sign in with their UB email and their student ID as the password; new teachers with their UB email and the part before the @.'}{out.corrected > 0 && <> The department of {plural(out.corrected, 'student')} was corrected.</>}{out.evaluations && <> <b>{out.evaluations.added} evaluation(s) created</b>{out.evaluations.removed ? <> and {out.evaluations.removed} removed</> : ''} by themselves.</>}{out.errorCount > 0 && <> {out.errorCount} row(s) skipped:<ul>{out.errors.map((e, i) => <li key={i}>{e}</li>)}</ul></>}</div>}
       </Card>
       <Card title="Add a class section">
         <div className="row">

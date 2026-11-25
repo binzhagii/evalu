@@ -82,6 +82,8 @@ export function MyAccount() {
 /* ---------------- HR: accounts ---------------- */
 const EMPTY = { name: '', username: '', email: '', role: 'ST', position: 'student', dept: '', sectionIds: [], evaluatorGroupIds: [] };
 
+const ClassBox = ({ s, on, onChange, where }) => <label className="inline"><input type="checkbox" checked={on} onChange={() => onChange(s.id)} /> {s.code} <span className="muted small">{s.subject}{where ? ` · ${where}` : ''}</span></label>;
+
 function AccountForm({ initial, onSave, onCancel, saveLabel }) {
   const { db } = useApp();
   const [f, setF] = useState(initial);
@@ -91,7 +93,10 @@ function AccountForm({ initial, onSave, onCancel, saveLabel }) {
     setF((x) => ({ ...x, role, position, dept: needsDept(role) ? x.dept : '', sectionIds: role === 'ST' ? x.sectionIds : [], evaluatorGroupIds: defaultEvaluatorGroups(role, position) }));
   };
   // this semester's classes of the department, and the classes of other departments they are in (general education)
-  const classes = db.sections.filter((s) => !isPastClass(db, s) && (s.dept === f.dept || f.sectionIds.includes(s.id)));
+  const [other, setOther] = useState(''); // another department whose classes are shown too
+  const now = db.sections.filter((s) => !isPastClass(db, s));
+  const classes = now.filter((s) => s.dept === f.dept || f.sectionIds.includes(s.id));
+  const otherClasses = other ? now.filter((s) => s.dept === other && !classes.includes(s)) : [];
   // Clinical Instructors are only in the School of Nursing
   const chosenDept = db.departments.find((d) => d.id === f.dept);
   const positions = Object.entries(POSITIONS[f.role]).filter(([k]) => k !== 'ci' || !chosenDept || isNursingDept(chosenDept) || f.position === 'ci');
@@ -120,7 +125,7 @@ function AccountForm({ initial, onSave, onCancel, saveLabel }) {
         <label>Position<br /><Select value={f.position} onChange={setPosition}>{positions.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</Select></label>
         {needsDept(f.role) && (
           <label>Department<br />
-            <Select value={f.dept} onChange={(v) => setF((x) => ({ ...x, dept: v, sectionIds: [] }))}>
+            <Select value={f.dept} onChange={(v) => setF((x) => ({ ...x, dept: v }))}>
               <option value="">Choose…</option>
               {deptChoices.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
             </Select>
@@ -139,9 +144,14 @@ function AccountForm({ initial, onSave, onCancel, saveLabel }) {
       {f.role === 'ST' && f.dept && (
         <div className="row">
           <span className="muted">Classes:</span>
-          {classes.length ? classes.map((s) => (
-            <label key={s.id} className="inline"><input type="checkbox" checked={f.sectionIds.includes(s.id)} onChange={() => toggle(s.id)} /> {s.code} <span className="muted small">{s.subject}</span></label>
-          )) : <span className="muted">No classes in this department this semester.</span>}
+          {classes.length ? classes.map((s) => <ClassBox key={s.id} s={s} on={f.sectionIds.includes(s.id)} onChange={toggle} where={s.dept !== f.dept && deptName(db, s.dept)} />) : <span className="muted">No classes in this department this semester.</span>}
+        </div>
+      )}
+      {f.role === 'ST' && f.dept && (
+        <div className="row">
+          <label className="inline">Add a class of another department <Select value={other} onChange={setOther} aria-label="Another department's classes"><option value="">Choose the department…</option>{schoolDepts(db).filter((d) => d.id !== f.dept && now.some((s) => s.dept === d.id)).map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</Select></label>
+          {otherClasses.map((s) => <ClassBox key={s.id} s={s} on={false} onChange={toggle} />)}
+          {other && !otherClasses.length && <span className="muted">All of its classes are already chosen above.</span>}
         </div>
       )}
       <div className="row">

@@ -139,6 +139,7 @@ section code,subject,teacher name,teacher email,student ID,student name,student 
 
 - Classes that don't exist yet are created. If the first row names the columns, they can be in any order; `subject code`, `type of class` and `student department` are optional. Names with a comma ("Dela Cruz, Juan") are read when they are in quotes.
 - Importing a newer list adds the new students and lists the ones who **dropped**, so you can remove them. Students of other departments can be in a class.
+- A new student gets the `student department` of the file. Without it, they get the department of their teacher: after **Check file**, HR can choose another one per section. If their classes later say otherwise, evalU asks HR to confirm (**Needs you** and **Classes & students**).
 - evalU suggests the **type of class** (laboratory, clinical) from the subject names.
 - **Students without an account get one automatically.** Their first password is their **student ID**, and they must change it at the first sign-in. Students who already have an account are just added to the class, so the same student in two classes is created once.
 - **Teachers without an account get one too**, as Faculty in the chosen department. Their first password is the part of their email before the @ (for example `jdelacruz`).

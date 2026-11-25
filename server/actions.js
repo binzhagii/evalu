@@ -123,6 +123,12 @@ function checkNewPassword(pw, u) {
   return pw;
 }
 const account = (db, id) => find(db.users, id, 'Account');
+/** A department students can belong to (not an office, not deactivated). */
+function schoolDept(db, id) {
+  const d = find(db.departments, id, 'Department');
+  if (d.kind === 'office' || d.active === false) fail(`Students can't be in ${d.name}.`);
+  return d;
+}
 /** A user by username or email (for CSV imports). */
 const byLogin = (db, v) => {
   const k = String(v || '').trim().toLowerCase();
@@ -369,6 +375,7 @@ export const actions = {
       // someone already evaluated in an open period keeps their department and position until it is closed
       if ((next.dept !== u.dept || next.role !== u.role || next.position !== u.position) && evaluatedNow(db, [u.id])) fail(`${u.name} was already evaluated in an open period, so their department and position can't change until it is closed.`, 409);
       Object.assign(u, next);
+      delete u.deptGuess; // HR saved it: it is not a guess any more
       for (const s of db.sections) if (s.facultyId === u.id && !isPastClass(db, s)) s.dept = u.dept;
       enroll(db, u, sectionIds ?? db.sections.filter((s) => s.studentIds.includes(u.id)).map((s) => s.id));
     },
@@ -590,7 +597,7 @@ export const actions = {
    */
   importClassList: {
     roles: HR,
-    async run(db0, { csv, dept, term, preview, drop }) {
+    async run(db0, { csv, dept, term, preview, drop, deptOf }) {
       // preview: check the whole file on a copy and report what would happen; nothing is saved
       const db = preview ? structuredClone(db0) : db0;
       if (typeof csv !== 'string' || !csv.trim()) fail('Paste or choose the class list first.');
@@ -598,11 +605,14 @@ export const actions = {
       const listDept = dept ? find(db.departments, dept, 'Department') : null; // where new teachers (and so their classes) go
       if (listDept && (listDept.kind === 'office' || listDept.active === false)) fail(`${listDept.name} has no classes.`);
       const t = classTerm(db, term);
-      const r = importClasses(db, { csv, listDept, term: t, drop: drop === true });
+      // the department HR chose for the new students of a section (the file has none)
+      const chosen = Object.fromEntries(Object.entries(deptOf && typeof deptOf === 'object' ? deptOf : {}).filter(([, v]) => v));
+      for (const v of Object.values(chosen)) schoolDept(db, v);
+      const r = importClasses(db, { csv, listDept, term: t, drop: drop === true, deptOf: chosen });
       const suggested = db.sections.filter((s) => (s.term || null) === t && suggestClassType(db, s)).length;
       const out = { term: t, rows: r.rows, created: r.created, enrolled: r.enrolled, accounts: r.fresh.length, teachers: r.freshTeachers.length, existingStudents: r.existingStudents, duplicates: r.duplicates,
         dropped: r.dropped.slice(0, 100).map((x) => `${x.name} · ${x.code} ${x.subject}`), droppedCount: r.dropped.length, notInFile: r.notInFile.slice(0, 50).map((s) => `${s.code} · ${s.subject}`), suggested,
-        warnings: r.warnings.slice(0, 50), errors: r.errors.slice(0, 50), errorCount: r.errors.length };
+        warnings: r.warnings.slice(0, 50), errors: r.errors.slice(0, 50), errorCount: r.errors.length, corrected: r.corrected, guessed: r.guessed.slice(0, 500), guessedCount: r.guessedCount };
       if (preview) return { ...out, preview: true, newClasses: db.sections.filter((x) => !db0.sections.some((y) => y.id === x.id)).map((x) => `${x.code} · ${x.subject} (${x.studentIds.length} students)`).slice(0, 50) };
       // first password = the student ID / the teacher's username (they must change it at the first sign-in)
       const all = [...r.freshTeachers, ...r.fresh];
@@ -610,6 +620,23 @@ export const actions = {
         await Promise.all(all.slice(i, i + 16).map(async (u) => { u.passwordHash = await hashPassword(u.username); u.tempPassword = encryptText(u.username); }));
       }
       return out;
+    },
+  },
+  /** The department of students whose department was taken from their teacher (no department in the class list). */
+  setStudentDepts: {
+    roles: HR,
+    run(db, { list }) {
+      if (!Array.isArray(list) || !list.length || list.length > 10000) fail('Choose the students first.');
+      let moved = 0;
+      for (const { userId, dept } of list) {
+        const u = account(db, userId);
+        if (u.role !== 'ST') fail(`${u.name} is not a student.`);
+        const d = schoolDept(db, dept);
+        if (u.dept !== d.id) moved++;
+        u.dept = d.id;
+        delete u.deptGuess;
+      }
+      return { confirmed: list.length, moved };
     },
   },
   /** Deans, program chairs, office heads, staff…: one row per person (name, UB email, position, department or office). */
@@ -1448,6 +1475,7 @@ export function describeAction(name, args, db, result) {
   // before → after values, so every rule change can be traced
   if (name === 'setPolicy' && result?.changed) return `policy version ${result.version}: ${result.changed.map((c) => `${c.field} ${JSON.stringify(c.from)} → ${JSON.stringify(c.to)}`).join('; ')} · reason: ${args.reason}${result.kept ? ' · open periods with answers keep their rules; it starts with the next period' : ''}`;
   if (name === 'importStaff') return result?.preview ? `checked a staff list (not saved): ${result.rows} rows, ${result.errorCount} error(s)` : `imported a staff list: ${result?.created} account(s), ${result?.errorCount} row(s) skipped`;
+  if (name === 'setStudentDepts') return `department of ${result?.confirmed} student(s) confirmed, ${result?.moved} moved`;
   if (name === 'applyClassTypes') return `${result?.changed} class(es) got the type their subject suggests`;
   if (name === 'setPeriodDeadline') return `period: ${periodById(db, args.periodId)?.name} · deadline ${result?.from} → ${result?.to}`;
   if (name === 'moveDepartment') return `${result?.people} account(s) and ${result?.classes} class(es): ${result?.from} → ${result?.to}`;

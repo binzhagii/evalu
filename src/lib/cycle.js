@@ -1,7 +1,7 @@
 // The evaluation cycle: what HR does each semester, in order, and what is already done (from the real data).
 // Also where a notification leads. Used by the Overview and Notifications pages.
 import {
-  TARGET_TYPES, activeDepts, closesAt, deadlinePassed, notStarted, inTerm, suggestClassType, termLabel, termOf, today, workingTerm, computeAll, deptWarnings, currentPolicy, expectedAssignments, formulaFor, hasFinal, isEvaluatee, isExemptSection, methodOf, needsPlan,
+  TARGET_TYPES, activeDepts, closesAt, deptsToConfirm, deadlinePassed, notStarted, inTerm, suggestClassType, termLabel, termOf, today, workingTerm, computeAll, deptWarnings, currentPolicy, expectedAssignments, formulaFor, hasFinal, isEvaluatee, isExemptSection, methodOf, needsPlan,
   participationForecast, pendingApprovals, periodCovers, plural, policyFor, stageAtLeast, targetType, toolName, toolProblems, toolStatus,
 } from './logic.js';
 
@@ -125,6 +125,8 @@ export function needsYou(db) {
   const types = classes.filter((s) => suggestClassType(db, s)).length, empty = classes.filter((s) => !s.studentIds.length).length;
   if (db.periods.some((p) => p.status === 'open' && termOf(p.name) === term) && !classes.length) add(`No class list for ${termLabel(term)} yet.`, 'classes', 'Classes & students');
   if (types) add(`${plural(types, 'class looks', 'classes look')} like laboratory or clinical: confirm the type.`, 'classes', 'Classes & students');
+  const unsure = deptsToConfirm(db).length;
+  if (unsure) add(`${plural(unsure, 'new student')} may be in the wrong department: confirm it.`, 'classes', 'Classes & students');
   if (empty) add(`${plural(empty, 'class has', 'classes have')} no students.`, 'classes', 'Classes & students');
   for (const d of activeDepts(db)) for (const w of deptWarnings(db, d)) add(`${d.name}: ${w}`, 'departments', 'Departments & offices');
   const due = (db.plans || []).filter((x) => x.status === 'open' && x.reviewBy < today()).length;
