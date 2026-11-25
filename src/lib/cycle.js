@@ -89,7 +89,7 @@ export function linkFor(n, db, user, pages) {
     case 'rel': return b === 'dir' ? to(['reports'], inPeriod) : b === 'head' ? to(['dept'], inPeriod) : to(['results'], inPeriod);
     case 'ret': case 'appr': return to(['periods'], inPeriod);
     case 'fx': { const f = (db.formulas || []).find((x) => x.id === a); return to(['formulas'], f ? { tt: f.targetType, dept: f.dept || '' } : {}); }
-    case 'dp': case 'dpu': case 'dpc': return to(['results']);
+    case 'dp': case 'dpu': case 'dpc': return to(['results'], { tab: 'plans' });
     case 'dpa': { const plan = (db.plans || []).find((x) => x.id === a); return to(['reports', 'dept'], { ...(plan && { periodId: plan.periodId }), tab: 'plans' }); }
     case 'rq': return to(['dept'], inPeriod);
     case 'rem': case 'ext': return to(['tasks']);
@@ -99,7 +99,7 @@ export function linkFor(n, db, user, pages) {
     case 'remdept': return to(['monitor']);
     case 'remhr': return to(['assign'], inPeriod);
     case 'thr': return isEvaluatee(user) && user.role !== 'HR' && b !== 'dept' ? to(['results']) : to(user.role === 'HR' ? ['reports'] : ['dept', 'monitor'], { ...inPeriod, tab: 'section' });
-    case 'part': case 'fc': case 'fcd': case 'fch': return what === 'fc' || (user.position === 'faculty' || user.position === 'ci') ? to(['results']) : to(['monitor']);
+    case 'part': case 'fc': case 'fcd': case 'fch': return what === 'fc' || (user.position === 'faculty' || user.position === 'ci') ? to(['results'], { tab: 'classes' }) : to(['monitor'], { tab: 'class' });
     default: return null;
   }
 }
@@ -123,12 +123,12 @@ export function needsYou(db) {
   }
   const term = workingTerm(db), classes = db.sections.filter((s) => s.term === term && !isExemptSection(s));
   const types = classes.filter((s) => suggestClassType(db, s)).length, empty = classes.filter((s) => !s.studentIds.length).length;
-  if (db.periods.some((p) => p.status === 'open' && termOf(p.name) === term) && !classes.length) add(`No class list for ${termLabel(term)} yet.`, 'classes', 'Classes & students');
-  if (types) add(`${plural(types, 'class looks', 'classes look')} like laboratory or clinical: confirm the type.`, 'classes', 'Classes & students');
+  if (db.periods.some((p) => p.status === 'open' && termOf(p.name) === term) && !classes.length) add(`No class list for ${termLabel(term)} yet.`, 'classes', 'Classes & students', { tab: 'import' });
+  if (types) add(`${plural(types, 'class looks', 'classes look')} like laboratory or clinical: confirm the type.`, 'classes', 'Classes & students', { tab: 'confirm' });
   const unsure = deptsToConfirm(db).length;
-  if (unsure) add(`${plural(unsure, 'new student')} may be in the wrong department: confirm it.`, 'classes', 'Classes & students');
+  if (unsure) add(`${plural(unsure, 'new student')} may be in the wrong department: confirm it.`, 'classes', 'Classes & students', { tab: 'confirm' });
   if (empty) add(`${plural(empty, 'class has', 'classes have')} no students.`, 'classes', 'Classes & students');
-  for (const d of activeDepts(db)) for (const w of deptWarnings(db, d)) add(`${d.name}: ${w}`, 'departments', 'Departments & offices');
+  for (const d of activeDepts(db)) for (const w of deptWarnings(db, d)) add(`${d.name}: ${w}`, 'departments', 'Departments & offices', { tab: d.kind === 'office' ? 'office' : 'dept' });
   const due = (db.plans || []).filter((x) => x.status === 'open' && x.reviewBy < today()).length;
   if (due) add(`${plural(due, 'development plan is', 'development plans are')} due for review.`, 'reports', 'View & print results', { tab: 'plans' });
   return out;

@@ -18,7 +18,7 @@ const DONE = {
   importPastResults: 'Earlier records imported', deletePastResult: 'Record deleted',
   createUser: 'Account created', updateUser: 'Changes saved', resetPassword: 'Password reset', setUserActive: 'Account updated',
   addDepartment: 'Department added', updateDepartment: 'Department saved', deleteDepartment: 'Department deleted',
-  addUbDepartments: 'UB departments added', addEvaluatorGroup: 'Evaluator group added',
+  addUbDepartments: 'UB departments added', addEvaluatorGroup: 'Evaluator group created', followAllDepartments: 'Sent to the VP for approval',
   createForm: 'Draft created', reviseForm: 'Draft created', useForm: 'Tool saved', unscheduleForm: 'Back to draft', discardForm: 'Draft discarded', renameForm: 'Name saved',
   addFormItem: 'Indicator added', addNewFormItem: 'Indicator added', editFormItem: 'Indicator saved', removeFormItem: 'Indicator removed',
   addFormPart: 'Part added', renameFormPart: 'Part renamed', removeFormPart: 'Part removed', addGroupWithFormula: 'Evaluator group added to a draft', updateEvaluatorGroup: 'Evaluator group saved', deleteEvaluatorGroup: 'Evaluator group removed', restoreEvaluatorGroup: 'Evaluator group restored',

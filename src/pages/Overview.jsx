@@ -3,7 +3,7 @@ import { useApp } from '../lib/store';
 import { STAGES, taskStatus, sectionStats, userById, computeAll, canSeeAll, policyFor, hasRule, ruleMark, hasFinal, pendingApprovals, groupName, participationForecast } from '../lib/logic';
 import { cyclePeriod, cycleSteps, needsYou, nextStep } from '../lib/cycle';
 import { ApprovalPanel } from './Reports';
-import { Card, Stat, Stats, Meter, Badge, Empty, PeriodPicker, Icon, useNav, fmt, pct, dueText, daysUntil, ForecastBadge } from '../ui';
+import { Card, Tabs, useTab, Stat, Stats, Meter, Badge, Empty, PeriodPicker, Icon, useNav, fmt, pct, dueText, daysUntil, ForecastBadge } from '../ui';
 
 const STAGE_SHORT = { hr: 'HR only', dir: 'VPs', faculty: 'Faculty' };
 
@@ -62,8 +62,10 @@ function CycleSteps({ db, go }) {
   );
 }
 
+const HOME_TABS = [['todo', 'What to do'], ['progress', 'Progress'], ['release', 'Results release']];
 export function HROverview() {
   const { db } = useApp();
+  const [tab, setTab] = useTab(HOME_TABS, 'todo');
   const go = useNav();
   const open = db.periods.filter((p) => p.status === 'open');
   const openIds = new Set(open.map((p) => p.id));
@@ -78,10 +80,10 @@ export function HROverview() {
 
   return (
     <>
-      <NeedsYou db={db} go={go} />
-      <CycleSteps db={db} go={go} />
+      <Tabs tabs={HOME_TABS} value={tab} onChange={setTab} />
+      {tab === 'todo' && <><NeedsYou db={db} go={go} /><CycleSteps db={db} go={go} /></>}
 
-      <Stats>
+      {tab === 'progress' && <><Stats>
         <Stat icon="check" label="Responses received" value={tasks.length ? pct(done / tasks.length) : '—'} sub={`${done} of ${tasks.length} evaluations in open periods`} tone="good" />
         <Stat icon="clock" label="Late evaluations" value={overdue} sub={overdue ? 'Extend the deadline if people need more time' : 'Nothing overdue'} tone={overdue ? 'bad' : ''} />
         <Stat icon="chart" label="Classes needing more answers" value={`${low.length} / ${classes.length}`} sub="May not count if the period closed now" tone={low.length ? 'warn' : ''} />
@@ -125,9 +127,9 @@ export function HROverview() {
             </ul>
           )}
         </Card>
-      </div>
+      </div></>}
 
-      <Card title="Results release" actions={<button className="ghost" onClick={() => go('periods')}>Manage</button>}>
+      {tab === 'release' && <Card title="Results release" actions={<button className="ghost" onClick={() => go('periods')}>Manage</button>}>
         <table>
           <thead><tr><th>Period</th><th>Status</th><th>Who can see results</th><th>VP approval</th></tr></thead>
           <tbody>
@@ -141,7 +143,7 @@ export function HROverview() {
             ))}
           </tbody>
         </table>
-      </Card>
+      </Card>}
     </>
   );
 }

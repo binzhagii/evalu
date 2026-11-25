@@ -891,6 +891,38 @@ try {
     await x.run('updateUser', { ...acc, dept: 'C', sectionIds: [...mine, sec.id] });
     return { enrolled, kept: [...mine, sec.id].every((id) => x.db.sections.find((s) => s.id === id).studentIds.includes(st.id)) };
   });
+  await tc('TC-121', "A department's own formula", 'SIT gets its own; all departments change; SIT asks to follow them again; the VP approves; HR starts it; all departments change again. A closed period keeps its formula', { own: [60, 40], waits: 60, noEdit: false, follows: 50, again: 45, period: true, twice: false, history: ['archived', 'archived'] }, async () => {
+    const x = lab(), C = (a, b, c) => [['ST', a, 'SECTION_AVERAGE'], ['DEAN', b, 'AVERAGE'], ['CHAIR', c, 'AVERAGE']].map(([group, weight, aggregation]) => ({ group, weight, aggregation }));
+    const st = (d) => L.formulaFor(x.db, null, 'COLLEGE_FACULTY', d).components[0].weight;
+    await x.activate('COLLEGE_FACULTY', 'A', C(60, 20, 20)); const own = [st('A'), st('B')];
+    const closed = x.db.periods.find((p) => p.status === 'closed'), kept = JSON.stringify(closed.formulas || {});
+    await x.activate('COLLEGE_FACULTY', null, C(50, 30, 20));
+    const r = await x.run('followAllDepartments', { targetType: 'COLLEGE_FACULTY', dept: 'A', basis: 'Validation test' });
+    const waits = st('A'), noEdit = (await x.run('saveFormulaDraft', { id: r.id, config: {} })).ok;
+    await x.run('approveFormula', { id: r.id }, VPU); await x.run('activateFormula', { id: r.id, when: 'now' }); const follows = st('A');
+    await x.activate('COLLEGE_FACULTY', null, C(45, 35, 20));
+    return { own, waits, noEdit, follows, again: st('A'), period: JSON.stringify(x.db.periods.find((p) => p.id === closed.id).formulas || {}) === kept, twice: (await x.run('followAllDepartments', { targetType: 'COLLEGE_FACULTY', dept: 'A', basis: 'Validation test' })).ok, history: x.db.formulas.filter((f) => f.dept === 'A').map((f) => f.status) };
+  });
+  await tc('TC-122', "A department's own formula", 'Follow again: with the next period; in an open period nobody answered in; returned by the VP, then discarded', { before: 60, newPeriod: 40, openPeriod: [60, 40], returned: 'rejected', left: 'active' }, async () => {
+    const C = [['ST', 60, 'SECTION_AVERAGE'], ['DEAN', 20, 'AVERAGE'], ['CHAIR', 20, 'AVERAGE']].map(([group, weight, aggregation]) => ({ group, weight, aggregation }));
+    const start = async () => { const x = lab(); for (const t of x.db.tasks) if (t.periodId === 'p4') t.response = null; await x.activate('COLLEGE_FACULTY', 'A', C); return x; };
+    const ask = async (x) => { const r = await x.run('followAllDepartments', { targetType: 'COLLEGE_FACULTY', dept: 'A', basis: 'Validation test' }); return r.id; };
+    const st = (x, p) => L.formulaFor(x.db, p, 'COLLEGE_FACULTY', 'A').components[0].weight;
+    const a = await start(), ia = await ask(a); await a.run('approveFormula', { id: ia }, VPU); await a.run('activateFormula', { id: ia, when: 'next' }); const before = st(a, null);
+    const p = await a.run('createPeriod', { name: 'AY 2030-2031 1st Semester', deadline: '2099-01-01' });
+    const b = await start(), ib = await ask(b), open1 = st(b, 'p4'); await b.run('approveFormula', { id: ib }, VPU); await b.run('activateFormula', { id: ib, when: 'now' });
+    const c = await start(), ic = await ask(c); await c.run('rejectFormula', { id: ic, reason: 'Keep it' }, VPU); const returned = c.db.formulas.find((f) => f.id === ic).status; await c.run('deleteFormulaDraft', { id: ic });
+    return { before, newPeriod: st(a, p.id), openPeriod: [open1, st(b, 'p4')], returned, left: c.db.formulas.find((f) => f.dept === 'A').status };
+  });
+  await tc('TC-123', 'Evaluator groups', 'A new group with members, added to a formula later; without members; a department formula where nobody is in the category, an office', { made: true, idle: 0, members: true, added: true, empty: false, nobody: false, office: false }, async () => {
+    const x = lab(), r = await x.run('addEvaluatorGroup', { name: 'Peers', positions: ['faculty'], userIds: ['dean_a'] }); L.syncOpenPeriods(x.db);
+    const idle = x.db.tasks.filter((t) => t.group === r.id).length, members = L.groupsOf(x.db, x.db.users.find((u) => u.id === 'fac_a1')).includes(r.id) && L.groupsOf(x.db, x.db.users.find((u) => u.id === 'dean_a')).includes(r.id);
+    const g = await x.run('addGroupWithFormula', { targetType: 'COLLEGE_FACULTY', group: r.id, weights: { ST: 30, DEAN: 30, CHAIR: 20, [r.id]: 20 } });
+    const empty = await x.run('addEvaluatorGroup', { name: 'Nobody', positions: [], userIds: [] });
+    const cfg = { name: 'x', method: 'WEIGHTED_AVERAGE', components: [{ group: 'ST', weight: 100, aggregation: 'SECTION_AVERAGE' }], missing: 'REWEIGHT', minGroups: 1, rounding: { decimals: 2, method: 'HALF_UP' } };
+    const basic = x.db.departments.find((d) => d.kind === 'basic').id; await x.run('addDepartment', { name: 'Registrar', kind: 'office' });
+    return { made: r.ok, idle, members, added: g.ok && !!g.toolId, empty: empty.ok, nobody: (await x.run('saveFormulaDraft', { targetType: 'COLLEGE_FACULTY', dept: basic, config: cfg })).ok, office: (await x.run('saveFormulaDraft', { targetType: 'COLLEGE_FACULTY', dept: x.db.departments.at(-1).id, config: cfg })).ok };
+  });
 } finally {
   server.close();
 }

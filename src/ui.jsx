@@ -167,6 +167,33 @@ export function Select({ value, onChange, children, ...p }) {
   );
 }
 
+/** The bar above a page with several parts: one part is shown at a time. tabs: [[key, label]]. */
+export function Tabs({ tabs, value, onChange, label = 'Parts of this page' }) {
+  if (tabs.length < 2) return null;
+  return (
+    <div className="tabs no-print" role="tablist" aria-label={label}>
+      {tabs.map(([k, l]) => <button key={k} role="tab" aria-selected={value === k} className={value === k ? 'on' : ''} onClick={() => onChange(k)}>{l}</button>)}
+    </div>
+  );
+}
+
+/** The part that is open. Another page (a notification, "Needs you") can open one with { tab }. */
+export function useTab(tabs, first) {
+  const args = useNavArgs();
+  const [k, setK] = useState(tabs.some(([x]) => x === args.tab) ? args.tab : first);
+  return [tabs.some(([x]) => x === k) ? k : tabs[0][0], setK];
+}
+/** One job on its own screen, with a way back. */
+export function Screen({ title, backTo, onBack, children }) {
+  useEffect(() => { window.scrollTo(0, 0); }, []);
+  return (
+    <>
+      <button className="ghost back" onClick={onBack}>‹ {backTo}</button>
+      <Card title={title}>{children}</Card>
+    </>
+  );
+}
+
 /** Newest first: new records are added at the end, so show the list backwards. */
 export const newestFirst = (list) => [...list].reverse();
 

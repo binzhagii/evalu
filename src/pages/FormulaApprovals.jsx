@@ -48,6 +48,7 @@ function Waiting({ f }) {
     <Card title={who} actions={<Badge kind="pending">Waiting for you</Badge>} className="fx-wait">
       <p className="muted">Sent by <b>{f.meta.submittedBy}</b>{f.meta.submittedAt ? ` on ${new Date(f.meta.submittedAt).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}` : ''} · formula version {f.version}</p>
       <p><b>Basis:</b> {f.meta.basis}</p>
+      {f.meta.follow && <div className="note"><b>{deptName(db, f.dept)} would give up its own formula</b> and follow all departments again, now and whenever that formula changes.</div>}
       <div className="fx-nownext">
         <div><span className="muted">Now</span><b>{formulaWords(now, names)}</b></div>
         <div className="fx-arrow">→</div>
@@ -74,9 +75,7 @@ export default function FormulaApprovals({ first = null }) {
   list.sort((a, b) => (b.key === first) - (a.key === first));
   return (
     <>
-      <h2 className="section-h">Waiting for your approval <span className="muted">({list.length})</span></h2>
-      {list.length === 0 ? <Card><Empty icon="check" title="No formula is waiting for approval">When HR sends one, it appears here with what would change. The formulas in use are below.</Empty></Card> : list.map((f) => <Waiting key={f.id} f={f} />)}
-      <h2 className="section-h">Formulas in use</h2>
+      {list.length === 0 ? <Card><Empty icon="check" title="No formula is waiting for approval">When HR sends one, it appears here with what would change. The formulas that count now are under Formulas in use.</Empty></Card> : list.map((f) => <Waiting key={f.id} f={f} />)}
     </>
   );
 }

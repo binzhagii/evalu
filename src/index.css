@@ -141,7 +141,11 @@ td .meter-row { margin:0; min-width:150px; }
 .steps li.now { background:var(--pri); color:#fff; }
 
 /* tabs (segmented) */
-.tabs { display:flex; gap:4px; flex-wrap:wrap; margin:0 0 14px; padding:4px; background:#f1f2f4; border-radius:10px; width:fit-content; max-width:100%; }
+.tabs { display:flex; gap:4px; flex-wrap:wrap; margin:0 0 14px; padding:4px; background:#e3e5e9; border-radius:10px; width:fit-content; max-width:100%; }
+.paper-only { display:none; }
+@media print { .paper-only { display:block; } }
+.row.between > .tabs { margin:0; }
+@media (max-width:720px) { .row.between > * { min-width:0; max-width:100%; } .row.between label.inline { max-width:100%; } .row.between label.inline select { min-width:0; max-width:100%; } .tabs { scrollbar-width:thin; } }
 .tabs button { background:transparent; color:#4a4f57; padding:7px 14px; }
 .tabs button:hover:not(:disabled) { background:rgba(255,255,255,.7); color:var(--fg); }
 .tabs button.on { background:#fff; color:var(--pri); font-weight:600; box-shadow:var(--shadow); }

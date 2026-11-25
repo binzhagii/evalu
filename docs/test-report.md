@@ -1,8 +1,8 @@
 # evalU validation test report
 
-Run: 2026-11-25T07:38:24.483Z · Node v22.22.0 · code version 80adfa0 · fresh test database with the sample data
+Run: 2026-11-25T09:11:14.898Z · Node v22.22.0 · code version f3a8bcd · fresh test database with the sample data
 
-**Result: 120 of 120 test cases passed.**
+**Result: 123 of 123 test cases passed.**
 
 Each case runs automatically (`npm run test:validation`). "Actual" is measured during this run, not written by hand.
 Part A checks the computation rules on controlled data; Part B runs the real server, database and access control;
@@ -130,5 +130,8 @@ Part C checks the formula engine and its approval and versions; Part D the comme
 | TC-118 | Department of new students | A new SIT student first listed in a general education class of SBAA, then in 2 SIT classes; HR confirms; a student with most classes where the list put them | {"first":"B","asked":1,"suggested":"A","needsYou":true,"moved":1,"after":["A",0],"notAsked":0} | {"first":"B","asked":1,"suggested":"A","needsYou":true,"moved":1,"after":["A",0],"notAsked":0} | PASS |
 | TC-119 | Department of new students | Checking a list: the sections HR is asked about; HR chooses SIT for one; a later list with the student department column; an office and a student who already has a department | {"sections":["GE-1:1","GE-2:1"],"saved":0,"chosen":["A",false],"guess":["B",true],"fixed":["A",false,1],"office":false,"kept":["A",1]} | {"sections":["GE-1:1","GE-2:1"],"saved":0,"chosen":["A",false],"guess":["B",true],"fixed":["A",false,1],"office":false,"kept":["A",1]} | PASS |
 | TC-120 | Classes of other departments | A student's account saved with a class of another school, then with another department: their classes and evaluations | {"enrolled":true,"kept":true} | {"enrolled":true,"kept":true} | PASS |
+| TC-121 | A department's own formula | SIT gets its own; all departments change; SIT asks to follow them again; the VP approves; HR starts it; all departments change again. A closed period keeps its formula | {"own":[60,40],"waits":60,"noEdit":false,"follows":50,"again":45,"period":true,"twice":false,"history":["archived","archived"]} | {"own":[60,40],"waits":60,"noEdit":false,"follows":50,"again":45,"period":true,"twice":false,"history":["archived","archived"]} | PASS |
+| TC-122 | A department's own formula | Follow again: with the next period; in an open period nobody answered in; returned by the VP, then discarded | {"before":60,"newPeriod":40,"openPeriod":[60,40],"returned":"rejected","left":"active"} | {"before":60,"newPeriod":40,"openPeriod":[60,40],"returned":"rejected","left":"active"} | PASS |
+| TC-123 | Evaluator groups | A new group with members, added to a formula later; without members; a department formula where nobody is in the category, an office | {"made":true,"idle":0,"members":true,"added":true,"empty":false,"nobody":false,"office":false} | {"made":true,"idle":0,"members":true,"added":true,"empty":false,"nobody":false,"office":false} | PASS |
 
 Limits of this report: these are developer-run functional, security and integration tests on simulated data. They do not replace the stakeholder evaluation (ISO/IEC 25010 questionnaire) or confirmation of the rules by HRMC.

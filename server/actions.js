@@ -123,6 +123,20 @@ function checkNewPassword(pw, u) {
   return pw;
 }
 const account = (db, id) => find(db.users, id, 'Account');
+/** Who belongs to a group HR made: everyone with these positions, and these people. At least one. */
+function groupMembers(db, { positions, userIds }) {
+  const known = new Set(['TP', 'NTP'].flatMap((r) => Object.keys(POSITIONS[r])));
+  const pos = Array.isArray(positions) ? [...new Set(positions)] : [];
+  if (pos.some((x) => !known.has(x))) fail('Choose positions from the list.');
+  const people = (Array.isArray(userIds) ? [...new Set(userIds)] : []).map((id) => account(db, id));
+  if (people.some((u) => !['TP', 'NTP'].includes(u.role))) fail('Only teaching and non-teaching personnel can be put in an evaluator group.');
+  if (!pos.length && !people.length) fail('Choose who belongs to this group: everyone with a position, or chosen people.');
+  return { pos, people };
+}
+/** A department can have its own formula only for the people it has. */
+function deptHasCategory(db, tt, d) {
+  if (!db.users.some((u) => u.active !== false && u.dept === d && targetType(db, u) === tt)) fail(`Nobody in ${deptName(db, d)} is rated as ${TARGET_TYPES[tt]}, so it can't have its own formula for them.`);
+}
 /** A department students can belong to (not an office, not deactivated). */
 function schoolDept(db, id) {
   const d = find(db.departments, id, 'Department');
@@ -259,8 +273,9 @@ const formulaEffectiveOn = (f, day) => (!f.config.effectiveFrom || f.config.effe
 /** Put an approved formula version in use: the old version of the same category is archived. */
 function putInUse(db, f, user, how = 'activated') {
   for (const old of db.formulas.filter((x) => x.key === f.key && x.status === 'active')) { old.status = 'archived'; logFormula(old, user, 'archived', `replaced by version ${f.version}`); }
-  f.status = 'active'; f.meta.activatedBy = user.name; f.meta.activatedAt = new Date().toISOString();
+  f.status = f.meta.follow ? 'archived' : 'active'; f.meta.activatedBy = user.name; f.meta.activatedAt = new Date().toISOString();
   logFormula(f, user, how);
+  if (f.meta.follow) return null; // the department has no formula of its own any more
   const weights = Object.fromEntries(f.config.components.map((c) => [c.group, methodOf(f.config.method, f.config.methodVersion)?.usesWeights ? c.weight : null]));
   if (!f.dept) db.rules[f.targetType] = weights; // the groups that get tasks (and what the Weights page shows)
   return weights;
@@ -382,18 +397,20 @@ export const actions = {
   },
   addEvaluatorGroup: {
     roles: HR,
-    run(db, { name, targetTypes }) {
+    run(db, { name, targetTypes, positions, userIds }) {
       db.evaluatorGroups ||= [];
       const label = text(name, 'Evaluator group name', 80);
-      if (!Array.isArray(targetTypes) || !targetTypes.length) fail('Choose at least one evaluated category for this group.');
-      const targets = [...new Set(targetTypes)];
+      const targets = Array.isArray(targetTypes) ? [...new Set(targetTypes)] : [];
       if (targets.some((tt) => !Object.hasOwn(TARGET_TYPES, tt))) fail('Choose valid evaluated categories.');
       const id = label.toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 30).replace(/_+$/g, '');
       if (!/^[A-Z][A-Z0-9_]{1,29}$/.test(id)) fail('The group name must produce an ID with at least two letters or numbers.');
       if (db.evaluatorGroups.some((g) => g.id === id || g.name.toLowerCase() === label.toLowerCase())) fail('An evaluator group with that ID or name already exists.', 409);
       // The group starts to count when it is put in a formula. (It used to enter the weights at once with no percentage,
       // which left everyone in the category without a rating until the scoring was changed.)
-      db.evaluatorGroups.push({ id, name: label, builtIn: false, active: true, targetTypes: targets });
+      // who belongs to it (with categories only, as before, its members are chosen in their accounts)
+      const { pos, people } = targets.length && positions === undefined && userIds === undefined ? { pos: [], people: [] } : groupMembers(db, { positions, userIds });
+      db.evaluatorGroups.push({ id, name: label, builtIn: false, active: true, targetTypes: targets, ...(pos.length && { positions: pos }) });
+      for (const u of people) u.evaluatorGroupIds = [...evaluatorGroups(u).filter((x) => x !== id), id];
       return { id, name: label, targetTypes: targets };
     },
   },
@@ -408,12 +425,7 @@ export const actions = {
       g.name = label;
       if (g.builtIn) { if (positions !== undefined || userIds !== undefined) fail("The members of a built-in group come from each person's position.", 409); return { name: label }; }
       if (positions === undefined && userIds === undefined) return { name: label };
-      const known = new Set(['TP', 'NTP'].flatMap((r) => Object.keys(POSITIONS[r])));
-      const pos = Array.isArray(positions) ? [...new Set(positions)] : [];
-      if (pos.some((x) => !known.has(x))) fail('Choose positions from the list.');
-      const people = new Set(Array.isArray(userIds) ? userIds : []);
-      for (const uId of people) if (!['TP', 'NTP'].includes(account(db, uId).role)) fail('Only teaching and non-teaching personnel can be put in an evaluator group.');
-      if (!pos.length && !people.size) fail('Choose who belongs to this group: everyone with a position, or chosen people.');
+      const { pos, people: list } = groupMembers(db, { positions, userIds }), people = new Set(list.map((u) => u.id));
       if (pos.length) g.positions = pos; else delete g.positions;
       for (const u of db.users) {
         const has = Array.isArray(u.evaluatorGroupIds) && u.evaluatorGroupIds.includes(g.id);
@@ -471,7 +483,8 @@ export const actions = {
       const d = dept ? find(db.departments, dept, 'Department').id : null;
       const key = formulaKey(tt, d);
       const working = db.formulas.find((f) => f.key === key && ['draft', 'pending', 'rejected', 'approved', 'scheduled'].includes(f.status));
-      if (working && !['draft', 'rejected'].includes(working.status)) fail(`${TARGET_TYPES[tt]} already has a formula on its way (${working.status === 'pending' ? 'waiting for the VP' : 'approved'}). Finish that one first.`, 409);
+      if (d && !working) deptHasCategory(db, tt, d);
+      if (working && (working.meta.follow || !['draft', 'rejected'].includes(working.status))) fail(`${TARGET_TYPES[tt]} already has a formula on its way (${working.status === 'pending' ? 'waiting for the VP' : 'approved'}). Finish that one first.`, 409);
       const current = activeFormula(db, tt, d);
       const config = clone(asPercentages(working ? working.config : current ? current.config : defaultFormula(db.rules[tt] || {}, currentPolicy(db))));
 
@@ -482,12 +495,7 @@ export const actions = {
         gid = label.toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 30).replace(/_+$/g, '');
         if (!/^[A-Z][A-Z0-9_]{1,29}$/.test(gid)) fail('The group name must have at least two letters or numbers.');
         if (db.evaluatorGroups.some((g) => g.id === gid || g.name.toLowerCase() === label.toLowerCase())) fail('An evaluator group with that name already exists. Choose it from the list instead.', 409);
-        const known = new Set(['TP', 'NTP'].flatMap((r) => Object.keys(POSITIONS[r])));
-        const positions = Array.isArray(newGroup.positions) ? [...new Set(newGroup.positions)] : [];
-        if (positions.some((x) => !known.has(x))) fail('Choose positions from the list.');
-        const people = Array.isArray(newGroup.userIds) ? [...new Set(newGroup.userIds)].map((id) => account(db, id)) : [];
-        if (people.some((u) => !['TP', 'NTP'].includes(u.role))) fail('Only teaching and non-teaching personnel can be put in an evaluator group.');
-        if (!positions.length && !people.length) fail('Choose who belongs to this group: everyone with a position, or chosen people.');
+        const { pos: positions, people } = groupMembers(db, newGroup);
         db.evaluatorGroups.push({ id: gid, name: label, builtIn: false, active: true, targetTypes: [tt], ...(positions.length && { positions }) });
         for (const u of people) u.evaluatorGroupIds = [...evaluatorGroups(u).filter((x) => x !== gid), gid];
       }
@@ -694,7 +702,7 @@ export const actions = {
       const covered = (i) => !i.dept || !list.length || list.includes(i.dept);
       const broken = db.instruments.filter((i) => toolStatus(i) === 'in-use' && i.items.length && covered(i) && toolProblems(i).length);
       if (broken.length) fail(`Fix ${broken.length === 1 ? 'this tool' : 'these tools'} under Evaluation tools first: ${broken.map((i) => `"${toolName(db, i)}" (${toolProblems(i).join(' ')})`).join('; ')}`, 409);
-      for (const f of started) {
+      for (const f of started.filter((x) => !x.meta.follow)) {
         const none = f.config.components.filter((c) => !formGroups(db, f.targetType).includes(c.group));
         if (none.length) fail(`The new formula for ${TARGET_TYPES[f.targetType]} includes ${none.map((c) => groupName(db, c.group)).join(', ')}, but no evaluation tool is in use for ${none.length === 1 ? 'that group' : 'those groups'}. Finish it under Evaluation tools first.`, 409);
       }
@@ -1193,7 +1201,7 @@ export const actions = {
       const clean = cleanFormula(config, (db.evaluatorGroups || []).filter((g) => g.active !== false).map((g) => g.id));
       if (id) {
         const f = formulaRec(db, id);
-        if (!['draft', 'rejected'].includes(f.status)) fail('Only a draft can be edited. Make a new version instead.', 409);
+        if (!['draft', 'rejected'].includes(f.status) || f.meta.follow) fail('Only a draft can be edited. Make a new version instead.', 409);
         f.config = clean; f.status = 'draft';
         logFormula(f, user, 'edited');
         return { id: f.id, version: f.version };
@@ -1202,10 +1210,33 @@ export const actions = {
       const d = dept ? find(db.departments, dept, 'Department').id : null;
       const key = formulaKey(tt, d);
       if (db.formulas.some((f) => f.key === key && ['draft', 'pending', 'rejected', 'approved', 'scheduled'].includes(f.status))) fail('This category already has a version in progress. Finish or delete it first.', 409);
+      if (d) deptHasCategory(db, tt, d);
       const version = Math.max(0, ...db.formulas.filter((f) => f.key === key).map((f) => f.version)) + 1;
       const f = { id: uid('fx'), key, targetType: tt, dept: d, version, status: 'draft', config: clean, meta: { createdBy: user.name, createdAt: new Date().toISOString(), log: [] } };
       logFormula(f, user, 'created');
       db.formulas.push(f);
+      return { id: f.id, version };
+    },
+  },
+  /** A department gives up its own formula and follows all departments again. A VP approves it like any formula. */
+  followAllDepartments: {
+    roles: HR,
+    run(db, { targetType: tt, dept, basis }, user) {
+      const d = find(db.departments, dept, 'Department');
+      if (!Object.hasOwn(TARGET_TYPES, tt)) fail('Choose who is evaluated.');
+      const key = formulaKey(tt, d.id);
+      if (!(db.formulas || []).some((f) => f.key === key && f.status === 'active')) fail(`${d.name} has no formula of its own for ${TARGET_TYPES[tt]}.`, 409);
+      if (db.formulas.some((f) => f.key === key && ['draft', 'pending', 'rejected', 'approved', 'scheduled'].includes(f.status))) fail(`${d.name} already has a new formula in progress. Finish or discard it first.`, 409);
+      const why = text(basis, 'Basis (committee decision or memo)', 300);
+      if (why.length < 5) fail('Write the basis, e.g. "Evaluation Tool Committee resolution no. 3, s. 2026".');
+      const all = activeFormula(db, tt, null);
+      const config = clone(asPercentages(all ? all.config : defaultFormula(db.rules[tt] || {}, currentPolicy(db)))); // what it would use now, for the VP to see
+      Object.assign(config, { name: `${TARGET_TYPES[tt]} – ${d.name}: follow all departments`, effectiveFrom: '', effectiveUntil: '' });
+      const version = Math.max(0, ...db.formulas.filter((f) => f.key === key).map((f) => f.version)) + 1;
+      const f = { id: uid('fx'), key, targetType: tt, dept: d.id, version, status: 'pending', config, meta: { follow: true, basis: why, createdBy: user.name, createdAt: new Date().toISOString(), submittedBy: user.name, submittedAt: new Date().toISOString(), log: [] } };
+      logFormula(f, user, 'submitted for approval', why);
+      db.formulas.push(f);
+      for (const v of directors(db)) notify(db, { key: `fx|${f.id}|sub|${v.id}`, userId: v.id, kind: 'release', text: `A formula change is waiting for your approval: ${d.name} would follow the formula of all departments again for ${TARGET_TYPES[tt]}. Basis: ${why}.` });
       return { id: f.id, version };
     },
   },
@@ -1264,7 +1295,7 @@ export const actions = {
       if (!['approved', 'scheduled'].includes(f.status)) fail('Only an approved formula can be activated.', 409);
       // a group whose tool is not in use would get no evaluations, so its percentage would never count
       const ready = formGroups(db, f.targetType, { scheduled: when === 'next' });
-      const none = f.config.components.filter((c) => !ready.includes(c.group)).map((c) => groupName(db, c.group));
+      const none = f.meta.follow ? [] : f.config.components.filter((c) => !ready.includes(c.group)).map((c) => groupName(db, c.group));
       if (none.length) fail(`No evaluation tool is in use yet for: ${none.join(', ')}. ${when === 'now' && none.length && f.config.components.every((c) => formGroups(db, f.targetType, { scheduled: true }).includes(c.group)) ? 'It starts with the next period, so choose "Start with the next period".' : 'Finish it under Evaluation tools first.'}`, 409);
       if (when === 'next') {
         if (f.status === 'scheduled') fail('This formula is already set to start with the next evaluation period.', 409);
@@ -1286,6 +1317,7 @@ export const actions = {
         if (db.tasks.some((t) => t.periodId === p.id && t.response && inCat(t))) { kept++; continue; }
         if (!formulaEffectiveOn(f, p.startDate || now)) { kept++; continue; }
         p.formulas = { ...(p.formulas || {}), [f.key]: snap };
+        if (f.meta.follow) delete p.formulas[f.key];
         if (!f.dept) { p.rules ||= clone(db.rules); p.rules[f.targetType] = clone(weights); }
         applied++;
       }
@@ -1481,6 +1513,7 @@ export function describeAction(name, args, db, result) {
   if (name === 'moveDepartment') return `${result?.people} account(s) and ${result?.classes} class(es): ${result?.from} → ${result?.to}`;
   if (name === 'setDepartmentActive') return `${db.departments.find((d) => d.id === args.deptId)?.name}: ${args.active ? 'reactivated' : 'deactivated'}`;
   if (['updateEvaluatorGroup', 'deleteEvaluatorGroup', 'restoreEvaluatorGroup'].includes(name)) return `evaluator group: ${result?.name}${result?.archived ? ' (archived)' : ''}`;
+  if (name === 'followAllDepartments') return `${TARGET_TYPES[args.targetType]}: ${deptName(db, args.dept)} would follow all departments again · basis: ${args.basis}`;
   if (name === 'addGroupWithFormula') return `${TARGET_TYPES[args.targetType]} ← ${result?.name} (formula draft v${result?.version})`;
   if (name === 'discardForm') return `discarded: ${result?.discarded}`;
   if (name === 'useForm') { const i = db.instruments.find((x) => x.id === args.instrumentId); return `tool: ${i ? toolName(db, i) : ''} v${result?.version} · ${result?.scheduled ? 'starts with the next evaluation period' : 'in use'}`; }

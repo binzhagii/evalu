@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useApp } from '../lib/store';
 import {
-  STAGES, STAGE_LABEL, taskStatus, userById, sectionStats, targetsOf, deptName, groupName,
+  STAGES, STAGE_LABEL, taskStatus, userById, periodById, sectionStats, targetsOf, deptName, groupName,
   groupsOf, isExemptSection, isTeacher, pendingApprovals, periodCovers, CLASS_TYPES, approvalRuleText, plural, policyFor, currentPolicy, activeDepts, schoolDepts, hasRule, ruleWords, ruleMark, participationForecast,
   SEMESTERS, closesAt, deadlinePassed, deptsToConfirm, inTerm, isPastClass, nextTermOf, notStarted, suggestClassType, termLabel, workingTerm, localDay, periodName, samePeriod, schoolYearNow,
 } from '../lib/logic';
@@ -11,7 +11,7 @@ const classTypesFor = (teacher) => (teacher?.position === 'ci'
   ? [['', 'Clinical area (hospital, community clinic)'], ['skills', CLASS_TYPES.skills]]
   : Object.entries(CLASS_TYPES).filter(([k]) => k !== 'skills'));
 import { QrButton } from './ClassQr';
-import { Card, StatusBadge, RuleNote, PeriodPicker, Select, Badge, Meter, Empty, pct, newestFirst, usePages, useNavArgs, ask, ForecastBadge } from '../ui';
+import { Card, StatusBadge, RuleNote, PeriodPicker, Select, Badge, Meter, Empty, pct, newestFirst, usePages, useNavArgs, useTab, Tabs, Screen, ask, ForecastBadge } from '../ui';
 
 const scopeText = (db, p) => (p.depts?.length ? p.depts.map((d) => deptName(db, d)).join(', ') : 'All departments');
 
@@ -33,6 +33,8 @@ export function Periods() {
   const [startDate, setStartDate] = useState(isoIn(0));
   const [deadline, setDeadline] = useState(isoIn(21));
   const [depts, setDepts] = useState([]);
+  const tabs = [['list', 'Evaluation periods'], ['new', 'New period'], ['reset', 'Reset data']];
+  const [tab, setTab] = useTab(tabs, db.periods.length ? 'list' : 'new');
   const [moving, setMoving] = useState(null); // { id, date, reopen }: the period whose deadline is being changed
   const [msg, setMsg] = useState('');
   const firstYear = schoolYearNow();
@@ -44,18 +46,35 @@ export function Periods() {
     if (bad) return;
     const r = await act('createPeriod', { name, startsOn: startDate, deadline, depts });
     if (r) {
-      setDepts([]); setStartDate(isoIn(0)); setMsg(`${name} created.${r.started?.length ? ` The new rating formula starts with this period: ${r.started.join(', ')}.` : ''} ${r.newTools?.length ? ` New tool version(s) in use: ${r.newTools.join(', ')}.` : ''}${r.waitingTools?.length ? ` Still waiting, because another open period uses the old version: ${r.waitingTools.join(', ')}.` : ''} ${startDate > isoIn(0) ? `It opens by itself on ${longDate(startDate)}, and its evaluations are created then.` : `${r.evaluations?.added || 0} evaluation(s) were created by themselves.`}`);
+      setTab('list'); setDepts([]); setStartDate(isoIn(0)); setMsg(`${name} created.${r.started?.length ? ` The new rating formula starts with this period: ${r.started.join(', ')}.` : ''} ${r.newTools?.length ? ` New tool version(s) in use: ${r.newTools.join(', ')}.` : ''}${r.waitingTools?.length ? ` Still waiting, because another open period uses the old version: ${r.waitingTools.join(', ')}.` : ''} ${startDate > isoIn(0) ? `It opens by itself on ${longDate(startDate)}, and its evaluations are created then.` : `${r.evaluations?.added || 0} evaluation(s) were created by themselves.`}`);
       // suggest the following semester next time
       setPick(pick.sem === 1 ? { year: pick.year, sem: 2 } : { year: pick.year + 1, sem: 1 });
     }
   };
   const run = async (action, periodId, done) => { setMsg(''); const r = await act(action, { periodId }); if (r) setMsg(typeof done === 'function' ? done(r) : done || ''); };
   const toggle = (d) => setDepts((x) => (x.includes(d) ? x.filter((y) => y !== d) : [...x, d]));
+  const moved = moving && db.periods.find((x) => x.id === moving.id);
+  if (moved) {
+    const p = moved;
+    const go = async () => { if (await act(moving.reopen ? 'reopenPeriod' : 'setPeriodDeadline', { periodId: p.id, deadline: moving.date })) { setMsg(`${p.name} is open until ${longDate(moving.date)}.`); setMoving(null); } };
+    return (
+      <Screen title={`${moving.reopen ? 'Reopen' : 'Extend or change the deadline of'} ${p.name}`} backTo="All evaluation periods" onBack={() => setMoving(null)}>
+        <div className="row">
+          {[[3, '+3 days'], [7, '+1 week'], [14, '+2 weeks']].map(([n, l]) => <button key={n} className="ghost" onClick={() => setMoving({ ...moving, date: plusDays(moving.reopen || deadlinePassed(p) ? isoIn(0) : p.deadline, n) })}>{l}</button>)}
+          <label className="inline">New deadline <input type="date" aria-label="New deadline" value={moving.date} onChange={(e) => e.target.value && setMoving({ ...moving, date: e.target.value })} /></label>
+        </div>
+        <p className="muted small">{moving.reopen ? 'People who have not answered can answer again.' : 'People who still have evaluations are told when they get more time.'} It closes by itself 24 hours after the deadline.</p>
+        <div className="row"><button disabled={moving.reopen && moving.date < isoIn(0)} onClick={go}>{moving.reopen ? 'Reopen' : 'Save the deadline'}</button><button className="ghost" onClick={() => setMoving(null)}>Cancel</button></div>
+      </Screen>
+    );
+  }
   return (
     <>
+      <Tabs tabs={tabs} value={tab} onChange={setTab} />
+      {msg && <div className="note">{msg}</div>}
+      {tab === 'list' && <>
       <div className="note"><b>Use this page for the three main dates:</b> create the semester's period, extend its deadline if people need more time, then send the results to the VPs and release them to faculty. A period opens on its start date and closes by itself 24 hours after its deadline.</div>
       <RuleNote policy={db.periods.some((p) => p.status === 'open') ? policyFor(db, db.periods.findLast((p) => p.status === 'open').id) : currentPolicy(db)} />
-      {msg && <div className="note">{msg}</div>}
       <Card title="Evaluation periods">
         <table>
           <thead><tr><th>Period</th><th>Covers</th><th>Starts</th><th>Deadline</th><th>Status</th><th>Release</th><th>Actions</th></tr></thead>
@@ -91,22 +110,8 @@ export function Periods() {
         </table>
         <p className="muted">Release order is enforced: HR Specialist → VPs (review and approve) → individual faculty. Faculty see nothing until every VP has approved and HR releases the results.</p>
       </Card>
-      {moving && (() => {
-        const p = db.periods.find((x) => x.id === moving.id);
-        if (!p) return null;
-        const go = async () => { if (await act(moving.reopen ? 'reopenPeriod' : 'setPeriodDeadline', { periodId: p.id, deadline: moving.date })) { setMsg(`${p.name} is open until ${longDate(moving.date)}.`); setMoving(null); } };
-        return (
-          <Card title={`${moving.reopen ? 'Reopen' : 'Extend or change the deadline of'} ${p.name}`}>
-            <div className="row">
-              {[[3, '+3 days'], [7, '+1 week'], [14, '+2 weeks']].map(([n, l]) => <button key={n} className="ghost" onClick={() => setMoving({ ...moving, date: plusDays(moving.reopen || deadlinePassed(p) ? isoIn(0) : p.deadline, n) })}>{l}</button>)}
-              <label className="inline">New deadline <input type="date" aria-label="New deadline" value={moving.date} onChange={(e) => e.target.value && setMoving({ ...moving, date: e.target.value })} /></label>
-              <button disabled={moving.reopen && moving.date < isoIn(0)} onClick={go}>{moving.reopen ? 'Reopen' : 'Save the deadline'}</button><button className="ghost" onClick={() => setMoving(null)}>Cancel</button>
-            </div>
-            <p className="muted small">{moving.reopen ? 'People who have not answered can answer again.' : 'People who still have evaluations are told when they get more time.'} It closes by itself 24 hours after the deadline.</p>
-          </Card>
-        );
-      })()}
-      <Card title="New evaluation period">
+      </>}
+      {tab === 'new' && <Card title="New evaluation period">
         <div className="row">
           <label className="inline">School year
             <span className="year-pick">
@@ -141,22 +146,20 @@ export function Periods() {
         <p className={bad ? 'note warn' : 'muted'}>{!yearOk ? `Type a school year from ${firstYear} on.` : exists ? <><b>{exists.name}</b> already exists for {exists.depts?.length ? exists.depts.map((d) => deptName(db, d)).join(', ') : 'all departments'}. Pick another semester, school year or department.</> : startDate > deadline ? 'The start date must be on or before the deadline.' : <>This will create <b>{name}</b> for <b>{depts.length ? depts.map((d) => deptName(db, d)).join(', ') : 'all departments'}</b>, starting <b>{new Date(startDate + 'T00:00:00').toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}</b> and open until <b>{new Date(deadline + 'T00:00:00').toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}</b>.</>}</p>
         <div className="row"><button onClick={add} disabled={!!bad}>Create {yearOk ? name : 'period'}</button></div>
         <p className="muted">You can open and close evaluations for one department at a time by creating a period for just that department. The current evaluator weights are saved with the period.</p>
-      </Card>
-      <details className="card advanced-panel">
-        <summary><b>Reset or replace data</b> <span className="muted">· Advanced. These actions can permanently remove information.</span></summary>
-        <div className="advanced-content">
+      </Card>}
+      {tab === 'reset' && <Card title="Reset or replace data">
+        <div className="note warn"><b>Advanced.</b> These actions can permanently remove information.</div>
         <div className="row">
           <button className="danger" onClick={async () => {
             if (!(await ask('Start from scratch?', 'This deletes every account except HR, and all classes, evaluation periods, evaluations, results, notifications and imported records. Departments go back to the University of Baguio list.\n\nThe evaluation forms, questions and weights are kept. This cannot be undone.', { ok: 'Delete everything', danger: true }))) return;
             if (!(await ask('Are you really sure?', 'Everything except the HR accounts, the UB departments and the forms will be gone.', { ok: 'Yes, start from scratch', danger: true }))) return;
             const r = await act('startFromScratch');
-            if (r) setMsg(`Done. ${r.removed} account(s) and all records were deleted. Next: add the accounts under Accounts (the UB departments are ready), then your class lists, then create an evaluation period.`);
+            if (r) setMsg(`Done. ${r.removed} account(s) and all records were deleted. Next: add the accounts under People & sign-in (the UB departments are ready), then your class lists, then create an evaluation period.`);
           }}>Start from scratch (keep only HR)</button>
           <button className="ghost" onClick={async () => { if (await ask('Load the sample data?', 'ALL data is replaced with the sample (demo) data. Everything you entered is replaced.', { ok: 'Replace with sample data', danger: true }) && await act('resetData')) setMsg('All data was replaced with the sample data.'); }}>Load sample data</button>
         </div>
         <p className="muted"><b>Start from scratch</b> empties the system for real use: only HR accounts stay, with their passwords, plus the UB departments and the evaluation forms, questions and weights, so you don't have to build them again. <b>Load sample data</b> brings back the demo accounts (password demo1234). The audit log is never erased.</p>
-        </div>
-      </details>
+      </Card>}
     </>
   );
 }
@@ -173,6 +176,9 @@ export function Assignments() {
   const [grp, setGrp] = useState('');
   const [st, setSt] = useState('');
   const [add, setAdd] = useState({ evaluatorId: '', targetId: '' });
+  const [adding, setAdding] = useState(false);
+  const tabs = [['summary', 'Summary'], ['all', 'All evaluations']];
+  const [tab, setTab] = useTab(tabs, 'summary');
   const tasks = db.tasks.filter((t) => t.periodId === pid);
   const evaluators = db.users.filter((u) => u.role !== 'ST' && groupsOf(db, u).length);
   const summary = {};
@@ -186,13 +192,27 @@ export function Assignments() {
   const addOne = async () => {
     setMsg('');
     if (!add.evaluatorId || !add.targetId) return setMsg('Choose an evaluator and a person to evaluate.');
-    if (await act('addAssignment', { periodId: pid, ...add })) setMsg('Assignment added.');
+    if (await act('addAssignment', { periodId: pid, ...add })) { setMsg('Evaluation added.'); setAdd({ evaluatorId: '', targetId: '' }); setAdding(false); }
   };
 
+  if (adding) {
+    return (
+      <Screen title="Add an evaluation" backTo="All evaluations" onBack={() => setAdding(false)}>
+        <p className="muted">Only for a one-off case in {periodById(db, pid)?.name}. evalU creates the usual evaluations by itself.</p>
+        {msg && <div className="note warn">{msg}</div>}
+        <div className="row">
+          <label>Who evaluates<br /><Select value={add.evaluatorId} onChange={(v) => setAdd({ ...add, evaluatorId: v })}><option value="">Choose the evaluator…</option>{evaluators.map((u) => <option key={u.id} value={u.id}>{u.name} ({groupsOf(db, u).map((g) => groupName(db, g)).join(' / ')})</option>)}</Select></label>
+          <label>Whom they evaluate<br /><Select value={add.targetId} onChange={(v) => setAdd({ ...add, targetId: v })}><option value="">Choose the person…</option>{targetsOf(db).map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}</Select></label>
+        </div>
+        <div className="row"><button onClick={addOne}>Add</button><button className="ghost" onClick={() => setAdding(false)}>Cancel</button></div>
+      </Screen>
+    );
+  }
   return (
     <>
-      <Card title="Start and follow evaluations" actions={<PeriodPicker periods={db.periods} value={pid} onChange={setPid} />}>
-        {msg && <div className="note">{msg}</div>}
+      <div className="row between"><Tabs tabs={tabs} value={tab} onChange={setTab} /><PeriodPicker periods={db.periods} value={pid} onChange={setPid} /></div>
+      {msg && <div className="note">{msg}</div>}
+      {tab === 'summary' && <Card title="Start and follow evaluations">
         <div className="row">
           <button onClick={async () => { const r = await act('generateTasks', { periodId: pid }); if (r) setMsg(`${r.added} evaluation(s) prepared from the class lists and staff roles.${r.skippedNoForm ? ` ${r.skippedNoForm} skipped because no form exists.` : ''} Internship, practicum and field trip subjects were skipped.`); }}>Create evaluation tasks</button>
           <button className="ghost" onClick={async () => { const r = await act('sendReminders', { periodId: pid }); if (r) setMsg(`Reminders sent to ${r.sent} evaluator(s) with unfinished evaluations. Their department heads and HR were alerted too.`); }}>Send reminders now</button>
@@ -203,24 +223,14 @@ export function Assignments() {
           <thead><tr><th>Evaluator group</th><th>Pending</th><th>Completed</th><th>Overdue</th></tr></thead>
           <tbody>{Object.entries(summary).map(([g, x]) => <tr key={g}><td>{groupName(db, g)}</td><td>{x.pending}</td><td>{x.completed}</td><td>{x.overdue}</td></tr>)}</tbody>
         </table>
-      </Card>
-      <details className="card advanced-panel">
-        <summary><b>Manage individual evaluations</b> <span className="muted">· For fixing a one-off assignment or finding a specific task.</span></summary>
-        <div className="advanced-content">
-        <Card title="Add an evaluator assignment">
-          <div className="row">
-            <Select value={add.evaluatorId} onChange={(v) => setAdd({ ...add, evaluatorId: v })}><option value="">Evaluator…</option>{evaluators.map((u) => <option key={u.id} value={u.id}>{u.name} ({groupsOf(db, u).map((g) => groupName(db, g)).join(' / ')})</option>)}</Select>
-            <Select value={add.targetId} onChange={(v) => setAdd({ ...add, targetId: v })}><option value="">Evaluates…</option>{targetsOf(db).map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}</Select>
-            <button onClick={addOne}>Add</button>
-          </div>
-        </Card>
-        <Card title={`All individual evaluations (${listed.length})`}>
+      </Card>}
+      {tab === 'all' && <Card title={`All evaluations (${listed.length})`} actions={<button onClick={() => { setMsg(''); setAdding(true); }}>+ Add an evaluation</button>}>
         <div className="row">
           <Select value={grp} onChange={setGrp}><option value="">All evaluator groups</option>{Object.keys(summary).map((g) => <option key={g} value={g}>{groupName(db, g)}</option>)}</Select>
           <Select value={st} onChange={setSt}><option value="">Any status</option><option value="pending">Pending</option><option value="completed">Completed</option><option value="overdue">Overdue</option></Select>
           <input placeholder="Search a name (optional)" value={q} onChange={(e) => setQ(e.target.value)} />
         </div>
-        {listed.length === 0 ? <Empty icon="list" title={tasks.length ? 'No tasks match' : 'No tasks yet'}>{tasks.length ? 'Change the filters above.' : 'Click "Create evaluation tasks" above.'}</Empty> : <>
+        {listed.length === 0 ? <Empty icon="list" title={tasks.length ? 'No tasks match' : 'No tasks yet'}>{tasks.length ? 'Change the filters above.' : 'Click "Create evaluation tasks" under Summary.'}</Empty> : <>
         <table>
           <thead><tr><th>Evaluator</th><th>As</th><th>Evaluates</th><th>Class</th><th>Status</th><th /></tr></thead>
           <tbody>
@@ -235,9 +245,7 @@ export function Assignments() {
         </table>
         {bar}
         </>}
-        </Card>
-        </div>
-      </details>
+      </Card>}
     </>
   );
 }
@@ -326,21 +334,38 @@ export function Classes() {
   const listed = newestFirst(ofTerm).filter((x) => (!dept || x.dept === dept)
     && (!kind || (kind === 'exempt') === isExemptSection(x))
     && (!qs || `${x.code} ${x.subject} ${userById(db, x.facultyId)?.name || ''}`.toLowerCase().includes(qs)));
-  const { rows, bar } = usePages(listed, `${dept}|${kind}|${qs}|${term}`);
+  const { rows, bar } = usePages(listed, `${dept}|${kind}|${qs}|${term}`, 10);
+  const toConfirm = deptsToConfirm(db).length + suggested.length;
+  const tabs = [['classes', `Classes (${ofTerm.length})`], ['import', 'Import a class list'], ...(toConfirm ? [['confirm', `To confirm (${toConfirm})`]] : [])];
+  const [tab, setTab] = useTab(tabs, ofTerm.length ? 'classes' : 'import');
+  const [adding, setAdding] = useState(false);
+  if (adding) {
+    return (
+      <Screen title={`Add a class to ${termLabel(term)}`} backTo="All classes" onBack={() => setAdding(false)}>
+        <div className="row">
+          <label>Section code<br /><input placeholder="e.g. SIT-101A" value={f.code} onChange={(e) => setF({ ...f, code: e.target.value })} /></label>
+          <label>Subject<br /><input placeholder="e.g. Web Development" value={f.subject} onChange={(e) => setF({ ...f, subject: e.target.value })} /></label>
+          <label>Teacher<br /><Select value={f.facultyId} onChange={(v) => setF({ ...f, facultyId: v })}><option value="">Choose the teacher…</option>{faculty.map((u) => <option key={u.id} value={u.id}>{u.name} · {deptName(db, u.dept)}</option>)}</Select></label>
+        </div>
+        <div className="row"><button onClick={async () => { setMsg(''); if (await act('createSection', { ...f, term })) { setF({ code: '', subject: '', facultyId: '' }); setAdding(false); setMsg('Class added. Enrol students under People & sign-in or by importing a class list.'); } }}>Add</button><button className="ghost" onClick={() => setAdding(false)}>Cancel</button></div>
+      </Screen>
+    );
+  }
   return (
     <>
-      <div className="note"><b>Each semester, import the class list.</b> Choose the semester and department, check the file, then import it. Evaluations are created by themselves. Import a newer list any time: new students are added, and you can remove the ones who dropped. Internship, practicum, and field trip subjects are not evaluated.</div>
       <div className="row"><label className="inline"><b>Semester</b> <Select value={term} onChange={(v) => { setTerm(v); setOut(null); }} aria-label="Semester">{terms.map((t) => <option key={t} value={t}>{termLabel(t)}{t === workingTerm(db) ? ' (now)' : ''}</option>)}{db.sections.some((s) => !s.term) && <option value="__none">No semester (from before)</option>}</Select></label>
         <span className="muted">{plural(ofTerm.length, 'class', 'classes')} in this semester{isPastClass(db, { term }) ? ' · over, kept for the records' : ''}</span></div>
-      <ConfirmDepts />
-      {suggested.length > 0 && (
+      <Tabs tabs={tabs} value={tab} onChange={setTab} />
+      {msg && <div className="note">{msg}</div>}
+      {tab === 'import' && <div className="note"><b>Each semester, import the class list.</b> Choose the semester and department, check the file, then import it. Evaluations are created by themselves. Import a newer list any time: new students are added, and you can remove the ones who dropped. Internship, practicum, and field trip subjects are not evaluated.</div>}
+      {tab === 'confirm' && <ConfirmDepts />}
+      {tab === 'confirm' && suggested.length > 0 && (
         <Card title={`${plural(suggested.length, 'class looks', 'classes look')} like laboratory or clinical`} actions={<button onClick={() => act('applyClassTypes', { sectionIds: suggested.map((s) => s.id) })}>Set them all</button>}>
-          <p className="muted">The type decides which form the students answer. These come from the subject names; uncommon ones can be set one by one below.</p>
+          <p className="muted">The type decides which form the students answer. These come from the subject names; uncommon ones can be set one by one under Classes.</p>
           <ul className="plain-list">{suggested.slice(0, 8).map((s) => <li key={s.id} className="row between"><span><b>{s.code}</b> {s.subject} → {CLASS_TYPES[suggestClassType(db, s)]}</span><button className="ghost" onClick={() => act('applyClassTypes', { sectionIds: [s.id] })}>Set</button></li>)}{suggested.length > 8 && <li className="muted">and {suggested.length - 8} more</li>}</ul>
         </Card>
       )}
-      {msg && <div className="note">{msg}</div>}
-      <Card title="Import a class list">
+      {tab === 'import' && <Card title="Import a class list">
         <p className="muted">Choose the class list file from the Registrar/ARC, or paste it below. It must be a CSV file (in Excel: <b>File → Save As → CSV</b>). One student per line. If the first row has the column names, the columns can be in any order:</p>
         <p><code>section code, subject, teacher name, teacher email, student ID, student name, student UB email</code> <span className="muted">and, if you have them: <code>subject code</code>, <code>type of class</code>, <code>student department</code></span></p>
         <p className="muted">Names like "Dela Cruz, Juan" are read when they are in quotes (Excel does this by itself). The same section can have several subjects and teachers, and students of other departments can be in a class. Classes that don't exist yet are created. <b>Teachers and students who don't have an account yet get one automatically.</b> New teachers are put in the department you choose. New students get the <code>student department</code> of the file; without it, the one of their teacher, and you can change that after checking the file. A student's first password is their <b>student ID</b>; a teacher's is the part of their email before the @ (for example <code>jdelacruz</code>). Everyone must change it when they first sign in. People who already have an account are just added to the class. Rows with a problem are listed and skipped.</p>
@@ -372,16 +397,8 @@ export function Classes() {
           </div>
         )}
         {out && !out.preview && <div className={`note ${out.errorCount ? 'warn' : 'ok'}`}><b>Imported.</b> {out.created} class section(s) created, <b>{out.teachers || 0} teacher account(s)</b> and <b>{out.accounts || 0} student account(s) created</b>, {out.enrolled} enrolment(s) added{out.duplicates ? `, ${out.duplicates} duplicate row(s) counted once` : ''}.{(out.accounts > 0 || out.teachers > 0) && ' New students sign in with their UB email and their student ID as the password; new teachers with their UB email and the part before the @.'}{out.corrected > 0 && <> The department of {plural(out.corrected, 'student')} was corrected.</>}{out.evaluations && <> <b>{out.evaluations.added} evaluation(s) created</b>{out.evaluations.removed ? <> and {out.evaluations.removed} removed</> : ''} by themselves.</>}{out.errorCount > 0 && <> {out.errorCount} row(s) skipped:<ul>{out.errors.map((e, i) => <li key={i}>{e}</li>)}</ul></>}</div>}
-      </Card>
-      <Card title="Add a class section">
-        <div className="row">
-          <input placeholder="Section code" value={f.code} onChange={(e) => setF({ ...f, code: e.target.value })} />
-          <input placeholder="Subject" value={f.subject} onChange={(e) => setF({ ...f, subject: e.target.value })} className="wide" />
-          <Select value={f.facultyId} onChange={(v) => setF({ ...f, facultyId: v })}><option value="">Teacher…</option>{faculty.map((u) => <option key={u.id} value={u.id}>{u.name} · {deptName(db, u.dept)}</option>)}</Select>
-          <button onClick={async () => { setMsg(''); if (await act('createSection', { ...f, term })) { setF({ code: '', subject: '', facultyId: '' }); setMsg('Section added. Enrol students under People & sign-in or by importing a class list.'); } }}>Add</button>
-        </div>
-      </Card>
-      <Card title={`Classes of ${term === '__none' ? 'no semester' : termLabel(term)} (${listed.length}${listed.length !== ofTerm.length ? ` of ${ofTerm.length}` : ''})`} actions={<QrButton sections={listed.filter((x) => !isExemptSection(x))} label="QR codes for these classes" />}>
+      </Card>}
+      {tab === 'classes' && <Card title={`Classes of ${term === '__none' ? 'no semester' : termLabel(term)} (${listed.length}${listed.length !== ofTerm.length ? ` of ${ofTerm.length}` : ''})`} actions={<><button disabled={term === '__none'} onClick={() => { setMsg(''); setAdding(true); }}>+ Add a class</button><QrButton sections={listed.filter((x) => !isExemptSection(x))} label="QR codes for these classes" /></>}>
         <div className="row">
           <Select value={dept} onChange={setDept}><option value="">All departments</option>{db.departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</Select>
           <Select value={kind} onChange={setKind}><option value="">Evaluated and not evaluated</option><option value="evaluated">Evaluated only</option><option value="exempt">Not evaluated (practicum, internship, field trip)</option></Select>
@@ -405,7 +422,7 @@ export function Classes() {
         </table>
         {bar}
         </>}
-      </Card>
+      </Card>}
     </>
   );
 }
@@ -416,17 +433,23 @@ export function Monitor({ deptOnly }) {
   const open = db.periods.filter((p) => p.status === 'open');
   const all = db.sections.filter((s) => !deptOnly || s.dept === user.dept);
   const depts = db.departments.filter((d) => !deptOnly || d.id === user.dept);
+  const tabs = [['dept', deptOnly ? 'My department' : 'By department'], ['class', 'By class']];
+  const [tab, setTab] = useTab(tabs, 'dept');
+  const [pidSel, setPid] = useState('');
+  const shown = open.find((p) => p.id === pidSel) || open.at(-1);
   return (
     <>
-      <RuleNote policy={open.length ? policyFor(db, open.at(-1).id) : currentPolicy(db)} />
+      <RuleNote policy={shown ? policyFor(db, shown.id) : currentPolicy(db)} />
       {open.length === 0 && <Card><Empty icon="calendar" title="No evaluation period is open" /></Card>}
-      {open.map((p) => {
+      {shown && <div className="row between"><Tabs tabs={tabs} value={tab} onChange={setTab} />{open.length > 1 && <PeriodPicker periods={open} value={shown.id} onChange={setPid} />}</div>}
+      {shown && [shown].map((p) => {
         const pt = db.tasks.filter((t) => t.periodId === p.id);
         const secs = all.filter((s) => inTerm(p, s));
         const dept = (d) => pt.filter((t) => userById(db, t.evaluatorId)?.dept === d.id || userById(db, t.targetId)?.dept === d.id);
         return (
           <div key={p.id}>
-            <Card title={`${p.name} · progress by department`}>
+            <EarlyWarning period={p} secs={secs.filter((s) => periodCovers(p, s.dept))} />
+            {tab === 'dept' && <Card title={`${p.name} · progress by department`}>
               <table>
                 <thead><tr><th>Department</th><th>Evaluations done</th><th>Students</th><th>Personnel</th><th>Overdue</th></tr></thead>
                 <tbody>{depts.filter((d) => periodCovers(p, d.id)).map((d) => {
@@ -437,9 +460,8 @@ export function Monitor({ deptOnly }) {
                     <td>{st.filter((t) => t.response).length}/{st.length}</td><td>{pe.filter((t) => t.response).length}/{pe.length}</td><td>{ts.filter((t) => taskStatus(db, t) === 'overdue').length}</td></tr>;
                 })}</tbody>
               </table>
-            </Card>
-            <EarlyWarning period={p} secs={secs.filter((s) => periodCovers(p, s.dept))} />
-            <ClassProgress title={deptOnly ? `Class progress – ${deptName(db, user.dept)}` : 'Class progress'} period={p} secs={secs.filter((s) => periodCovers(p, s.dept))} />
+            </Card>}
+            {tab === 'class' && <ClassProgress title={deptOnly ? `Class progress – ${deptName(db, user.dept)}` : 'Class progress'} period={p} secs={secs.filter((s) => periodCovers(p, s.dept))} />}
           </div>
         );
       })}
@@ -457,7 +479,7 @@ function EarlyWarning({ period: p, secs }) {
   return (
     <div className={`note ${risk ? 'warn' : 'ok'}`}>
       <b>Forecast for {by}:</b> {risk ? `${risk} class${risk > 1 ? 'es' : ''} may not have enough answers at the current pace` : 'every class is on track or already has enough answers'}{track ? ` · ${track} on track` : ''} · {fcs.filter((f) => f.status === 'reached').length} already have enough.
-      {risk > 0 && ' Teachers and department heads of the classes at risk were warned. Choose "Only classes at risk" below to see them.'}
+      {risk > 0 && ' Teachers and department heads of the classes at risk were warned. To see them, choose "Only classes at risk" under By class.'}
       <details className="source"><summary>How the forecast works</summary><p>Pace = answers so far ÷ days since the period opened. Expected by the deadline = answers so far + pace × days left. A class is "at risk" when that is below the number of answers it needs. The first 2 days are too early to tell. It assumes students keep answering at the same pace; reminders and class time with the QR code usually raise it.</p></details>
     </div>
   );
@@ -477,7 +499,7 @@ function ClassProgress({ title, period: p, secs }) {
     return only === 'low' ? st.required && st.belowHalf : st.required && !st.belowHalf;
   });
   const depts = db.departments.filter((d) => secs.some((s) => s.dept === d.id));
-  const { rows, bar } = usePages(shown, `${only}|${dept}`);
+  const { rows, bar } = usePages(shown, `${only}|${dept}`, 10);
   return (
             <Card title={`${title} (${shown.length})`}>
               <div className="row">
@@ -506,7 +528,7 @@ const AUDIT_LABEL = {
   setGroupWeight: 'Changed a weight', closePeriod: 'Closed a period', reopenPeriod: 'Reopened a period', createPeriod: 'Created a period',
   submitEvaluation: 'Submitted an evaluation', recordResultRequest: 'Released results through a dean', signIn: 'Signed in', signOut: 'Signed out',
   automaticReminders: 'Automatic reminders', resetData: 'Reset all data', showTempPassword: 'Viewed a temporary password',
-  setPolicy: 'Changed the evaluation policy', saveFormulaDraft: 'Saved a formula draft', submitFormula: 'Submitted a formula for approval', approveFormula: 'Approved a formula (VP)', rejectFormula: 'Returned a formula (VP)', activateFormula: 'Activated a formula', createPlan: 'Made a development plan', updatePlan: 'Changed a development plan', acknowledgePlan: 'Read a development plan', closePlan: 'Closed a development plan', deleteFormulaDraft: 'Deleted a formula draft', returnToHR: 'Returned results to HR (VP)', verifyAudit: 'Checked the audit log', importClassList: 'Imported a class list',
+  setPolicy: 'Changed the evaluation policy', saveFormulaDraft: 'Saved a formula draft', followAllDepartments: 'Asked to follow all departments again', submitFormula: 'Submitted a formula for approval', approveFormula: 'Approved a formula (VP)', rejectFormula: 'Returned a formula (VP)', activateFormula: 'Activated a formula', createPlan: 'Made a development plan', updatePlan: 'Changed a development plan', acknowledgePlan: 'Read a development plan', closePlan: 'Closed a development plan', deleteFormulaDraft: 'Deleted a formula draft', returnToHR: 'Returned results to HR (VP)', verifyAudit: 'Checked the audit log', importClassList: 'Imported a class list',
 };
 export function AuditLog() {
   const { user } = useApp();
