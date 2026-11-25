@@ -1,6 +1,6 @@
 // Reading the files HR imports: class lists (Registrar / ARC) and staff lists.
 import {
-  CLASS_TYPES, POSITIONS, ROLES, currentTerm, isEvaluatee, isInstitutionalEmail, isNursingDept, isTeacher, periodName, uid,
+  CLASS_TYPES, POSITIONS, ROLES, currentTerm, exemptPattern, exemptWords, replaceTeacher, saysExempt, userById, isEvaluatee, isExemptSection, isInstitutionalEmail, isNursingDept, isTeacher, periodName, uid,
 } from '../src/lib/logic.js';
 
 /**
@@ -70,8 +70,11 @@ const findDept = (db, v) => { const s = plain(v); return s ? db.departments.find
  * drop: students of these classes who are not in the file any more are removed from them.
  * A new student without a "student department" gets the department HR chose for their section (deptOf), or that of
  * their teachers. The second is a guess: it is marked, and HR is asked when their classes say otherwise.
+ * teacherChanges: classes of this department that are in the file with another teacher. replace: the ones HR says were
+ * replaced (see replaceTeacher); for the others both teachers stay.
  */
-export function importClasses(db, { csv, listDept, term, drop, deptOf = {} }) {
+export function importClasses(db, { csv, listDept, term, drop, deptOf = {}, replace = [] }) {
+  const excluded = exemptPattern(exemptWords(db));
   const errors = [], warnings = [], fresh = [], freshTeachers = [];
   const unknownDept = new Map(); // new student -> their classes in the file
   const corrected = new Set(), differs = new Set();
@@ -134,6 +137,7 @@ export function importClasses(db, { csv, listDept, term, drop, deptOf = {} }) {
     if (st && st.role !== 'ST') { bad(`${st.name} is not a student account.`); continue; }
     if (!s) {
       s = { id: uid('sec'), code, subject, facultyId: f.id, dept: f.dept, studentIds: [], ...(term && { term }), ...(type && { classType: type }) };
+      s.exempt = saysExempt(s, excluded);
       db.sections.push(s); classes.set(key(s), s); created++;
     }
     if (!inFile.has(s.id)) inFile.set(s.id, new Set());
@@ -150,7 +154,7 @@ export function importClasses(db, { csv, listDept, term, drop, deptOf = {} }) {
     seen.set(rowKey, line);
     inFile.get(s.id).add(st.id);
     if (!fresh.includes(st)) existingStudents++;
-    if (!s.studentIds.includes(st.id)) { s.studentIds.push(st.id); enrolled++; }
+    if (!s.studentIds.includes(st.id)) { s.studentIds.push(st.id); enrolled++; delete s.replaced; }
   }
 
   // new students without a department: the one HR chose for their section, else the one most of their classes have
@@ -175,8 +179,25 @@ export function importClasses(db, { csv, listDept, term, drop, deptOf = {} }) {
     for (const x of s.studentIds.filter((y) => !students.has(y))) dropped.push({ section: s.id, code: s.code, subject: s.subject, student: x, name: db.users.find((u) => u.id === x)?.name });
     if (drop) s.studentIds = s.studentIds.filter((x) => students.has(x));
   }
-  const notInFile = listDept ? db.sections.filter((s) => (s.term || null) === (term || null) && s.dept === listDept.id && before.has(s.id) && !inFile.has(s.id)) : [];
-  return { rows: rows.length, created, enrolled, duplicates, existingStudents, errors, warnings, fresh, freshTeachers, dropped, notInFile, corrected: corrected.size,
+  let notInFile = listDept ? db.sections.filter((s) => (s.term || null) === (term || null) && s.dept === listDept.id && before.has(s.id) && !inFile.has(s.id)) : [];
+
+  // the same section and subject with another teacher: replaced, or do both teach it? (HR answers)
+  const teacherChanges = [];
+  const filed = [...inFile.keys()].map((id) => db.sections.find((x) => x.id === id));
+  for (const old of notInFile.filter((s) => s.studentIds.length)) {
+    const next = filed.filter((s) => plain(s.code) === plain(old.code) && plain(s.subject) === plain(old.subject) && s.facultyId !== old.facultyId);
+    if (!next.length) continue;
+    const now = new Set(next.flatMap((s) => [...inFile.get(s.id)])), same = old.studentIds.filter((x) => now.has(x)).length;
+    const open = new Set(db.periods.filter((p) => p.status === 'open').map((p) => p.id)), tasks = db.tasks.filter((t) => t.sectionId === old.id && open.has(t.periodId));
+    const x = { id: old.id, code: old.code, subject: old.subject, from: userById(db, old.facultyId)?.name, to: next.map((s) => userById(db, s.facultyId)?.name).join(', '), students: old.studentIds.length, same,
+      waiting: tasks.filter((t) => !t.response).length, answered: tasks.filter((t) => t.response).length,
+      likely: next.some((s) => !before.has(s.id)) && same * 2 >= old.studentIds.length }; // mostly the same students, and the new class is new
+    if (replace.includes(old.id)) { x.replaced = true; x.removed = replaceTeacher(db, old, next); }
+    teacherChanges.push(x);
+  }
+  notInFile = notInFile.filter((s) => !teacherChanges.some((x) => x.id === s.id));
+  const notEvaluated = filed.filter((s) => isExemptSection(s));
+  return { rows: rows.length, created, enrolled, duplicates, existingStudents, errors, warnings, fresh, freshTeachers, dropped, notInFile, teacherChanges, notEvaluated, corrected: corrected.size,
     guessed: [...guessed.values()].map((x) => ({ ...x, students: x.students.size })), guessedCount: unknownDept.size };
 }
 

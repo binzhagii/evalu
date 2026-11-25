@@ -1,7 +1,7 @@
 // The evaluation cycle: what HR does each semester, in order, and what is already done (from the real data).
 // Also where a notification leads. Used by the Overview and Notifications pages.
 import {
-  TARGET_TYPES, activeDepts, closesAt, deptsToConfirm, deadlinePassed, notStarted, inTerm, suggestClassType, termLabel, termOf, today, workingTerm, computeAll, deptWarnings, currentPolicy, expectedAssignments, formulaFor, hasFinal, isEvaluatee, isExemptSection, methodOf, needsPlan,
+  TARGET_TYPES, activeDepts, closesAt, deptsToConfirm, deadlinePassed, notStarted, inTerm, suggestClassType, termLabel, termOf, today, workingTerm, computeAll, deptWarnings, currentPolicy, missingEvaluations, formulaFor, hasFinal, isEvaluatee, isExemptSection, methodOf, needsPlan,
   participationForecast, pendingApprovals, periodCovers, plural, policyFor, stageAtLeast, targetType, toolName, toolProblems, toolStatus,
 } from './logic.js';
 
@@ -31,13 +31,12 @@ export function cycleSteps(db, p) {
   const waitingVp = (db.formulas || []).filter((f) => f.status === 'pending').length;
 
   const version = currentPolicy(db).version;
-  const classes = db.sections.filter((s) => !isExemptSection(s) && inTerm(p, s) && (!p || periodCovers(p, s.dept)));
+  const classes = db.sections.filter((s) => !isExemptSection(s) && !s.replaced && inTerm(p, s) && (!p || periodCovers(p, s.dept)));
   const empty = classes.filter((s) => !s.studentIds.length);
   const heads = activeDepts(db).filter((d) => (!p || periodCovers(p, d.id)) && deptWarnings(db, d).length);
 
   const tasks = p ? db.tasks.filter((t) => t.periodId === p.id) : [];
-  const have = new Set(tasks.map((t) => `${t.evaluatorId}|${t.targetId}|${t.group}|${t.sectionId || ''}`));
-  const missing = open ? expectedAssignments(db, p.id).filter((a) => !have.has(`${a.evaluatorId}|${a.targetId}|${a.group}|${a.sectionId || ''}`)).length : 0;
+  const missing = open ? missingEvaluations(db, p.id) : 0;
   const answered = tasks.filter((t) => t.response).length;
   const risk = open ? classes.filter((s) => participationForecast(db, p.id, s.id)?.status === 'at-risk').length : 0;
 
@@ -56,8 +55,8 @@ export function cycleSteps(db, p) {
     S('scoring', 'Prepare', 'Check the scoring of every category', 'formulas', 'Scoring & calculation', !unset.length,
       unset.length ? `Percentages not set: ${unset.map((t) => TARGET_TYPES[t]).join(', ')}` : `Every category has its percentages${waitingVp ? ` · ${plural(waitingVp, 'formula')} waiting for the VP` : ''}`),
     S('rules', 'Prepare', 'Check the evaluation rules', 'policy', 'Evaluation rules', null, version ? `Rules version ${version}. Change them only when HRMC changes its policy.` : "UB's starting rules. Change them only when HRMC changes its policy."),
-    S('classes', 'Prepare', 'Add the classes, students and staff', 'classes', 'Classes & students', classes.length > 0 && !empty.length,
-      !classes.length ? 'No class yet. Import the class list from the Registrar or ARC.' : empty.length ? `${plural(empty.length, 'class has', 'classes have')} no students: ${empty.slice(0, 4).map((s) => s.code).join(', ')}${empty.length > 4 ? '…' : ''}` : `${plural(classes.length, 'class', 'classes')} of ${p ? termLabel(termOf(p.name)) : termLabel(workingTerm(db))}.${heads.length ? ` ${plural(heads.length, 'department')} without a dean, principal or office head: ${heads.slice(0, 3).map((d) => d.name).join(', ')}${heads.length > 3 ? '…' : ''}.` : ''}`),
+    S('classes', 'Prepare', 'Import the class lists', 'classes', 'Class lists', classes.length > 0 && !empty.length,
+      !classes.length ? 'Import them from the Registrar or ARC during or after the first grading period, when students who dropped are no longer on the list.' : empty.length ? `${plural(empty.length, 'class has', 'classes have')} no students: ${empty.slice(0, 4).map((s) => s.code).join(', ')}${empty.length > 4 ? '…' : ''}` : `${plural(classes.length, 'class', 'classes')} of ${p ? termLabel(termOf(p.name)) : termLabel(workingTerm(db))}.${heads.length ? ` ${plural(heads.length, 'department')} with a missing rater: ${heads.slice(0, 3).map((d) => d.name).join(', ')}${heads.length > 3 ? '…' : ''}.` : ''}`),
     S('period', 'Run', 'Create the evaluation period', 'periods', 'Dates & release', !!p, p ? p.name : 'Choose the school year, semester and dates.'),
     S('tasks', 'Run', 'Evaluations are created by themselves', 'assign', 'Evaluation tasks', tasks.length > 0 && !missing,
       !p ? 'evalU prepares who evaluates whom.' : !tasks.length ? (notStarted(p) ? 'They are created on the start date.' : 'None yet.') : missing ? `${tasks.length} created · ${plural(missing, 'evaluation')} more to create` : `${tasks.length} created`),
@@ -121,14 +120,14 @@ export function needsYou(db) {
     if (f.status === 'rejected') add(`The formula for ${TARGET_TYPES[f.targetType]} was returned by the VP: "${f.meta.rejectReason}"`, 'formulas', 'Scoring & calculation', { tt: f.targetType, dept: f.dept || '' });
     if (f.status === 'approved') add(`The formula for ${TARGET_TYPES[f.targetType]} is approved: choose when it starts.`, 'formulas', 'Scoring & calculation', { tt: f.targetType, dept: f.dept || '' });
   }
-  const term = workingTerm(db), classes = db.sections.filter((s) => s.term === term && !isExemptSection(s));
+  const term = workingTerm(db), classes = db.sections.filter((s) => s.term === term && !isExemptSection(s) && !s.replaced);
   const types = classes.filter((s) => suggestClassType(db, s)).length, empty = classes.filter((s) => !s.studentIds.length).length;
-  if (db.periods.some((p) => p.status === 'open' && termOf(p.name) === term) && !classes.length) add(`No class list for ${termLabel(term)} yet.`, 'classes', 'Classes & students', { tab: 'import' });
-  if (types) add(`${plural(types, 'class looks', 'classes look')} like laboratory or clinical: confirm the type.`, 'classes', 'Classes & students', { tab: 'confirm' });
+  if (db.periods.some((p) => p.status === 'open' && termOf(p.name) === term) && !classes.length) add(`No class list for ${termLabel(term)} yet, so students have nothing to evaluate.`, 'classes', 'Class lists', { tab: 'import' });
+  if (types) add(`${plural(types, 'class looks', 'classes look')} like laboratory or clinical: confirm the type.`, 'classes', 'Class lists', { tab: 'confirm' });
   const unsure = deptsToConfirm(db).length;
-  if (unsure) add(`${plural(unsure, 'new student')} may be in the wrong department: confirm it.`, 'classes', 'Classes & students', { tab: 'confirm' });
-  if (empty) add(`${plural(empty, 'class has', 'classes have')} no students.`, 'classes', 'Classes & students');
-  for (const d of activeDepts(db)) for (const w of deptWarnings(db, d)) add(`${d.name}: ${w}`, 'departments', 'Departments & offices', { tab: d.kind === 'office' ? 'office' : 'dept' });
+  if (unsure) add(`${plural(unsure, 'new student')} may be in the wrong department: confirm it.`, 'classes', 'Class lists', { tab: 'confirm' });
+  if (empty) add(`${plural(empty, 'class has', 'classes have')} no students.`, 'classes', 'Class lists');
+  for (const d of activeDepts(db)) { const w = deptWarnings(db, d); if (w.length) add(`${d.name}: ${w[0]}${w.length > 1 ? ` And ${w.length - 1} more.` : ''}`, 'departments', 'Departments & offices', { deptId: d.id }); }
   const due = (db.plans || []).filter((x) => x.status === 'open' && x.reviewBy < today()).length;
   if (due) add(`${plural(due, 'development plan is', 'development plans are')} due for review.`, 'reports', 'View & print results', { tab: 'plans' });
   return out;

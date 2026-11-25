@@ -1,6 +1,6 @@
 // Brings a database made by an earlier version of evalU up to date, without losing data.
 // Runs once at start-up (see seed.js). Safe to run many times: it only fills in what is missing.
-import { formForTask, uid, UB_DEPARTMENTS, DEFAULT_POLICY, DEFAULT_EVALUATOR_GROUPS, TARGET_TYPES, targetType, currentPolicy, termOf, workingTerm, storeResults } from '../src/lib/logic.js';
+import { formForTask, uid, UB_DEPARTMENTS, DEFAULT_POLICY, DEFAULT_EVALUATOR_GROUPS, TARGET_TYPES, targetType, currentPolicy, termOf, workingTerm, storeResults, exemptPattern, exemptWords, saysExempt, isPastClass } from '../src/lib/logic.js';
 import { installUbForms } from '../src/lib/ubInstall.js';
 
 const clone = (x) => JSON.parse(JSON.stringify(x));
@@ -151,6 +151,11 @@ export function upgradeData(db) {
     const term = last ? termOf(last.name) : db.periods.some((p) => termOf(p.name)) ? workingTerm(db) : null;
     if (term) { s.term = term; changed = true; }
   }
+
+  // excluded subjects became a list HR keeps: classes of earlier semesters, and those already answered, stay as they were
+  const earlier = /\b(intern(ship)?s?|practicum|ojt|field ?trips?)\b/i, pattern = exemptPattern(exemptWords(db));
+  const answered = new Set(db.tasks.filter((t) => t.response && t.sectionId).map((t) => t.sectionId));
+  for (const s of db.sections.filter((x) => x.exempt == null)) set(s, 'exempt', saysExempt(s, isPastClass(db, s) || answered.has(s.id) ? earlier : pattern));
 
   // periods closed before they remembered their people: the category is in each stored result's formula
   for (const p of db.periods.filter((x) => x.status === 'closed' && !x.people)) {

@@ -73,7 +73,7 @@ export function HROverview() {
   const status = tasks.map((t) => taskStatus(db, t));
   const done = status.filter((s) => s === 'completed').length;
   const overdue = status.filter((s) => s === 'overdue').length;
-  const classes = open.flatMap((p) => db.sections.map((s) => ({ p, st: sectionStats(db, p.id, s.id) }))).filter((x) => x.st.required);
+  const classes = open.flatMap((p) => db.sections.map((s) => ({ p, st: sectionStats(db, p.id, s.id) }))).filter((x) => x.st.required && !x.st.section.replaced);
   const low = classes.filter((x) => x.st.belowHalf && hasRule(policyFor(db, x.p.id))).sort((a, b) => a.st.rate - b.st.rate);
   const active = db.users.filter((u) => u.active);
   const waiting = active.filter((u) => u.mustChangePassword).length;

@@ -110,9 +110,9 @@ function navFor(user, db) {
   if (user.role === 'HR') {
     n.push(
       ['home', 'Overview', 'home', <HROverview />, 'Your checklist for this term and a quick look at what needs attention'],
-      ['classes', 'Classes & students', 'list', <Classes />, 'Import class lists from the Registrar or ARC'],
+      ['classes', 'Class lists', 'list', <Classes />, 'They tell evalU which students evaluate which teacher'],
       ['periods', 'Dates & release', 'calendar', <Periods />, 'Set an evaluation deadline, then close the period and share results'],
-      ['assign', 'Evaluation tasks', 'list', <Assignments />, 'Create the evaluations students and staff need to complete'],
+      ['assign', 'Evaluation tasks', 'list', <Assignments />, 'Who evaluates whom, and what is already done'],
       ['monitor', 'Response progress', 'chart', <Monitor />, 'See which classes and departments have responded'],
       ['reports', 'View & print results', 'report', <Reports />, 'Read, print, or share results for a completed term'],
       ['analytics', 'Patterns in results', 'trend', <Analytics />, 'Compare scores and find areas that may need support'],
@@ -148,9 +148,10 @@ function navFor(user, db) {
 // Notifications and My account stay at the bottom.
 const HR_NAV_SECTIONS = [
   { label: '', keys: ['home'] },
-  { label: 'Prepare', keys: ['forms', 'formulas', 'policy', 'departments', 'accounts', 'classes'] },
-  { label: 'Run an evaluation', keys: ['periods', 'assign', 'monitor'] },
+  { label: 'Evaluation', keys: ['forms', 'periods', 'assign', 'monitor'] },
   { label: 'Results', keys: ['reports', 'analytics'] },
+  { label: 'How people are rated', keys: ['formulas', 'policy'] },
+  { label: 'School records', keys: ['departments', 'accounts', 'classes'] },
   { label: 'Records', keys: ['audit'] },
   { label: '', keys: ['notifs', 'account'], bottom: true },
 ];

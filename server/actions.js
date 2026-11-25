@@ -4,7 +4,7 @@
 import { randomInt } from 'node:crypto';
 import {
   GROUPS, TARGET_TYPES, STAGES, ROLES, POSITIONS, needsDept, uid, userById, periodById, targetType, defaultEvaluatorGroups, groupName,
-  instrumentFor, formForTask, effectiveWeights, generateTasks, participationAlerts, sendReminders,
+  exemptPattern, exemptWords, isExemptSection, saysExempt, instrumentFor, formForTask, effectiveWeights, generateTasks, participationAlerts, sendReminders,
   isInstitutionalEmail, INSTITUTION_DOMAIN, notify, directors, pendingApprovals, resultHeads, hrUsers, isEvaluatee, isTeacher, isNursingDept, stageAtLeast, isResultHead, PLAN_OUTCOMES, UB_DEPARTMENTS, missingUbDepartments, MAX_RATING, CLASS_TYPES,
   evaluatorGroups, groupsOf, ratingGroups, toolStatus, sameTool, toolParts, toolProblems, toolSwitchMixes, toolName, defaultFormula, asPercentages, personIn, groupUse, groupUsedBefore, DEPT_KINDS, deptKeep, workingTerm, termLabel, isPastClass, suggestClassType, notStarted, deadlinePassed, closeNow, taskKey, policyFor, today, samePeriod, deptName,
   currentPolicy, formulaKey, activeFormula, formulaSnapshot, formGroups, validateFormula, methodOf, commentParts, METHODS, AGGREGATIONS, MISSING_RULES, ROUNDING_METHODS,
@@ -223,7 +223,7 @@ function sectionFields(db, { code, subject, facultyId, term }, editingId = null)
   if (!isTeacher(f)) fail('Choose the faculty member or Clinical Instructor who teaches this class.');
   const t = term === undefined && editingId ? db.sections.find((x) => x.id === editingId)?.term : classTerm(db, term);
   if (db.sections.some((x) => x.id !== editingId && (x.term || null) === (t || null) && x.facultyId === f.id && x.code.toLowerCase() === s.code.toLowerCase() && x.subject.toLowerCase() === s.subject.toLowerCase())) fail('This class (section, subject and teacher) already exists in that semester.', 409);
-  return { ...s, facultyId: f.id, dept: f.dept, ...(t && { term: t }) };
+  return { ...s, facultyId: f.id, dept: f.dept, ...(t && { term: t }), exempt: saysExempt(s, exemptPattern(exemptWords(db))) };
 }
 
 // ---------- development plans ----------
@@ -586,6 +586,44 @@ export const actions = {
       if (v) s.classType = v; else delete s.classType;
     },
   },
+  /** HR decides for one class: evaluated or not; null = as the excluded words say. */
+  setSectionEvaluated: {
+    roles: HR,
+    run(db, { sectionId, evaluated }) {
+      const s = find(db.sections, sectionId, 'Class section');
+      if (![true, false, null].includes(evaluated)) fail('Choose whether the class is evaluated.');
+      if (isPastClass(db, s)) fail('This class is of an earlier semester and is kept for the records.', 409);
+      const next = { ...s, evaluated };
+      if (isExemptSection(next) && db.tasks.some((t) => t.sectionId === s.id && t.response)) fail('Students already evaluated this class, so it stays evaluated.', 409);
+      if (evaluated == null) delete s.evaluated; else s.evaluated = evaluated;
+      return { code: s.code, subject: s.subject, evaluated: !isExemptSection(s) };
+    },
+  },
+  /** FR6: the words that make a subject not evaluated. Earlier semesters, and classes already answered, stay as they are. */
+  setExemptWords: {
+    roles: HR,
+    run(db, { words }) {
+      if (!Array.isArray(words)) fail('Type the words first.');
+      const list = [];
+      for (const w of words) {
+        const v = text(w, 'Word', 60).replace(/\s+/g, ' ');
+        if (!/[a-z0-9].*[a-z0-9]/i.test(v)) fail(`"${v}" is too short: it would match too many subjects.`);
+        if (!list.some((x) => x.toLowerCase() === v.toLowerCase())) list.push(v);
+      }
+      if (list.length > 40) fail('At most 40 words.');
+      const from = exemptWords(db), pattern = exemptPattern(list);
+      const answered = new Set(db.tasks.filter((t) => t.response && t.sectionId).map((t) => t.sectionId));
+      let now = 0, again = 0, kept = 0;
+      for (const s of db.sections.filter((x) => !isPastClass(db, x))) {
+        const was = isExemptSection(s), says = saysExempt(s, pattern);
+        if (says && !was && answered.has(s.id)) { kept += s.evaluated == null ? 1 : 0; continue; }
+        s.exempt = says;
+        if (isExemptSection(s) !== was) { if (was) again++; else now++; }
+      }
+      (db.settings ||= {}).exemptWords = list;
+      return { from, to: list, now, again, kept };
+    },
+  },
   deleteSection: {
     roles: HR,
     run(db, { sectionId }) {
@@ -605,7 +643,7 @@ export const actions = {
    */
   importClassList: {
     roles: HR,
-    async run(db0, { csv, dept, term, preview, drop, deptOf }) {
+    async run(db0, { csv, dept, term, preview, drop, deptOf, replace }) {
       // preview: check the whole file on a copy and report what would happen; nothing is saved
       const db = preview ? structuredClone(db0) : db0;
       if (typeof csv !== 'string' || !csv.trim()) fail('Paste or choose the class list first.');
@@ -616,11 +654,12 @@ export const actions = {
       // the department HR chose for the new students of a section (the file has none)
       const chosen = Object.fromEntries(Object.entries(deptOf && typeof deptOf === 'object' ? deptOf : {}).filter(([, v]) => v));
       for (const v of Object.values(chosen)) schoolDept(db, v);
-      const r = importClasses(db, { csv, listDept, term: t, drop: drop === true, deptOf: chosen });
+      const r = importClasses(db, { csv, listDept, term: t, drop: drop === true, deptOf: chosen, replace: Array.isArray(replace) && !preview ? replace : [] });
       const suggested = db.sections.filter((s) => (s.term || null) === t && suggestClassType(db, s)).length;
       const out = { term: t, rows: r.rows, created: r.created, enrolled: r.enrolled, accounts: r.fresh.length, teachers: r.freshTeachers.length, existingStudents: r.existingStudents, duplicates: r.duplicates,
         dropped: r.dropped.slice(0, 100).map((x) => `${x.name} · ${x.code} ${x.subject}`), droppedCount: r.dropped.length, notInFile: r.notInFile.slice(0, 50).map((s) => `${s.code} · ${s.subject}`), suggested,
-        warnings: r.warnings.slice(0, 50), errors: r.errors.slice(0, 50), errorCount: r.errors.length, corrected: r.corrected, guessed: r.guessed.slice(0, 500), guessedCount: r.guessedCount };
+        warnings: r.warnings.slice(0, 50), errors: r.errors.slice(0, 50), errorCount: r.errors.length, corrected: r.corrected, guessed: r.guessed.slice(0, 500), guessedCount: r.guessedCount,
+        teacherChanges: r.teacherChanges, replaced: r.teacherChanges.filter((x) => x.replaced).length, removedOld: r.teacherChanges.reduce((n, x) => n + (x.removed || 0), 0), notEvaluated: r.notEvaluated.slice(0, 50).map((s) => `${s.code} · ${s.subject}`), notEvaluatedCount: r.notEvaluated.length };
       if (preview) return { ...out, preview: true, newClasses: db.sections.filter((x) => !db0.sections.some((y) => y.id === x.id)).map((x) => `${x.code} · ${x.subject} (${x.studentIds.length} students)`).slice(0, 50) };
       // first password = the student ID / the teacher's username (they must change it at the first sign-in)
       const all = [...r.freshTeachers, ...r.fresh];
@@ -944,6 +983,7 @@ export const actions = {
     run(db, { taskId }) {
       const t = find(db.tasks, taskId, 'Evaluation task');
       if (t.response) fail('A submitted evaluation cannot be removed.', 409);
+      if (t.group === 'ST') fail('The evaluations of students follow the class lists. Remove the student from the class instead.', 409);
       db.tasks = db.tasks.filter((x) => x.id !== t.id);
       const p = periodById(db, t.periodId); // evalU creates evaluations by itself: remember not to create this one again
       if (p) (p.auto ||= {}).skip = [...new Set([...(p.auto.skip || []), taskKey(t)])];
@@ -1509,6 +1549,8 @@ export function describeAction(name, args, db, result) {
   if (name === 'importStaff') return result?.preview ? `checked a staff list (not saved): ${result.rows} rows, ${result.errorCount} error(s)` : `imported a staff list: ${result?.created} account(s), ${result?.errorCount} row(s) skipped`;
   if (name === 'setStudentDepts') return `department of ${result?.confirmed} student(s) confirmed, ${result?.moved} moved`;
   if (name === 'applyClassTypes') return `${result?.changed} class(es) got the type their subject suggests`;
+  if (name === 'setExemptWords') return `subjects not evaluated: ${result?.from?.join(', ') || 'none'} → ${result?.to?.join(', ') || 'none'} · ${result?.now} class(es) now not evaluated, ${result?.again} evaluated again${result?.kept ? `, ${result.kept} kept because students already answered` : ''}`;
+  if (name === 'setSectionEvaluated') return `class ${result?.code} ${result?.subject}: ${result?.evaluated ? 'evaluated' : 'not evaluated'}${args.evaluated == null ? ' (as the excluded words say)' : ''}`;
   if (name === 'setPeriodDeadline') return `period: ${periodById(db, args.periodId)?.name} · deadline ${result?.from} → ${result?.to}`;
   if (name === 'moveDepartment') return `${result?.people} account(s) and ${result?.classes} class(es): ${result?.from} → ${result?.to}`;
   if (name === 'setDepartmentActive') return `${db.departments.find((d) => d.id === args.deptId)?.name}: ${args.active ? 'reactivated' : 'deactivated'}`;

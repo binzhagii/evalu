@@ -3,7 +3,7 @@ import { useApp } from '../lib/store';
 import {
   STAGES, STAGE_LABEL, taskStatus, userById, periodById, sectionStats, targetsOf, deptName, groupName,
   groupsOf, isExemptSection, isTeacher, pendingApprovals, periodCovers, CLASS_TYPES, approvalRuleText, plural, policyFor, currentPolicy, activeDepts, schoolDepts, hasRule, ruleWords, ruleMark, participationForecast,
-  SEMESTERS, closesAt, deadlinePassed, deptsToConfirm, inTerm, isPastClass, nextTermOf, notStarted, suggestClassType, termLabel, workingTerm, localDay, periodName, samePeriod, schoolYearNow,
+  SEMESTERS, closesAt, exemptPattern, exemptWords, saysExempt, deadlinePassed, deptsToConfirm, inTerm, isPastClass, nextTermOf, notStarted, suggestClassType, termLabel, workingTerm, localDay, periodName, samePeriod, schoolYearNow,
 } from '../lib/logic';
 
 /** Types of class HR can pick for a section. A Clinical Instructor (Nursing) works in the clinical area or the skills lab. */
@@ -184,8 +184,14 @@ export function Assignments() {
   const summary = {};
   tasks.forEach((t) => { const k = t.group; summary[k] ||= { pending: 0, completed: 0, overdue: 0 }; summary[k][taskStatus(db, t)]++; });
   const s = q.trim().toLowerCase();
-  const match = (t) => !s || userById(db, t.evaluatorId)?.name.toLowerCase().includes(s) || userById(db, t.targetId)?.name.toLowerCase().includes(s);
-  const listed = newestFirst(tasks).filter((t) => (!grp || t.group === grp) && (!st || taskStatus(db, t) === st) && match(t));
+  // personnel by name; students are counted per class, so nobody sees which student answered
+  const period = periodById(db, pid), late = period && deadlinePassed(period);
+  const perClass = new Map();
+  for (const t of tasks) if (t.group === 'ST') { const x = perClass.get(t.sectionId) || { id: t.sectionId, group: 'ST', targetId: t.targetId, sectionId: t.sectionId, n: 0, done: 0 }; x.n++; if (t.response) x.done++; perClass.set(t.sectionId, x); }
+  const statusOf = (r) => (r.done >= r.n ? 'completed' : late ? 'overdue' : 'pending');
+  const all = [...newestFirst((db.assignments || []).filter((t) => t.periodId === pid).map((t) => ({ ...t, n: 1, done: t.done ? 1 : 0 }))), ...perClass.values()]
+    .map((r) => { const sec = db.sections.find((x) => x.id === r.sectionId); return { ...r, sec, status: statusOf(r), who: r.group === 'ST' ? `Students of ${sec?.code || 'a class'}` : userById(db, r.evaluatorId)?.name || '' }; });
+  const listed = all.filter((r) => (!grp || r.group === grp) && (!st || r.status === st) && (!s || `${r.who} ${userById(db, r.targetId)?.name || ''} ${r.sec?.subject || ''}`.toLowerCase().includes(s)));
   const { rows, bar } = usePages(listed, `${pid}|${s}|${grp}|${st}`);
   if (!db.periods.length) return <Card><Empty icon="calendar" title="No evaluation period yet">Create one under Dates &amp; release first.</Empty></Card>;
 
@@ -224,21 +230,23 @@ export function Assignments() {
           <tbody>{Object.entries(summary).map(([g, x]) => <tr key={g}><td>{groupName(db, g)}</td><td>{x.pending}</td><td>{x.completed}</td><td>{x.overdue}</td></tr>)}</tbody>
         </table>
       </Card>}
-      {tab === 'all' && <Card title={`All evaluations (${listed.length})`} actions={<button onClick={() => { setMsg(''); setAdding(true); }}>+ Add an evaluation</button>}>
+      {tab === 'all' && <Card title={`Who evaluates whom (${listed.length})`} actions={<button onClick={() => { setMsg(''); setAdding(true); }}>+ Add an evaluation</button>}>
+        <p className="muted">Personnel are listed by name. <b>Students are counted per class</b>: to keep their answers anonymous, nobody sees which student answered.</p>
         <div className="row">
           <Select value={grp} onChange={setGrp}><option value="">All evaluator groups</option>{Object.keys(summary).map((g) => <option key={g} value={g}>{groupName(db, g)}</option>)}</Select>
           <Select value={st} onChange={setSt}><option value="">Any status</option><option value="pending">Pending</option><option value="completed">Completed</option><option value="overdue">Overdue</option></Select>
           <input placeholder="Search a name (optional)" value={q} onChange={(e) => setQ(e.target.value)} />
         </div>
-        {listed.length === 0 ? <Empty icon="list" title={tasks.length ? 'No tasks match' : 'No tasks yet'}>{tasks.length ? 'Change the filters above.' : 'Click "Create evaluation tasks" under Summary.'}</Empty> : <>
+        {listed.length === 0 ? <Empty icon="list" title={all.length ? 'No evaluations match' : 'No evaluations yet'}>{all.length ? 'Change the filters above.' : 'They are created by themselves when the period starts.'}</Empty> : <>
         <table>
           <thead><tr><th>Evaluator</th><th>As</th><th>Evaluates</th><th>Class</th><th>Status</th><th /></tr></thead>
           <tbody>
-            {rows.map((t) => (
-              <tr key={t.id}>
-                <td>{userById(db, t.evaluatorId).name}</td><td>{groupName(db, t.group)}</td><td>{userById(db, t.targetId).name}</td>
-                <td>{db.sections.find((x) => x.id === t.sectionId)?.code || '—'}</td><td><StatusBadge s={taskStatus(db, t)} /></td>
-                <td>{!t.response && <button className="ghost" onClick={async () => (await ask('Remove this task?', `${userById(db, t.evaluatorId).name} will no longer evaluate ${userById(db, t.targetId).name} in this period.`, { ok: 'Remove task', danger: true })) && act('removeTask', { taskId: t.id })}>Remove</button>}</td>
+            {rows.map((r) => (
+              <tr key={r.id}>
+                <td>{r.who}</td><td>{groupName(db, r.group)}</td><td>{userById(db, r.targetId)?.name}</td>
+                <td>{r.sec ? <>{r.sec.code} <span className="muted small">{r.sec.subject}</span></> : '—'}</td>
+                <td>{r.group === 'ST' ? <span>{r.done} of {r.n} answered {r.status !== 'pending' && <StatusBadge s={r.status} />}</span> : <StatusBadge s={r.status} />}</td>
+                <td>{r.group !== 'ST' && !r.done && <button className="ghost" onClick={async () => (await ask('Remove this task?', `${r.who} will no longer evaluate ${userById(db, r.targetId)?.name} in this period.`, { ok: 'Remove task', danger: true })) && act('removeTask', { taskId: r.id })}>Remove</button>}</td>
               </tr>
             ))}
           </tbody>
@@ -311,6 +319,71 @@ function ConfirmDepts() {
     </Card>
   );
 }
+/** The same section and subject with another teacher than before: was the earlier one replaced, or do both teach it? */
+function TeacherChanges({ list, isReplaced, onChange }) {
+  const { rows, bar } = usePages(list, '', 10);
+  return (
+    <div className="guess-depts">
+      <p><b>{plural(list.length, 'class has', 'classes have')} another teacher in this file.</b> Was the earlier teacher replaced, or do both teach the class?</p>
+      <table>
+        <thead><tr><th>Class</th><th>Until now</th><th>In this file</th><th>Answered already</th><th>What happened?</th></tr></thead>
+        <tbody>{rows.map((x) => (
+          <tr key={x.id}>
+            <td><b>{x.code}</b> {x.subject}<div className="muted small">{x.same} of {plural(x.students, 'student')} are the same</div></td><td>{x.from}</td><td>{x.to}</td><td>{x.answered} of {x.answered + x.waiting}</td>
+            <td><Select value={isReplaced(x) ? 'replaced' : 'both'} onChange={(v) => onChange(x.id, v)} aria-label={`What happened to ${x.code} ${x.subject}`}><option value="replaced">{x.from} was replaced</option><option value="both">Both teach it</option></Select></td>
+          </tr>
+        ))}</tbody>
+      </table>
+      {bar}
+      <p className="muted small"><b>Replaced:</b> students who did not answer yet evaluate only the new teacher. Submitted answers stay with the earlier teacher, and count only if enough of the class had answered. <b>Both teach it:</b> students evaluate both.</p>
+    </div>
+  );
+}
+/** FR6: the words that make a subject not evaluated, and the classes they match. */
+function NotEvaluated({ list, past }) {
+  const { db, act } = useApp();
+  const saved = exemptWords(db);
+  const [words, setWords] = useState(saved);
+  const [word, setWord] = useState('');
+  const [msg, setMsg] = useState('');
+  const dirty = JSON.stringify(words) !== JSON.stringify(saved);
+  const add = () => { const v = word.trim().replace(/\s+/g, ' '); if (v && !words.some((w) => w.toLowerCase() === v.toLowerCase())) setWords([...words, v]); setWord(''); };
+  // what saving would do to the classes of this semester and later ones
+  const pattern = exemptPattern(words), changed = db.sections.filter((s) => !isPastClass(db, s) && s.evaluated == null && saysExempt(s, pattern) !== isExemptSection(s));
+  const answered = new Set(db.tasks.filter((t) => t.response && t.sectionId).map((t) => t.sectionId));
+  const stop = changed.filter((s) => !isExemptSection(s) && !answered.has(s.id)), start = changed.filter((s) => isExemptSection(s)), kept = changed.filter((s) => !isExemptSection(s) && answered.has(s.id));
+  const names = (some) => `${some.slice(0, 5).map((s) => `${s.code} · ${s.subject}`).join('; ')}${some.length > 5 ? '…' : ''}`;
+  const lines = [stop.length && `${plural(stop.length, 'class', 'classes')} would no longer be evaluated: ${names(stop)}`, start.length && `${plural(start.length, 'class', 'classes')} would be evaluated: ${names(start)}`, kept.length && `${plural(kept.length, 'class stays', 'classes stay')} evaluated because students already answered: ${names(kept)}`].filter(Boolean);
+  const save = async () => {
+    setMsg('');
+    if (!(await ask('Save the list of words?', `${lines.length ? lines.join('\n\n') : 'No class of this semester changes.'}\n\nClasses of earlier semesters stay as they were.`, { ok: 'Save' }))) return;
+    if (await act('setExemptWords', { words })) setMsg('Saved.');
+  };
+  const { rows, bar } = usePages(list, '', 10);
+  return (
+    <>
+      <Card title="Subjects that are not evaluated">
+        <p className="muted">A class is not evaluated when one of these words is in its subject or section code. Plurals and other ways to join a word count too (Field trip also finds Field-trip and Fieldtrips). Change the list only when HRMC changes its procedure.</p>
+        {msg && !dirty && <div className="note ok">{msg}</div>}
+        <div className="row">{words.map((w) => <span key={w} className="tag">{w}<button type="button" className="tag-x" aria-label={`Remove ${w}`} onClick={() => setWords(words.filter((x) => x !== w))}>×</button></span>)}{!words.length && <span className="muted">No words: every class is evaluated.</span>}</div>
+        <div className="row"><input placeholder="e.g. Educational tour" aria-label="New word" value={word} maxLength={60} onChange={(e) => setWord(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && add()} /><button className="ghost" disabled={!word.trim()} onClick={add}>Add word</button></div>
+        {dirty && <div className="note warn"><b>Not saved yet.</b> {lines.length ? lines.map((l) => <div key={l}>{l}</div>) : 'No class of this semester changes.'}<div className="row"><button onClick={save}>Save</button><button className="ghost" onClick={() => setWords(saved)}>Cancel</button></div></div>}
+      </Card>
+      <Card title={`Classes not evaluated (${list.length})`}>
+        {list.length === 0 ? <Empty icon="list" title="Every class of this semester is evaluated" /> : <>
+          <table>
+            <thead><tr><th>Section</th><th>Subject</th><th>Teacher</th><th>Why</th><th /></tr></thead>
+            <tbody>{rows.map((s) => (
+              <tr key={s.id}><td><b>{s.code}</b></td><td>{s.subject}</td><td>{userById(db, s.facultyId)?.name}</td><td>{s.evaluated === false ? 'HR chose this' : 'The words above'}</td>
+                <td>{!past && <button className="ghost" aria-label={`Evaluate ${s.code} ${s.subject}`} onClick={() => act('setSectionEvaluated', { sectionId: s.id, evaluated: s.evaluated === false && !saysExempt(s, exemptPattern(saved)) ? null : true })}>Evaluate this class</button>}</td></tr>
+            ))}</tbody>
+          </table>
+          {bar}
+        </>}
+      </Card>
+    </>
+  );
+}
 export function Classes() {
   const { db, act } = useApp();
   const [f, setF] = useState({ code: '', subject: '', facultyId: '' });
@@ -320,6 +393,8 @@ export function Classes() {
   const [listDept, setListDept] = useState('');
   const [drop, setDrop] = useState(false); // remove the students who are not on the list any more
   const [deptOf, setDeptOf] = useState({}); // section → the department HR chose for its new students
+  const [both, setBoth] = useState({}); // class → 'replaced' or 'both' (the same class with another teacher)
+  const isReplaced = (x) => (both[x.id] || (x.likely ? 'replaced' : 'both')) === 'replaced';
   const [term, setTerm] = useState(() => workingTerm(db)); // the semester HR works on
   const terms = [...new Set([workingTerm(db), nextTermOf(workingTerm(db)), ...db.sections.map((s) => s.term).filter(Boolean), term])].filter(Boolean).sort().reverse();
   const [msg, setMsg] = useState('');
@@ -336,8 +411,9 @@ export function Classes() {
     && (!qs || `${x.code} ${x.subject} ${userById(db, x.facultyId)?.name || ''}`.toLowerCase().includes(qs)));
   const { rows, bar } = usePages(listed, `${dept}|${kind}|${qs}|${term}`, 10);
   const toConfirm = deptsToConfirm(db).length + suggested.length;
-  const tabs = [['classes', `Classes (${ofTerm.length})`], ['import', 'Import a class list'], ...(toConfirm ? [['confirm', `To confirm (${toConfirm})`]] : [])];
-  const [tab, setTab] = useTab(tabs, ofTerm.length ? 'classes' : 'import');
+  const tabs = [['import', 'Import a class list'], ...(toConfirm ? [['confirm', `To confirm (${toConfirm})`]] : []), ['exempt', `Not evaluated (${ofTerm.filter(isExemptSection).length})`], ['classes', `All classes (${ofTerm.length})`]];
+  const [tab, setTab] = useTab(tabs, 'import');
+  const past = isPastClass(db, { term });
   const [adding, setAdding] = useState(false);
   if (adding) {
     return (
@@ -347,7 +423,7 @@ export function Classes() {
           <label>Subject<br /><input placeholder="e.g. Web Development" value={f.subject} onChange={(e) => setF({ ...f, subject: e.target.value })} /></label>
           <label>Teacher<br /><Select value={f.facultyId} onChange={(v) => setF({ ...f, facultyId: v })}><option value="">Choose the teacher…</option>{faculty.map((u) => <option key={u.id} value={u.id}>{u.name} · {deptName(db, u.dept)}</option>)}</Select></label>
         </div>
-        <div className="row"><button onClick={async () => { setMsg(''); if (await act('createSection', { ...f, term })) { setF({ code: '', subject: '', facultyId: '' }); setAdding(false); setMsg('Class added. Enrol students under People & sign-in or by importing a class list.'); } }}>Add</button><button className="ghost" onClick={() => setAdding(false)}>Cancel</button></div>
+        <div className="row"><button onClick={async () => { setMsg(''); if (await act('createSection', { ...f, term })) { setF({ code: '', subject: '', facultyId: '' }); setAdding(false); setMsg('Class added. Add its students by importing a class list, or under People & sign-in.'); } }}>Add</button><button className="ghost" onClick={() => setAdding(false)}>Cancel</button></div>
       </Screen>
     );
   }
@@ -357,7 +433,8 @@ export function Classes() {
         <span className="muted">{plural(ofTerm.length, 'class', 'classes')} in this semester{isPastClass(db, { term }) ? ' · over, kept for the records' : ''}</span></div>
       <Tabs tabs={tabs} value={tab} onChange={setTab} />
       {msg && <div className="note">{msg}</div>}
-      {tab === 'import' && <div className="note"><b>Each semester, import the class list.</b> Choose the semester and department, check the file, then import it. Evaluations are created by themselves. Import a newer list any time: new students are added, and you can remove the ones who dropped. Internship, practicum, and field trip subjects are not evaluated.</div>}
+      {tab === 'import' && <div className="note"><b>The class list tells evalU which students evaluate which teacher.</b> Import it each semester <b>during or after the first grading period</b>, when students who dropped are no longer on the list. Choose the semester and department, check the file, then import it. Evaluations are created by themselves. Import a newer list any time: new students are added, and you can remove the ones who dropped.</div>}
+      {tab === 'exempt' && <NotEvaluated list={ofTerm.filter(isExemptSection)} past={past} />}
       {tab === 'confirm' && <ConfirmDepts />}
       {tab === 'confirm' && suggested.length > 0 && (
         <Card title={`${plural(suggested.length, 'class looks', 'classes look')} like laboratory or clinical`} actions={<button onClick={() => act('applyClassTypes', { sectionIds: suggested.map((s) => s.id) })}>Set them all</button>}>
@@ -380,8 +457,8 @@ export function Classes() {
         <textarea rows={6} value={csv} onChange={(e) => { setCsv(e.target.value); setOut(null); }} placeholder={SAMPLE_CLASS_LIST} />
         <div className="row">
           {/* step 1: check the file (nothing is saved); step 2: import */}
-          <button className="ghost" disabled={busy || !csv.trim() || !listDept} title={listDept ? '' : 'Choose the department first'} onClick={async () => { setBusy(true); const r = await act('importClassList', { csv, dept: listDept, term, preview: true }); setBusy(false); setDeptOf({}); if (r) setOut(r); }}>1. Check file</button>
-          <button disabled={busy || !csv.trim() || !listDept || !out?.preview || term === '__none'} title={out?.preview ? '' : 'Check the file first'} onClick={async () => { if (out.errorCount && !(await ask('Import with problem rows?', `${out.errorCount} row(s) have a problem and will be skipped. The other rows are imported.`, { ok: 'Import the good rows' }))) return; setBusy(true); const r = await act('importClassList', { csv, dept: listDept, term, drop, deptOf }); setBusy(false); setDrop(false); setDeptOf({}); if (r) { setOut(r); if (!r.errorCount) setCsv(''); } }}>{busy ? 'Working… (big lists can take a minute)' : '2. Import class list'}</button>
+          <button className="ghost" disabled={busy || !csv.trim() || !listDept} title={listDept ? '' : 'Choose the department first'} onClick={async () => { setBusy(true); const r = await act('importClassList', { csv, dept: listDept, term, preview: true }); setBusy(false); setDeptOf({}); setBoth({}); if (r) setOut(r); }}>1. Check file</button>
+          <button disabled={busy || !csv.trim() || !listDept || !out?.preview || term === '__none'} title={out?.preview ? '' : 'Check the file first'} onClick={async () => { if (out.errorCount && !(await ask('Import with problem rows?', `${out.errorCount} row(s) have a problem and will be skipped. The other rows are imported.`, { ok: 'Import the good rows' }))) return; setBusy(true); const r = await act('importClassList', { csv, dept: listDept, term, drop, deptOf, replace: (out.teacherChanges || []).filter(isReplaced).map((x) => x.id) }); setBusy(false); setBoth({}); setDrop(false); setDeptOf({}); if (r) { setOut(r); if (!r.errorCount) setCsv(''); } }}>{busy ? 'Working… (big lists can take a minute)' : '2. Import class list'}</button>
           {csv.trim() && <span className="muted">{csv.trim().split(/\r?\n/).filter((l) => l.trim() && !/^\s*section/i.test(l)).length} row(s) in the file</span>}</div>
         {out?.preview && (
           <div className={`note ${out.errorCount ? 'warn' : 'ok'}`}>
@@ -391,17 +468,19 @@ export function Classes() {
             {(out.errors.length > 0 || out.warnings?.length > 0) && <ul>{out.errors.map((e, i) => <li key={'e' + i}>{e}</li>)}{out.warnings.map((w, i) => <li key={'w' + i} className="muted">{w}</li>)}</ul>}
             {out.droppedCount > 0 && <div><label className="inline"><input type="checkbox" checked={drop} onChange={(e) => setDrop(e.target.checked)} /> <b>Remove the {plural(out.droppedCount, 'student')} who {out.droppedCount === 1 ? 'is' : 'are'} not on this list any more</b> (dropped). Their answers, if any, are kept.</label><details className="source"><summary>Show who</summary><ul>{out.dropped.map((d) => <li key={d}>{d}</li>)}</ul></details></div>}
             {out.corrected > 0 && <div><b>{plural(out.corrected, 'student')}</b> who had their teacher's department would get the one in this file.</div>}
+            {out.teacherChanges?.length > 0 && <TeacherChanges list={out.teacherChanges} isReplaced={isReplaced} onChange={(id, v) => setBoth({ ...both, [id]: v })} />}
             {out.guessedCount > 0 && <NewStudentDepts key={csv} out={out} deptOf={deptOf} setDeptOf={setDeptOf} />}
             {out.notInFile?.length > 0 && <div className="small muted">Classes of this department that are not in the file (nothing happens to them): {out.notInFile.join('; ')}</div>}
+            {out.notEvaluatedCount > 0 && <div><b>{plural(out.notEvaluatedCount, 'class', 'classes')} in this file would not be evaluated</b> (internship, practicum, field trip…): {out.notEvaluated.join('; ')}. <span className="muted">After importing you can change this under Not evaluated.</span></div>}
             {out.newClasses?.length > 0 && <div className="small muted">New classes: {out.newClasses.join('; ')}</div>}
           </div>
         )}
-        {out && !out.preview && <div className={`note ${out.errorCount ? 'warn' : 'ok'}`}><b>Imported.</b> {out.created} class section(s) created, <b>{out.teachers || 0} teacher account(s)</b> and <b>{out.accounts || 0} student account(s) created</b>, {out.enrolled} enrolment(s) added{out.duplicates ? `, ${out.duplicates} duplicate row(s) counted once` : ''}.{(out.accounts > 0 || out.teachers > 0) && ' New students sign in with their UB email and their student ID as the password; new teachers with their UB email and the part before the @.'}{out.corrected > 0 && <> The department of {plural(out.corrected, 'student')} was corrected.</>}{out.evaluations && <> <b>{out.evaluations.added} evaluation(s) created</b>{out.evaluations.removed ? <> and {out.evaluations.removed} removed</> : ''} by themselves.</>}{out.errorCount > 0 && <> {out.errorCount} row(s) skipped:<ul>{out.errors.map((e, i) => <li key={i}>{e}</li>)}</ul></>}</div>}
+        {out && !out.preview && <div className={`note ${out.errorCount ? 'warn' : 'ok'}`}><b>Imported.</b> {out.created} class section(s) created, <b>{out.teachers || 0} teacher account(s)</b> and <b>{out.accounts || 0} student account(s) created</b>, {out.enrolled} enrolment(s) added{out.duplicates ? `, ${out.duplicates} duplicate row(s) counted once` : ''}.{(out.accounts > 0 || out.teachers > 0) && ' New students sign in with their UB email and their student ID as the password; new teachers with their UB email and the part before the @.'}{out.corrected > 0 && <> The department of {plural(out.corrected, 'student')} was corrected.</>}{out.replaced > 0 && <> <b>{plural(out.replaced, 'teacher')} replaced</b>: {plural(out.removedOld, 'unanswered evaluation')} of the earlier teacher removed.</>}{out.evaluations && <> <b>{out.evaluations.added} evaluation(s) created</b>{out.evaluations.removed ? <> and {out.evaluations.removed} removed</> : ''} by themselves.</>}{out.errorCount > 0 && <> {out.errorCount} row(s) skipped:<ul>{out.errors.map((e, i) => <li key={i}>{e}</li>)}</ul></>}</div>}
       </Card>}
-      {tab === 'classes' && <Card title={`Classes of ${term === '__none' ? 'no semester' : termLabel(term)} (${listed.length}${listed.length !== ofTerm.length ? ` of ${ofTerm.length}` : ''})`} actions={<><button disabled={term === '__none'} onClick={() => { setMsg(''); setAdding(true); }}>+ Add a class</button><QrButton sections={listed.filter((x) => !isExemptSection(x))} label="QR codes for these classes" /></>}>
+      {tab === 'classes' && <Card title={`Classes of ${term === '__none' ? 'no semester' : termLabel(term)} (${listed.length}${listed.length !== ofTerm.length ? ` of ${ofTerm.length}` : ''})`} actions={<><button disabled={term === '__none'} onClick={() => { setMsg(''); setAdding(true); }}>+ Add a class</button><QrButton sections={listed.filter((x) => !isExemptSection(x) && !x.replaced)} label="QR codes for these classes" /></>}>
         <div className="row">
           <Select value={dept} onChange={setDept}><option value="">All departments</option>{db.departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</Select>
-          <Select value={kind} onChange={setKind}><option value="">Evaluated and not evaluated</option><option value="evaluated">Evaluated only</option><option value="exempt">Not evaluated (practicum, internship, field trip)</option></Select>
+          <Select value={kind} onChange={setKind}><option value="">Evaluated and not evaluated</option><option value="evaluated">Evaluated only</option><option value="exempt">Not evaluated</option></Select>
           <input placeholder="Search (optional)" value={q} onChange={(e) => setQ(e.target.value)} />
         </div>
         {listed.length === 0 ? <Empty icon="list" title="No sections match">Change the filters above.</Empty> : <>
@@ -415,8 +494,8 @@ export function Classes() {
                   {classTypesFor(userById(db, s.facultyId)).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
                 </Select>
               )}</td>
-              <td>{isExemptSection(s) ? <Badge kind="muted">not evaluated</Badge> : <Badge kind="completed">yes</Badge>}</td>
-              <td><QrButton sections={[s]} />{!used.has(s.id) && <button className="ghost" onClick={async () => { if (await ask(`Delete section ${s.code}?`, `${s.code} · ${s.subject} and its class list will be removed.`, { ok: 'Delete section', danger: true })) act('deleteSection', { sectionId: s.id }); }}>Delete</button>}</td>
+              <td>{s.replaced ? <Badge kind="muted">replaced by {s.replaced.by}</Badge> : isExemptSection(s) ? <Badge kind="muted">not evaluated</Badge> : <Badge kind="completed">yes</Badge>}</td>
+              <td>{!s.replaced && <QrButton sections={[s]} />}{!past && !s.replaced && <button className="ghost" onClick={async () => { const out = isExemptSection(s); if (out || await ask(`Don't evaluate ${s.code}?`, `The students of ${s.code} · ${s.subject} would not evaluate this class.`, { ok: "Don't evaluate" })) act('setSectionEvaluated', { sectionId: s.id, evaluated: out }); }}>{isExemptSection(s) ? 'Evaluate' : "Don't evaluate"}</button>}{!used.has(s.id) && <button className="ghost" onClick={async () => { if (await ask(`Delete section ${s.code}?`, `${s.code} · ${s.subject} and its class list will be removed.`, { ok: 'Delete section', danger: true })) act('deleteSection', { sectionId: s.id }); }}>Delete</button>}</td>
             </tr>
           ))}</tbody>
         </table>
@@ -445,7 +524,7 @@ export function Monitor({ deptOnly }) {
       {shown && [shown].map((p) => {
         const pt = db.tasks.filter((t) => t.periodId === p.id);
         const secs = all.filter((s) => inTerm(p, s));
-        const dept = (d) => pt.filter((t) => userById(db, t.evaluatorId)?.dept === d.id || userById(db, t.targetId)?.dept === d.id);
+        const dept = (d) => pt.filter((t) => userById(db, t.targetId)?.dept === d.id);
         return (
           <div key={p.id}>
             <EarlyWarning period={p} secs={secs.filter((s) => periodCovers(p, s.dept))} />
@@ -509,8 +588,9 @@ function ClassProgress({ title, period: p, secs }) {
               <table>
                 <thead><tr><th>Class</th><th>Faculty</th><th>Responded</th><th>Rate</th><th>Standing</th><th>Forecast by {new Date(p.deadline + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</th></tr></thead>
                 <tbody>{rows.map((s) => {
-                  if (isExemptSection(s)) return <tr key={s.id}><td>{s.code} – {s.subject}</td><td>{userById(db, s.facultyId)?.name}</td><td colSpan={2} className="muted">—</td><td><Badge kind="muted">not evaluated (practicum/internship/field trip)</Badge></td><td /></tr>;
+                  if (isExemptSection(s)) return <tr key={s.id}><td>{s.code} – {s.subject}</td><td>{userById(db, s.facultyId)?.name}</td><td colSpan={2} className="muted">—</td><td><Badge kind="muted">not evaluated</Badge></td><td /></tr>;
                   const st = sectionStats(db, p.id, s.id);
+                  if (s.replaced) return <tr key={s.id}><td>{s.code} – {s.subject}</td><td>{userById(db, s.facultyId)?.name}</td><td>{st.responded} of {st.required}</td><td>{pct(st.rate)}</td><td><Badge kind="muted">replaced by {s.replaced.by}</Badge></td><td /></tr>;
                   return <tr key={s.id}><td>{s.code} – {s.subject}</td><td>{userById(db, s.facultyId)?.name}</td><td><div className="meter-row"><Meter value={st.rate} mark={ruleMark(policyFor(db, p.id))} tone={st.valid ? 'good' : 'bad'} /><span>{st.responded}/{st.required} <span className="muted">needs {st.needed}</span></span></div></td><td>{pct(st.rate)}</td>
                     <td>{!st.required ? <span className="muted">no tasks yet</span> : st.belowHalf ? <Badge kind="overdue">{hasRule(policyFor(db, p.id)) ? 'not enough answers – would be left out' : `needs ${st.needed - st.responded} more to have a score`}</Badge> : <Badge kind="completed">enough responses</Badge>}</td>
                     <td><ForecastBadge fc={participationForecast(db, p.id, s.id)} deadline={p.deadline} /></td></tr>;
@@ -528,7 +608,7 @@ const AUDIT_LABEL = {
   setGroupWeight: 'Changed a weight', closePeriod: 'Closed a period', reopenPeriod: 'Reopened a period', createPeriod: 'Created a period',
   submitEvaluation: 'Submitted an evaluation', recordResultRequest: 'Released results through a dean', signIn: 'Signed in', signOut: 'Signed out',
   automaticReminders: 'Automatic reminders', resetData: 'Reset all data', showTempPassword: 'Viewed a temporary password',
-  setPolicy: 'Changed the evaluation policy', saveFormulaDraft: 'Saved a formula draft', followAllDepartments: 'Asked to follow all departments again', submitFormula: 'Submitted a formula for approval', approveFormula: 'Approved a formula (VP)', rejectFormula: 'Returned a formula (VP)', activateFormula: 'Activated a formula', createPlan: 'Made a development plan', updatePlan: 'Changed a development plan', acknowledgePlan: 'Read a development plan', closePlan: 'Closed a development plan', deleteFormulaDraft: 'Deleted a formula draft', returnToHR: 'Returned results to HR (VP)', verifyAudit: 'Checked the audit log', importClassList: 'Imported a class list',
+  setPolicy: 'Changed the evaluation policy', setExemptWords: 'Changed the subjects not evaluated', setSectionEvaluated: 'Chose whether a class is evaluated', saveFormulaDraft: 'Saved a formula draft', followAllDepartments: 'Asked to follow all departments again', submitFormula: 'Submitted a formula for approval', approveFormula: 'Approved a formula (VP)', rejectFormula: 'Returned a formula (VP)', activateFormula: 'Activated a formula', createPlan: 'Made a development plan', updatePlan: 'Changed a development plan', acknowledgePlan: 'Read a development plan', closePlan: 'Closed a development plan', deleteFormulaDraft: 'Deleted a formula draft', returnToHR: 'Returned results to HR (VP)', verifyAudit: 'Checked the audit log', importClassList: 'Imported a class list',
 };
 export function AuditLog() {
   const { user } = useApp();

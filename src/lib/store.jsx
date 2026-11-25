@@ -14,7 +14,7 @@ const DONE = {
   releaseNext: 'Results released', withdrawRelease: 'Release step withdrawn', checkThreshold: 'Participation alerts sent',
   setPeriodDeadline: 'Deadline changed', importStaff: 'Staff list imported', applyClassTypes: 'Class types set', generateTasks: 'Evaluation tasks created', sendReminders: 'Reminders sent',
   addAssignment: 'Evaluation added', removeTask: 'Evaluation removed',
-  importClassList: 'Class list imported', setStudentDepts: 'Departments confirmed', createSection: 'Class added', deleteSection: 'Class deleted', setClassType: 'Class type changed',
+  importClassList: 'Class list imported', setStudentDepts: 'Departments confirmed', createSection: 'Class added', deleteSection: 'Class deleted', setSectionEvaluated: 'Class saved', setExemptWords: 'Words saved', setClassType: 'Class type changed',
   importPastResults: 'Earlier records imported', deletePastResult: 'Record deleted',
   createUser: 'Account created', updateUser: 'Changes saved', resetPassword: 'Password reset', setUserActive: 'Account updated',
   addDepartment: 'Department added', updateDepartment: 'Department saved', deleteDepartment: 'Department deleted',

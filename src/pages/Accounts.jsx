@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useApp } from '../lib/store';
 import { ROLES, POSITIONS, needsDept, deptName, isNursingDept, nursingDepts, activeDepts, schoolDepts, isPastClass, evaluatorGroups, defaultEvaluatorGroups } from '../lib/logic';
-import { Card, Select, Badge, Avatar, Empty, newestFirst, usePages, useTab, Tabs, Screen, ask } from '../ui';
+import { Card, Select, Badge, Avatar, Empty, newestFirst, useNav, useNavArgs, usePages, useTab, Tabs, Screen, ask } from '../ui';
 
 /* ---------------- change your own password ---------------- */
 export function PasswordForm({ onDone, submitLabel = 'Change password', askCurrent = true }) {
@@ -214,13 +214,19 @@ function StaffImport() {
 export function Accounts() {
   const { db, user, act } = useApp();
   const [adding, setAdding] = useState(false);
-  const [editing, setEditing] = useState(null);
+  const args = useNavArgs(); // a department can open one person, or everyone in it
+  const go = useNav();
+  const [editing, setEditing] = useState(args.userId || null);
   const [temp, setTemp] = useState(null);
   const [msg, setMsg] = useState('');
   const [q, setQ] = useState('');
   const [role, setRole] = useState('');
-  const [dept, setDept] = useState('');
+  const [dept, setDept] = useState(args.dept || '');
   const [showInactive, setShowInactive] = useState(true);
+
+  const person = editing && db.users.find((u) => u.id === editing);
+  const fromDept = !!args.deptId && editing === args.userId; // Back leads to the department it was opened from
+  const close = () => (fromDept ? go('departments', { deptId: args.deptId }) : setEditing(null));
 
   const enrolled = (id) => db.sections.filter((s) => s.studentIds.includes(id)).map((s) => s.id);
   const create = async (f) => {
@@ -230,7 +236,7 @@ export function Accounts() {
   };
   const update = async (f) => {
     setMsg('');
-    if (await act('updateUser', { userId: editing, ...f })) { setEditing(null); setMsg('Account updated.'); }
+    if (await act('updateUser', { userId: editing, ...f })) { if (fromDept) return go('departments', { deptId: args.deptId }); setEditing(null); setMsg('Account updated.'); }
   };
   const reset = async (u) => {
     if (!(await ask('Reset password?', `Give ${u.name} a new temporary password? Their current password stops working and they are signed out.`, { ok: 'Reset password' }))) return;
@@ -250,13 +256,12 @@ export function Accounts() {
   const { rows, bar } = usePages(list, `${role}|${dept}|${showInactive}|${s}`, 10);
   const tabs = [['list', 'Accounts'], ['import', 'Import staff']];
   const [tab, setTab] = useTab(tabs, 'list');
-  const person = editing && db.users.find((u) => u.id === editing);
   if (adding) return <Screen title="New account" backTo="All accounts" onBack={() => setAdding(false)}><AccountForm initial={EMPTY} onSave={create} onCancel={() => setAdding(false)} saveLabel="Create account" /></Screen>;
   if (person) {
     return (
-      <Screen title={`Edit ${person.name}`} backTo="All accounts" onBack={() => setEditing(null)}>
+      <Screen title={`Edit ${person.name}`} backTo={fromDept ? `Back to ${deptName(db, args.deptId)}` : 'All accounts'} onBack={close}>
         <AccountForm initial={{ name: person.name, username: person.username, email: person.email || '', role: person.role, position: person.position, dept: person.dept || '', sectionIds: enrolled(person.id), evaluatorGroupIds: person.evaluatorGroupIds || evaluatorGroups(person) }}
-          onSave={update} onCancel={() => setEditing(null)} saveLabel="Save changes" />
+          onSave={update} onCancel={close} saveLabel="Save changes" />
       </Screen>
     );
   }
